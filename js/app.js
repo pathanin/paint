@@ -70,7 +70,7 @@
   const MAC = /Mac|iPhone|iPad/.test(navigator.platform);
   const keyLabel = (k) => (MAC ? k.replace(/Alt\+/g, '⌥')
     : k === '⌘' ? 'Ctrl' : k === '⇧' ? 'Shift' : k === '⌫' ? 'Backspace'
-    : k.replace(/⌘/g, 'Ctrl+').replace(/⇧([- ])/g, 'Shift$1').replace(/⇧/g, 'Shift+').replace(/\+\+$/, '+Plus'));
+    : k.replace(/⌘/g, 'Ctrl+').replace(/⇧([- ])/g, 'Shift$1').replace(/⇧/g, 'Shift+').replace(/\+\+$/, '+Plus').replace(/\+−$/, '+Minus'));
 
   // ---------- document & history ----------
   function setDoc(source, w, h) {
@@ -130,6 +130,7 @@
     if (drag) return;
     commitText();
     commitSelection();
+    if (sel) { sel = null; requestRender(); } // the marquee would outline pixels that just changed
     const e = hist.undo();
     if (e) applyHist(e, 'before');
   }
@@ -137,6 +138,7 @@
     if (drag) return;
     commitText();
     commitSelection();
+    if (sel) { sel = null; requestRender(); }
     const e = hist.redo();
     if (e) applyHist(e, 'after');
   }
@@ -238,6 +240,8 @@
       : `${img.width} × ${img.height} px`;
     const pct = Math.round(S.zoom * 100) + '%';
     $('#zoomBtn').textContent = pct;
+    $('[data-cmd="zoomIn"]').disabled = S.zoom >= ZOOMS[ZOOMS.length - 1] - 1e-9;
+    $('[data-cmd="zoomOut"]').disabled = S.zoom <= ZOOMS[0] + 1e-9;
     $('#zoomBtn').setAttribute('aria-label', `Zoom ${pct}. Activate for actual size`);
     // aria-disabled (not disabled) keeps Crop focusable, so keyboard users can reach the explanation.
     const cb = $('#cropBtn');
@@ -384,10 +388,13 @@
     ctx.save();
     ctx.font = `${fs}px ${S.font}`;
     ctx.fillStyle = t.color;
-    ctx.textBaseline = 'top';
+    // Match the editor's CSS line box: half-leading above the font's ascent, then the baseline.
+    ctx.textBaseline = 'alphabetic';
+    const m = ctx.measureText('Hg');
+    const asc = m.fontBoundingBoxAscent, desc = m.fontBoundingBoxDescent;
     let w = 0;
     lines.forEach((ln, i) => {
-      ctx.fillText(ln, t.x, t.y + i * lh + (lh - fs) / 2);
+      ctx.fillText(ln, t.x, t.y + i * lh + (lh - (asc + desc)) / 2 + asc);
       w = Math.max(w, ctx.measureText(ln).width);
     });
     ctx.restore();
@@ -671,7 +678,10 @@
   $('#newDlg form').addEventListener('submit', (e) => {
     if (!e.submitter || e.submitter.value !== 'ok') return;
     const w = +$('#newW').value, h = +$('#newH').value;
-    if (w >= 1 && h >= 1 && w <= MAX_DIM && h <= MAX_DIM) newDoc(w, h);
+    if (w >= 1 && h >= 1 && w <= MAX_DIM && h <= MAX_DIM) {
+      newDoc(w, h);
+      S.pristine = false; // the user chose this size: a paste goes onto it, not in place of it
+    }
   });
 
   const rForm = $('#resizeDlg form');
@@ -814,8 +824,8 @@
       case 'select': {
         const rp = { x: clamp(Math.round(p.x), 0, img.width), y: clamp(Math.round(p.y), 0, img.height) };
         if (sel && inside(p, sel)) {
-          if (!sel.float) liftSelection();
-          drag = { t: 'move', gx: p.x - sel.x, gy: p.y - sel.y };
+          // Lift on the first real movement, so a plain click inside the selection changes nothing.
+          drag = { t: 'move', gx: p.x - sel.x, gy: p.y - sel.y, ox: sel.x, oy: sel.y, lifted: false };
         } else {
           dropSelection();
           drag = { t: 'select', start: rp, end: rp };
@@ -860,8 +870,11 @@
     } else if (d.t === 'select') {
       d.end = { x: clamp(Math.round(p.x), 0, img.width), y: clamp(Math.round(p.y), 0, img.height) };
     } else if (d.t === 'move') {
-      sel.x = Math.round(p.x - d.gx);
-      sel.y = Math.round(p.y - d.gy);
+      if (!sel) { drag = null; return; }
+      const nx = Math.round(p.x - d.gx), ny = Math.round(p.y - d.gy);
+      if (nx === sel.x && ny === sel.y) return;
+      if (!sel.float) { liftSelection(); d.lifted = true; }
+      sel.x = nx; sel.y = ny;
     }
     requestRender();
   });
@@ -880,6 +893,24 @@
     ring.hidden = false;
   }
 
+  // Esc mid-gesture: put everything back as it was before the pointer went down.
+  function cancelDrag() {
+    const d = drag;
+    if (d.t === 'canvas') { endCanvasDrag(false); return; }
+    if (d.t === 'pan' || d.t === 'pencil' || d.t === 'eraser' || d.t === 'brush') return; // strokes finish normally
+    drag = null;
+    if (d.t === 'move' && sel) {
+      if (d.lifted) { // undo the lift this drag made: restore the pixels, drop the float, no history entry
+        ctx.putImageData(bctx.getImageData(d.ox, d.oy, sel.w, sel.h), d.ox, d.oy);
+        sel.float = null;
+        op = null;
+      }
+      sel.x = d.ox; sel.y = d.oy;
+      updateChrome();
+    }
+    requestRender();
+  }
+
   function finishDrag() {
     const d = drag;
     if (!d) return;
@@ -887,6 +918,7 @@
     if (d.t === 'pan') { stage.classList.remove('dragging'); if (!S.panKey) stage.classList.remove('panning'); }
     else if (d.t === 'pencil' || d.t === 'eraser' || d.t === 'brush') endOp();
     else if (SHAPES.has(d.t)) {
+      if (d.t !== 'line' && d.start.x === d.end.x && d.start.y === d.end.y) { requestRender(); return; } // a click, not a shape
       beginOp();
       const b = drawShape(ctx, d);
       touch(b.x, b.y, b.w, b.h);
@@ -939,7 +971,11 @@
     return e.code;
   }
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !tip.hidden) { hideTip(); e.preventDefault(); return; }
+    if (e.key === 'Escape' && !tip.hidden) {
+      const fromKeyboard = tipByKey;
+      hideTip();
+      if (fromKeyboard) { e.preventDefault(); return; } // first Esc dismisses a focus tooltip (WCAG 1.4.13)
+    }
     if (document.querySelector('dialog[open]') || isTyping(e.target)) return;
     // Space/Enter on a focused control activate it (keyboard users); they are not shortcuts there.
     if ((e.code === 'Space' || e.key === 'Enter') && e.target.closest && e.target.closest('button, input, select')) return;
@@ -969,17 +1005,20 @@
     if (e.shiftKey && k === 'KeyC') { e.preventDefault(); openResize('canvas'); return; }
     if (e.key === '?') { openHelp(); return; }
     if (e.shiftKey && k === 'Digit0') { setZoom(1); return; }
+    if (drag) { // mid-gesture, only Esc (cancel) applies; other keys would pull state out from under it
+      if (k === 'Escape') cancelDrag();
+      if (k !== 'Space') e.preventDefault();
+      return;
+    }
     if (e.shiftKey && k === 'Digit1') { fitZoom(false); return; }
     if (TOOL_KEYS[k] && !e.shiftKey) { setTool(TOOL_KEYS[k]); return; }
     const step = e.shiftKey ? 10 : 1;
+    const onCanvas = e.target === document.body || (e.target.closest && e.target.closest('#viewport'));
+    if (k.startsWith('Arrow') && !onCanvas) return; // arrows on a focused control belong to that control
     switch (k) {
       case 'KeyX': swapColors(); break;
       case 'Delete': case 'Backspace': e.preventDefault(); deleteSelection(); break;
-      case 'Escape':
-        if (drag && drag.t === 'canvas') endCanvasDrag(false);
-        else if (drag && (SHAPES.has(drag.t) || drag.t === 'select')) { drag = null; requestRender(); }
-        else dropSelection();
-        break;
+      case 'Escape': dropSelection(); break;
       case 'BracketLeft': setSize(S.sizes[S.tool] - (S.sizes[S.tool] > 10 ? 2 : 1)); break;
       case 'BracketRight': setSize(S.sizes[S.tool] + (S.sizes[S.tool] >= 10 ? 2 : 1)); break;
       case 'Equal': zoomStep(1); break;
@@ -1155,7 +1194,7 @@
 
   // ---------- tooltips ----------
   const tip = $('#tip');
-  let tipTimer = 0, tipWarmUntil = 0, tipFor = null;
+  let tipTimer = 0, tipWarmUntil = 0, tipFor = null, tipByKey = false;
   function showTip(el) {
     tipFor = el;
     tip.textContent = el.dataset.tip;
@@ -1190,13 +1229,13 @@
     if (el === tipFor) return;
     hideTip();
     if (!el || e.pointerType === 'touch' || drag) return;
-    tipTimer = setTimeout(() => showTip(el), performance.now() < tipWarmUntil ? 0 : 450);
+    tipTimer = setTimeout(() => { showTip(el); tipByKey = false; }, performance.now() < tipWarmUntil ? 0 : 450);
   });
   document.addEventListener('pointerdown', hideTip, true);
   document.documentElement.addEventListener('mouseleave', hideTip);
   document.addEventListener('focusin', (e) => {
     const el = e.target.closest && e.target.closest('.chrome [data-tip]');
-    if (el && e.target.matches(':focus-visible')) { hideTip(); showTip(el); }
+    if (el && e.target.matches(':focus-visible')) { hideTip(); showTip(el); tipByKey = true; }
   });
   document.addEventListener('focusout', () => { if (tipFor) hideTip(); });
   function resetTransientKeys() {
@@ -1291,5 +1330,5 @@
   setTool('pencil');
 
   // Handle for scripted smoke tests in the console.
-  window.__paint = { S, hist, img, flash, save, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, setZoom, fitZoom };
+  window.__paint = { S, hist, img, flash, save, updateChrome, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, setZoom, fitZoom };
 })();

@@ -66,7 +66,7 @@
     <button data-cmd="flipH" data-tip="Flip horizontal" data-hint="Whole image" aria-label="Flip horizontal"><svg><use href="#i-fliph"/></svg></button>
     <button data-cmd="flipV" data-tip="Flip vertical" data-hint="Whole image" aria-label="Flip vertical"><svg><use href="#i-flipv"/></svg></button>
   </div>
-  <div id="docName"><span id="docTitle">untitled.png</span><span id="docDirty" hidden title="Unsaved changes">Edited</span></div>
+  <div id="docName"><span id="docTitle">untitled.png</span><span id="docDirty" hidden data-tip="Unsaved changes">Edited</span></div>
   <div class="group zoom">
     <button data-cmd="zoomOut" data-tip="Zoom out" data-kbd="−" aria-label="Zoom out"><svg><use href="#i-minus"/></svg></button>
     <button data-cmd="zoom100" id="zoomBtn" class="zoom-val" data-tip="Actual size" data-kbd="⇧0" aria-label="Zoom 100%. Activate for actual size">100%</button>
@@ -81,7 +81,7 @@
 <div id="optbar" class="chrome">
   <span id="toolName">Pencil</span>
   <div class="opts">
-    <label data-for="pencil brush eraser line rect ellipse" data-tip="Size" data-kbd="[ ]" data-hint="[ smaller · ] bigger">Size
+    <label data-for="pencil brush eraser line rect ellipse" data-tip="Size" data-hint="[ smaller · ] bigger">Size
       <input type="range" id="size" min="1" max="100" value="1" aria-label="Size"><output id="sizeOut">1</output><span class="unit">px</span></label>
     <div data-for="rect ellipse" class="seg" role="radiogroup" aria-label="Shape style">
       <label><input type="radio" name="fillMode" value="outline" checked><span>Outline</span></label>
