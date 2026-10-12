@@ -14,8 +14,9 @@ A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, ann
 | X | Swap colors |
 | [ ] | Smaller / bigger size |
 | Shift while dragging | Square / circle / 45° line |
-| ⌘Z / ⌘⇧Z | Undo / redo |
+| ⌘Z / ⌘⇧Z (or ⌘Y) | Undo / redo |
 | ⌘A, Esc, Delete | Select all, deselect, clear selection to color 2 |
+| Enter, Shift+Enter, Esc (text tool) | Apply text, new line, cancel |
 | Arrows (Shift = 10px) | Nudge selection |
 | ⌘C ⌘X ⌘V | Copy, cut, paste (selection, or the whole image when nothing is selected) |
 | ⌘⇧X | Crop to selection |
@@ -26,7 +27,7 @@ A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, ann
 | Space+drag, middle drag | Pan |
 | ? | Shortcut help |
 
-Save format follows the file extension (PNG, JPEG, WebP); JPEG is flattened onto white.
+Save format follows the file extension (PNG, JPEG, WebP); JPEG is flattened onto white. Files opened in other formats (GIF, BMP) are saved as a PNG copy, never overwritten.
 
 ## Layout
 

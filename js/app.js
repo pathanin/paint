@@ -68,7 +68,9 @@
 
   // Shortcut labels are written Mac-style in the markup; show Ctrl/Shift elsewhere.
   const MAC = /Mac|iPhone|iPad/.test(navigator.platform);
-  const keyLabel = (k) => (MAC ? k.replace(/Alt\+/g, '⌥') : k.replace(/⌘/g, 'Ctrl+').replace(/⇧/g, 'Shift+').replace(/\+\+/g, '+'));
+  const keyLabel = (k) => (MAC ? k.replace(/Alt\+/g, '⌥')
+    : k === '⌘' ? 'Ctrl' : k === '⇧' ? 'Shift' : k === '⌫' ? 'Backspace'
+    : k.replace(/⌘/g, 'Ctrl+').replace(/⇧([- ])/g, 'Shift$1').replace(/⇧/g, 'Shift+').replace(/\+\+/g, '+'));
 
   // ---------- document & history ----------
   function setDoc(source, w, h) {
@@ -494,6 +496,7 @@
       g.drawImage(img, 0, 0);
       setDoc(c, c.width, c.height);
     }
+    if (growFrom) flash(`Canvas enlarged to ${img.width} × ${img.height} to fit the paste`);
     // Drop it at the top-left of what's visible.
     const r = img.getBoundingClientRect(), v = vp.getBoundingClientRect();
     const x = clamp(Math.floor((v.left - r.left) / S.zoom), 0, img.width - bmp.width);
@@ -562,10 +565,12 @@
       if (err.name !== 'AbortError') flash(err.message, true);
     }
   }
-  async function loadFile(file, handle) {
-    let bmp;
-    try { bmp = await createImageBitmap(file); }
-    catch { flash('Not an image: ' + file.name, true); return; }
+  async function loadFile(file, handle, decoded) {
+    let bmp = decoded;
+    if (!bmp) {
+      try { bmp = await createImageBitmap(file); }
+      catch { flash('Not an image: ' + file.name, true); return; }
+    }
     cancelText();
     setDoc(bmp, bmp.width, bmp.height);
     bmp.close();
@@ -575,6 +580,9 @@
     updateChrome();
   }
 
+  // Formats we can encode. Anything else (GIF, BMP, ...) is saved as a new PNG rather than overwritten.
+  const canWrite = (name) => /\.(png|jpe?g|webp)$/i.test(name);
+  const asPng = (name) => name.replace(/\.[^.]*$/, '') + '.png';
   function mimeFor(name) {
     const ext = name.split('.').pop().toLowerCase();
     return ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'webp' ? 'image/webp' : 'image/png';
@@ -595,22 +603,29 @@
     commitSelection();
     const savedAt = hist.top(); // edits made while the save is in flight stay unsaved
     let h = as ? null : S.fileHandle;
+    let name = S.fileName;
+    if (!canWrite(name)) {
+      if (h && !as) flash(`Can't write ${name.split('.').pop().toUpperCase()} files. Saving a PNG copy.`);
+      h = null;
+      name = asPng(name);
+    }
     try {
       if (h && (await h.queryPermission({ mode: 'readwrite' })) !== 'granted' &&
           (await h.requestPermission({ mode: 'readwrite' })) !== 'granted') h = null;
       if (!h) {
         if (!window.showSaveFilePicker) {
           const a = document.createElement('a');
-          a.href = URL.createObjectURL(await encode(mimeFor(S.fileName)));
-          a.download = S.fileName;
+          a.href = URL.createObjectURL(await encode(mimeFor(name)));
+          a.download = name;
           a.click();
           setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+          S.fileName = name;
           hist.markSaved(savedAt); updateChrome();
-          flash('Downloaded ' + S.fileName);
+          flash('Downloaded ' + name);
           return;
         }
         h = await window.showSaveFilePicker({
-          suggestedName: S.fileName,
+          suggestedName: name,
           types: [
             { description: 'PNG', accept: { 'image/png': ['.png'] } },
             { description: 'JPEG', accept: { 'image/jpeg': ['.jpg', '.jpeg'] } },
@@ -992,11 +1007,15 @@
     // Both must be requested synchronously, before the DataTransfer expires.
     const hp = item.getAsFileSystemHandle ? item.getAsFileSystemHandle() : null;
     const file = item.getAsFile();
-    if (file && file.type && !file.type.startsWith('image/')) { flash('Not an image: ' + file.name, true); return; }
-    if (!confirmDiscard()) return;
+    if (!file || (file.type && !file.type.startsWith('image/'))) { flash('Not an image: ' + (file ? file.name : 'file'), true); return; }
+    // Decode before asking to discard, so a file that isn't an image never prompts.
+    let bmp;
+    try { bmp = await createImageBitmap(file); }
+    catch { flash('Not an image: ' + file.name, true); return; }
+    if (!confirmDiscard()) { bmp.close(); return; }
     let handle = null;
     try { handle = hp ? await hp : null; } catch { handle = null; }
-    loadFile(file, handle && handle.kind === 'file' ? handle : null);
+    loadFile(file, handle && handle.kind === 'file' ? handle : null, bmp);
   });
   $('#fileInput').addEventListener('change', (e) => {
     const f = e.target.files[0];
@@ -1036,8 +1055,12 @@
     const next = all.slice(i + 1).concat(all.slice(0, i).reverse()).find((x) => !x.disabled && x.offsetParent !== null);
     if (next) next.focus();
   }
+  // Range, radio and select fire 'change' on every arrow key, so only hand focus back after mouse use.
+  let pointerUsed = false;
+  document.addEventListener('pointerdown', () => { pointerUsed = true; }, true);
+  document.addEventListener('keydown', () => { pointerUsed = false; }, true);
   document.addEventListener('change', (e) => {
-    if (e.target.closest('.chrome') && e.target.type !== 'number') releaseFocus(e.target);
+    if (pointerUsed && e.target.closest('.chrome') && e.target.type !== 'number') releaseFocus(e.target);
   });
   function releaseFocus(el) {
     el.blur();
@@ -1054,8 +1077,9 @@
   $('#font').addEventListener('change', (e) => { S.font = e.target.value; if (textAt) placeTextBox(); });
   $('#fontSize').addEventListener('input', (e) => {
     const v = +e.target.value;
-    if (v >= 1) { S.fontSize = v; if (textAt) placeTextBox(); }
+    if (v >= 1) { S.fontSize = clamp(Math.round(v), 6, 400); if (textAt) placeTextBox(); }
   });
+  $('#fontSize').addEventListener('change', (e) => { e.target.value = S.fontSize; });
   $('#primary').addEventListener('input', (e) => { setColor('primary', e.target.value); });
   $('#secondary').addEventListener('input', (e) => { setColor('secondary', e.target.value); });
 
@@ -1131,7 +1155,7 @@
     if (el.dataset.hint) {
       const h = document.createElement('span');
       h.className = 'hint';
-      h.textContent = el.dataset.hint;
+      h.textContent = keyLabel(el.dataset.hint);
       tip.appendChild(h);
     }
     tip.hidden = false;
@@ -1157,6 +1181,7 @@
     tipTimer = setTimeout(() => showTip(el), performance.now() < tipWarmUntil ? 0 : 450);
   });
   document.addEventListener('pointerdown', hideTip, true);
+  document.documentElement.addEventListener('mouseleave', hideTip);
   document.addEventListener('focusin', (e) => {
     const el = e.target.closest && e.target.closest('.chrome [data-tip]');
     if (el && e.target.matches(':focus-visible')) { hideTip(); showTip(el); }
@@ -1179,7 +1204,7 @@
       ['Nudge selection (⇧ = 10px)', '←', '↑', '→', '↓'], ['Copy, cut, paste', '⌘C', '⌘X', '⌘V'], ['Crop to selection', '⌘⇧X']]],
     ['Drawing', [['Draw with color 1 / color 2', '~Left / right click'], ['Swap colors', 'X'], ['Smaller / bigger size', '[', ']'],
       ['Square, circle, 45° line', '⇧', '~drag'], ['Pick color 2 from a swatch', '~right-click / ⇧-click'],
-      ['New line in text', '⇧Enter']]],
+      ['Apply text', 'Enter'], ['New line in text', '⇧Enter'], ['Cancel text', 'Esc']]],
     ['Image', [['Resize image', '⇧R'], ['Canvas size', '⇧C'], ['Canvas: keep aspect', '⇧', '~drag corner'], ['Cancel canvas drag', 'Esc']]],
     ['File', [['New', 'Alt+N'], ['Open', '⌘O'], ['Save', '⌘S'], ['Save as', '⌘⇧S']]],
     ['View', [['Zoom in / out', '+', '−'], ['Zoom at pointer', '⌘', '~scroll'], ['Fit to window', '⇧1', '⌘0'], ['Actual size', '⇧0'],
@@ -1199,12 +1224,12 @@
           const row = document.createElement('div');
           row.className = 'row';
           const l = document.createElement('span');
-          l.textContent = label.replace('⇧', MAC ? '⇧' : 'Shift');
+          l.textContent = keyLabel(label);
           const k = document.createElement('span');
           k.className = 'keys';
           for (const key of keys) {
             const el = document.createElement(key[0] === '~' ? 'span' : 'kbd');
-            el.textContent = key[0] === '~' ? key.slice(1) : key === '⇧' && !MAC ? 'Shift' : keyLabel(key);
+            el.textContent = key[0] === '~' ? keyLabel(key.slice(1)) : keyLabel(key);
             k.appendChild(el);
           }
           row.append(l, k);
@@ -1242,5 +1267,5 @@
   setTool('pencil');
 
   // Handle for scripted smoke tests in the console.
-  window.__paint = { S, hist, img, flash, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, setZoom, fitZoom };
+  window.__paint = { S, hist, img, flash, save, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, setZoom, fitZoom };
 })();

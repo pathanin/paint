@@ -121,7 +121,7 @@ button.labeled { padding: 0 9px 0 7px; }
 /* ---------- options bar ---------- */
 #optbar {
   display: flex; align-items: center; gap: 16px;
-  height: 44px; padding: 0 12px 0 14px;
+  height: 48px; padding: 0 12px 0 14px;
   border-bottom: 1px solid var(--border);
   min-width: 0;
 }
@@ -130,8 +130,8 @@ button.labeled { padding: 0 9px 0 7px; }
 .opts > * { flex: none; }
 .opts label { display: flex; align-items: center; gap: 7px; color: var(--muted); }
 .opts [hidden] { display: none !important; }
-.opts output { min-width: 3ch; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
-.opts output + .unit { margin-left: -4px; }
+.opts output { min-width: 0; text-align: left; color: var(--text); font-variant-numeric: tabular-nums; }
+.opts output + .unit { margin-left: -4px; min-width: 4.5ch; } /* reserve width so later controls don't shift */
 .opts input[type=number] { width: 56px; color: var(--text); }
 .opts select { color: var(--text); }
 .hint { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto !important; min-width: 0; }
@@ -371,7 +371,8 @@ dialog fieldset:disabled { opacity: .4; }
   button.labeled { padding: 0 7px; }
 }
 @media (max-width: 960px) {
-  .hint { display: none; }
+  /* Keep the hint only for tools that have no other options, so their bar isn't empty. */
+  .hint:not([data-for=select]):not([data-for=picker]) { display: none; }
   #toolName { min-width: 0; }
 }
 @media (max-width: 820px) {
