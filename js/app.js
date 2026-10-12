@@ -98,7 +98,10 @@
     commitSelection();
     const before = cloneCanvas(img);
     setDoc(next, next.width, next.height);
-    pushHist({ type: 'doc', before, after: next, bytes: (before.width * before.height + next.width * next.height) * 4 });
+    pushDocHist(before, next);
+  }
+  function pushDocHist(before, after) {
+    pushHist({ type: 'doc', before, after, bytes: (before.width * before.height + after.width * after.height) * 4 });
   }
   function pushHist(e) {
     hist.push(e);
@@ -364,8 +367,17 @@
     ctx.drawImage(sel.float, sel.x, sel.y);
     touch(sel.x, sel.y, sel.w, sel.h);
     sel.float = null;
-    endOp();
+    finishFloat();
     requestRender();
+  }
+  // Close the undo step of a floating selection. A paste that grew the canvas becomes one
+  // whole-document step (original canvas -> grown + pasted), so a single undo reverts both.
+  function finishFloat() {
+    if (!sel.growFrom) { endOp(); return; }
+    const before = sel.growFrom;
+    sel.growFrom = null;
+    op = null;
+    pushDocHist(before, cloneCanvas(img));
   }
   function dropSelection() {
     commitSelection();
@@ -373,7 +385,7 @@
   }
   function deleteSelection() {
     if (!sel) return;
-    if (sel.float) { sel.float = null; endOp(); }
+    if (sel.float) { sel.float = null; finishFloat(); }
     else {
       beginOp();
       ctx.fillStyle = S.secondary;
@@ -431,13 +443,17 @@
     commitText();
     dropSelection();
     if (S.pristine) { docOp(cloneCanvas(bmp)); fitZoom(true); return; }
+    // Grow the canvas to fit the paste (each axis only as needed). No history entry yet:
+    // finishFloat() records grow + paste as a single undo step.
+    let growFrom = null;
     if (bmp.width > img.width || bmp.height > img.height) {
+      growFrom = cloneCanvas(img);
       const c = makeCanvas(Math.max(img.width, bmp.width), Math.max(img.height, bmp.height));
       const g = c.getContext('2d');
       g.fillStyle = S.secondary;
       g.fillRect(0, 0, c.width, c.height);
       g.drawImage(img, 0, 0);
-      docOp(c);
+      setDoc(c, c.width, c.height);
     }
     // Drop it at the top-left of what's visible.
     const r = img.getBoundingClientRect(), v = vp.getBoundingClientRect();
@@ -445,7 +461,7 @@
     const y = clamp(Math.floor((v.top - r.top) / S.zoom), 0, img.height - bmp.height);
     setTool('select');
     beginOp();
-    sel = { x, y, w: bmp.width, h: bmp.height, float: cloneCanvas(bmp) };
+    sel = { x, y, w: bmp.width, h: bmp.height, float: cloneCanvas(bmp), growFrom };
     requestRender();
   }
 
