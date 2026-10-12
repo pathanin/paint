@@ -100,7 +100,7 @@
     <span class="hint" data-for="select">Drag to select · drag inside to move</span>
     <span class="hint" data-for="eraser">Paints with color 2</span>
     <span class="hint" data-for="fill">Click: color 1 · right-click: color 2</span>
-    <span class="hint" data-for="picker">Click: color 1 · right-click: color 2 · then back to your tool</span>
+    <span class="hint" data-for="picker">Click: color 1 · right-click: color 2</span>
     <span class="hint" data-for="text">Click where the text should start</span>
     <span class="hint" data-for="line rect ellipse">Hold Shift to constrain</span>
   </div>
@@ -185,6 +185,7 @@
       <label>Height<span class="field"><input type="number" id="rH" min="1" required><span class="unit rUnitLbl">px</span></span></label>
       <label>Units<select id="rUnit"><option value="px">Pixels</option><option value="pct">Percent</option></select></label>
     </div>
+    <p class="note error" id="rErr" role="alert"></p>
     <label class="check"><input type="checkbox" id="rLock" checked> Keep aspect ratio</label>
     <fieldset id="rAnchor" disabled>
       <legend>Anchor</legend>

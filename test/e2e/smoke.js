@@ -1,0 +1,640 @@
+// End-to-end smoke test (Playwright + installed Chrome). See HANDOFF.md / README for how to run.
+// Functional smoke test. usage: node smoke.js [url]   exit 0 = all pass
+const { chromium } = require('playwright');
+const url = process.argv[2] || 'http://localhost:8765/';
+let fails = 0, passes = 0;
+const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m); } };
+(async () => {
+  const browser = await chromium.launch({ channel: 'chrome' });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    const errs = [];
+    page.on('pageerror', (e) => errs.push(e.message));
+    page.on('console', (m) => m.type() === 'error' && errs.push(m.text()));
+    page.on('dialog', (d) => d.accept());
+    await page.goto(url);
+    await page.waitForTimeout(300);
+    const P = (f, a) => page.evaluate(f, a);
+    // every tool button selects its tool
+    const tools = await P(() => [...document.querySelectorAll('button[data-tool]')].map((b) => b.dataset.tool));
+    ok(tools.length === 10, 'ten tool buttons, got ' + tools.length);
+    for (const t of tools) {
+      await page.click(`button[data-tool="${t}"]`);
+      ok(await P(() => window.__paint.S.tool) === t, 'tool button ' + t);
+      ok(await P((t) => document.querySelector('#toolName') ? document.querySelector('#toolName').textContent === document.querySelector(`button[data-tool="${t}"]`).dataset.tip : true, t), 'tool name label ' + t);
+      ok(await P(() => !document.querySelector('#stage').hasAttribute('aria-pressed')), 'stage not treated as tool button');
+      ok(await P((t) => { const b = document.querySelector(`button[data-tool="${t}"]`); return b.classList.contains('active') || b.getAttribute('aria-pressed') === 'true'; }, t), 'active state ' + t);
+    }
+    // shortcuts still work after clicking a toolbar control
+    await page.click('button[data-tool="select"]');
+    await page.keyboard.press('KeyB');
+    ok(await P(() => window.__paint.S.tool) === 'brush', 'B after toolbar click');
+    await page.click('#size');
+    await page.keyboard.press('KeyP');
+    ok(await P(() => window.__paint.S.tool) === 'pencil', 'P after slider click');
+    // undo disabled initially; stroke changes pixels; undo enabled
+    ok(await P(() => document.querySelector('[data-cmd="undo"]').disabled), 'undo disabled at start');
+    await page.keyboard.press('KeyB');
+    const box = await page.locator('#overlay').boundingBox();
+    const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+    await page.mouse.move(cx, cy); await page.mouse.down(); await page.mouse.move(cx + 40, cy + 20, { steps: 5 }); await page.mouse.up();
+    const px = () => P(() => { const c = document.querySelector('#image'); const r = c.getBoundingClientRect(); const x = Math.floor(c.width / 2), y = Math.floor(c.height / 2); return [...c.getContext('2d').getImageData(x, y, 1, 1).data].join(); });
+    ok(await px() === '0,0,0,255', 'stroke painted black at center, got ' + await px());
+    ok(!(await P(() => document.querySelector('[data-cmd="undo"]').disabled)), 'undo enabled after stroke');
+    await page.click('[data-cmd="undo"]');
+    ok(await px() === '255,255,255,255', 'undo button reverted stroke');
+    ok(!(await P(() => document.querySelector('[data-cmd="redo"]').disabled)), 'redo enabled after undo');
+    await page.keyboard.press('Meta+Shift+KeyZ');
+    ok(await px() === '0,0,0,255', '⌘⇧Z redo');
+    // palette: left sets primary, right sets secondary; X swaps
+    const sw = page.locator('#palette [data-color="#ed1c24"]');
+    await sw.click();
+    ok(await P(() => window.__paint.S.primary) === '#ed1c24', 'swatch click sets primary');
+    await page.locator('#palette [data-color="#22b14c"]').click({ button: 'right' });
+    ok(await P(() => window.__paint.S.secondary) === '#22b14c', 'swatch right-click sets secondary');
+    await page.keyboard.press('KeyX');
+    ok(await P(() => window.__paint.S.primary === '#22b14c' && window.__paint.S.secondary === '#ed1c24'), 'X swaps colors');
+    // command buttons open dialogs
+    for (const [cmd, dlg] of [['new', '#newDlg'], ['resize', '#resizeDlg'], ['canvasSize', '#resizeDlg'], ['help', '#helpDlg']]) {
+      await page.click(`[data-cmd="${cmd}"]`);
+      ok(await page.locator(dlg).evaluate((d) => d.open), cmd + ' opens ' + dlg);
+      await page.keyboard.press('Escape');
+      ok(!(await page.locator(dlg).evaluate((d) => d.open)), dlg + ' closes on Esc');
+    }
+    // rotate button changes dims; tool options visibility follows tool
+    await page.click('[data-cmd="rotR"]');
+    ok(await P(() => window.__paint.img.width === 600 && window.__paint.img.height === 800), 'rotate right');
+    await page.keyboard.press('KeyF');
+    ok(await page.locator('#tolerance').isVisible(), 'tolerance visible for fill');
+    ok(!(await page.locator('#size').isVisible()), 'size hidden for fill');
+    // zoom buttons
+    const z0 = await P(() => window.__paint.S.zoom);
+    await page.click('[data-cmd="zoomIn"]');
+    ok(await P(() => window.__paint.S.zoom) > z0, 'zoom in');
+    // --- round 1 review fixes ---
+    await page.reload(); await page.waitForTimeout(200);
+    // dirty clears when undone back to the saved/original state
+    await page.keyboard.press('KeyB');
+    await page.mouse.move(cx, cy); await page.mouse.down(); await page.mouse.move(cx + 30, cy, { steps: 3 }); await page.mouse.up();
+    ok(await page.locator('#docDirty').isVisible(), 'Edited shown after stroke');
+    await page.keyboard.press('Meta+KeyZ');
+    ok(!(await page.locator('#docDirty').isVisible()), 'Edited cleared after undo to original');
+    // keyboard: Space on a focused toolbar button activates it and focus stays
+    await page.locator('[data-cmd="flipH"]').focus();
+    const before = await P(() => window.__paint.hist.undoStack.length);
+    await page.keyboard.press('Space');
+    ok(await P(() => window.__paint.hist.undoStack.length) === before + 1, 'Space activates focused button');
+    ok(await P(() => document.activeElement.dataset.cmd) === 'flipH', 'focus stays on keyboard-activated button');
+    await page.keyboard.press('ArrowRight');
+    ok(await P(() => document.activeElement.dataset.cmd) === 'flipV', 'ArrowRight roves in top bar');
+    // mouse click releases focus so letter shortcuts work
+    await page.click('[data-cmd="flipV"]');
+    ok(await P(() => document.activeElement === document.body), 'mouse click releases focus');
+    // rail: one tab stop = active tool
+    ok(await P(() => [...document.querySelectorAll('#rail button')].filter((b) => b.tabIndex === 0).map((b) => b.dataset.tool).join()) === 'brush', 'rail tab stop is active tool');
+    // palette: shift-click and Shift+Enter set color 2; names as labels
+    await page.locator('#palette [data-color="#3f48cc"]').click({ modifiers: ['Shift'] });
+    ok(await P(() => window.__paint.S.secondary) === '#3f48cc', 'shift-click sets color 2');
+    await page.locator('#palette [data-color="#ff7f27"]').focus();
+    await page.keyboard.press('Shift+Enter');
+    ok(await P(() => window.__paint.S.secondary) === '#ff7f27', 'Shift+Enter on swatch sets color 2');
+    ok(await page.locator('#palette [data-color="#ed1c24"]').getAttribute('aria-label') === 'Red', 'swatch named');
+    await page.evaluate(() => document.activeElement.blur());
+    // text: changing font keeps the text box open
+    await page.keyboard.press('KeyT');
+    await page.mouse.click(cx - 100, cy - 100);
+    await page.keyboard.type('Hi');
+    // keyboard: focus stays on the select so arrows keep working; text stays open
+    await page.focus('#font');
+    await page.selectOption('#font', { label: 'Mono' });
+    ok(await P(() => !document.querySelector('#textInput').hidden), 'text box stays open after keyboard font change');
+    ok(await P(() => document.activeElement.id) === 'font', 'keyboard font change keeps focus on select');
+    // mouse: picking from the select hands focus back to the text
+    await page.dispatchEvent('#font', 'pointerdown');
+    await page.selectOption('#font', { label: 'Serif' });
+    ok(await P(() => !document.querySelector('#textInput').hidden), 'text box stays open after font change');
+    ok(await P(() => document.activeElement.id) === 'textInput', 'focus back in text box after mouse font change');
+    await page.keyboard.press('Enter');
+    ok(await P(() => document.querySelector('#textInput').hidden), 'Enter commits text');
+    // resize: too large keeps dialog open with an error
+    await page.keyboard.press('Shift+KeyR');
+    await page.waitForTimeout(100);
+    await page.fill('#rW', '20000');
+    await page.click('#resizeDlg button.primary');
+    ok(await page.locator('#resizeDlg').evaluate((d) => d.open), 'resize dialog stays open on too-large input');
+    ok(/between 1 and 16384/.test(await page.locator('#rErr').textContent()), 'resize shows inline error');
+    await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+    // crop hint
+    ok(await P(() => document.querySelector('#cropBtn').dataset.hint) === 'Select an area first', 'crop hint when disabled');
+    // narrow: nothing clipped in the top bar at 640px
+    for (const w of [640, 760, 900]) {
+      await page.setViewportSize({ width: w, height: 700 });
+      await page.waitForTimeout(100);
+      const [sw, cw] = await P(() => [document.querySelector('#topbar').scrollWidth, document.querySelector('#topbar').clientWidth]);
+      ok(sw <= cw, `top bar fits at ${w}px (${sw} > ${cw})`);
+      const [osw, ocw] = await P(() => [document.querySelector('#optbar').scrollWidth, document.querySelector('#optbar').clientWidth]);
+      ok(osw <= ocw, `options bar fits at ${w}px (${osw} > ${ocw})`);
+      // every visible tool option and the palette must actually be on screen and hit-testable
+      for (const tool of ['KeyP', 'KeyR', 'KeyT', 'KeyF']) {
+        await page.keyboard.press(tool);
+        const bad = await P(() => [...document.querySelectorAll('.opts [data-for]:not([hidden]):not(.hint) :is(input,select), #palette button, .well input')]
+          .filter((el) => {
+            const r = el.getBoundingClientRect();
+            if (!r.width || !r.height) return true;
+            const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+            return !(hit === el || el.contains(hit) || (hit && hit.closest('label') && hit.closest('label').contains(el)));
+          }).map((el) => el.id || el.name || el.dataset.color));
+        ok(bad.length === 0, `controls hidden/clipped at ${w}px with ${tool}: ${bad.join(',')}`);
+      }
+    }
+    // --- round 2 review fixes ---
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.reload(); await page.waitForTimeout(200);
+    const ib = await page.locator('#image').boundingBox();
+    // handle hit areas don't cover canvas pixels at the edge
+    const edgeHits = await P(([x, y, w, h]) => [
+      document.elementFromPoint(x + w - 1.5, y + h / 2).id,
+      document.elementFromPoint(x + w / 2, y + h - 1.5).id,
+      document.elementFromPoint(x + w - 1.5, y + h - 1.5).id,
+    ], [ib.x, ib.y, ib.width, ib.height]);
+    ok(edgeHits.every((id) => id === 'overlay'), 'edge pixels hit the canvas, got ' + edgeHits);
+    // palette marks current colors
+    ok(await P(() => document.querySelector('#palette [data-color="#000000"]').classList.contains('is1')), 'black swatch marked as color 1 at start');
+    ok(await P(() => document.querySelector('#palette [data-color="#ffffff"]').classList.contains('is2')), 'white swatch marked as color 2 at start');
+    await page.click('#palette [data-color="#22b14c"]');
+    ok(await P(() => document.querySelector('#palette [data-color="#22b14c"]').getAttribute('aria-pressed')) === 'true', 'clicked swatch pressed');
+    ok(await P(() => !document.querySelector('#palette [data-color="#000000"]').classList.contains('is1')), 'old swatch unmarked');
+    // Esc dismisses a keyboard tooltip
+    await page.locator('[data-cmd="open"]').focus();
+    await page.keyboard.press('ArrowLeft'); await page.waitForTimeout(50);
+    ok(await page.locator('#tip').isVisible(), 'keyboard focus shows tooltip');
+    await page.keyboard.press('Escape');
+    ok(!(await page.locator('#tip').isVisible()), 'Esc hides tooltip');
+    // undo via keyboard until disabled keeps focus in the toolbar
+    await page.evaluate(() => document.activeElement.blur());
+    await page.keyboard.press('KeyP');
+    await page.mouse.move(cx, cy); await page.mouse.down(); await page.mouse.move(cx + 20, cy, { steps: 2 }); await page.mouse.up();
+    await page.locator('[data-cmd="undo"]').focus();
+    await page.keyboard.press('Enter');
+    ok(await P(() => document.querySelector('[data-cmd="undo"]').disabled), 'undo disabled at start of history');
+    ok(await P(() => !!document.activeElement.closest('#topbar')), 'focus stays in top bar after undo disables itself, got ' + await P(() => document.activeElement.tagName));
+    await page.evaluate(() => document.activeElement.blur());
+    // Space-pan resets on window blur
+    await page.keyboard.down('Space');
+    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+    await page.keyboard.up('Space'); // keyup lost in real life; emulate by resetting below
+    await page.keyboard.down('Space');
+    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+    ok(await P(() => window.__paint.S.panKey === false), 'panKey cleared on blur');
+    await page.keyboard.up('Space');
+    // Shift+0 / Shift+1 zoom
+    await page.keyboard.press('Shift+Digit1');
+    const zf = await P(() => window.__paint.S.zoom);
+    await page.keyboard.press('Shift+Digit0');
+    ok(await P(() => window.__paint.S.zoom) === 1 && zf !== 1, 'Shift+1 fits, Shift+0 actual size');
+    ok(/100%/.test(await page.locator('#zoomBtn').getAttribute('aria-label')), 'zoom button label carries value');
+    // download-save feedback
+    await page.evaluate(() => { delete window.showSaveFilePicker; window.showSaveFilePicker = undefined; });
+    await page.click('[data-cmd="save"]');
+    await page.waitForTimeout(150);
+    ok(/Downloaded/.test(await page.locator('#toast').textContent()), 'download save shows toast');
+    // resize dialog title follows mode
+    await page.keyboard.press('Shift+KeyC'); await page.waitForTimeout(100);
+    ok(await page.locator('#resizeTitle').textContent() === 'Canvas size', 'canvas dialog titled');
+    await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+    // short window: rail buttons keep their size
+    await page.setViewportSize({ width: 1280, height: 420 }); await page.waitForTimeout(100);
+    ok(await P(() => Math.min(...[...document.querySelectorAll('#rail button')].map((b) => b.getBoundingClientRect().height))) >= 36, 'rail buttons stay 36px at 420px height');
+    // narrow: unsaved state still visible
+    await page.setViewportSize({ width: 760, height: 700 }); await page.waitForTimeout(100);
+    await page.keyboard.press('KeyP');
+    await page.mouse.move(300, 400); await page.mouse.down(); await page.mouse.move(330, 400, { steps: 2 }); await page.mouse.up();
+    ok(await P(() => getComputedStyle(document.querySelector('[data-cmd="save"]'), '::after').content !== 'none'), 'unsaved marker (Save dot) visible at 760px');
+    // text: Enter in font size field applies the text
+    await page.setViewportSize({ width: 1280, height: 800 }); await page.waitForTimeout(100);
+    await page.keyboard.press('KeyT');
+    await page.mouse.click(cx - 50, cy - 50);
+    await page.keyboard.type('Yo');
+    await page.fill('#fontSize', '30');
+    await page.keyboard.press('Enter');
+    ok(await P(() => document.querySelector('#textInput').hidden), 'Enter in size field applies text');
+    // --- round 3 review fixes ---
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.reload(); await page.waitForTimeout(200);
+    // cut with no selection does not claim "Cut"
+    await page.evaluate(() => { navigator.clipboard.write = async () => {}; });
+    await page.keyboard.press('Meta+KeyX'); await page.waitForTimeout(100);
+    ok(!/^Cut$/.test(await page.locator('#toast').textContent()), 'no "Cut" toast without a selection, got ' + await page.locator('#toast').textContent());
+    // layout-aware punctuation: German "+" key (code BracketRight) zooms, doesn't resize the brush
+    await page.keyboard.press('KeyB');
+    const sz0 = await P(() => window.__paint.S.sizes.brush), z0b = await P(() => window.__paint.S.zoom);
+    await page.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: '+', code: 'BracketRight', bubbles: true })));
+    ok(await P(() => window.__paint.S.sizes.brush) === sz0 && await P(() => window.__paint.S.zoom) > z0b, 'German + zooms in');
+    const sz1 = await P(() => window.__paint.S.sizes.brush);
+    await page.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ü', code: 'BracketLeft', bubbles: true })));
+    ok(await P(() => window.__paint.S.sizes.brush) === sz1, 'German ü does nothing');
+    await page.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'и', code: 'KeyB', bubbles: true })));
+    ok(await P(() => window.__paint.S.tool) === 'brush', 'Cyrillic layout letter falls back to physical key');
+    await page.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'п', code: 'KeyG', bubbles: true })));
+    await page.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'е', code: 'KeyT', bubbles: true })));
+    ok(await P(() => window.__paint.S.tool) === 'text', 'Cyrillic physical T selects text');
+    // zoom aria-label reads correctly away from 100%
+    await page.keyboard.press('Shift+Digit1');
+    ok(!/\d+%, actual size/.test(await page.locator('#zoomBtn').getAttribute('aria-label')), 'zoom label not "N%, actual size": ' + await page.locator('#zoomBtn').getAttribute('aria-label'));
+    // IME: Enter while composing doesn't commit
+    await page.keyboard.press('Shift+Digit0');
+    await page.keyboard.press('KeyT');
+    await page.mouse.click(cx - 80, cy - 80);
+    await page.keyboard.type('ka');
+    await page.evaluate(() => document.querySelector('#textInput').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true })));
+    ok(await P(() => !document.querySelector('#textInput').hidden), 'Enter during IME composition keeps text open');
+    ok(await page.locator('#stHint').isVisible(), 'status bar explains text keys while editing');
+    await page.keyboard.press('Escape');
+    ok(!(await page.locator('#stHint').isVisible()), 'text key hint gone after Esc');
+    // non-image drop doesn't ask to discard
+    await page.keyboard.press('KeyP');
+    await page.mouse.move(cx, cy); await page.mouse.down(); await page.mouse.move(cx + 10, cy, { steps: 2 }); await page.mouse.up();
+    let dialogs = 0;
+    const onDlg = () => dialogs++;
+    page.on('dialog', onDlg);
+    await page.evaluate(() => { const dt = new DataTransfer(); dt.items.add(new File(['x'], 'notes.txt', { type: 'text/plain' })); window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); });
+    await page.waitForTimeout(150);
+    page.off('dialog', onDlg);
+    ok(dialogs === 0, 'non-image drop does not prompt to discard');
+    ok(/Not an image/.test(await page.locator('#toast').textContent()), 'non-image drop reports it');
+    // help lists ⌘0, swatch color 2, middle-drag
+    await page.keyboard.press('Shift+Slash'); await page.waitForTimeout(100);
+    const helpTxt = await page.locator('#helpBody').textContent();
+    ok(/⌘0/.test(helpTxt) && /swatch/i.test(helpTxt) && /middle/i.test(helpTxt) && /⌘Y/.test(helpTxt), 'help lists ⌘0, swatch, middle-drag, ⌘Y');
+    await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+    // palette exposes color 2
+    ok(/color 2/i.test(await page.locator('#palette [data-color="#ffffff"]').getAttribute('aria-label')), 'color 2 swatch labelled');
+    // tiny image: only the corner handle, and auto-zoom to an integer
+    const png = await page.evaluate(() => { const c = document.createElement('canvas'); c.width = 16; c.height = 12; return c.toDataURL('image/png').split(',')[1]; });
+    await page.setInputFiles('#fileInput', { name: 'tiny.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') });
+    await page.waitForTimeout(200);
+    ok(await P(() => window.__paint.img.width) === 16, 'tiny image opened');
+    const tz = await P(() => window.__paint.S.zoom);
+    ok(tz > 1 && Number.isInteger(tz), 'tiny image opens at an integer zoom > 1, got ' + tz);
+    ok(!(await page.locator('.handle[data-edge=e]').isVisible()) && await page.locator('.handle[data-edge=se]').isVisible() || (await P(() => window.__paint.img.width * window.__paint.S.zoom)) >= 40, 'tiny stage keeps only the corner handle');
+    // --- round 4 review fixes ---
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.reload(); await page.waitForTimeout(200);
+    // keyboard on slider and radios keeps focus
+    await page.keyboard.press('KeyR');
+    await page.focus('#size');
+    const s0 = await P(() => window.__paint.S.sizes.rect);
+    await page.keyboard.press('ArrowRight'); await page.keyboard.press('ArrowRight');
+    ok(await P(() => window.__paint.S.sizes.rect) === s0 + 2, 'two arrow presses step the size twice');
+    ok(await P(() => document.activeElement.id) === 'size', 'slider keeps focus on arrow keys');
+    await page.focus('input[name=fillMode][value=outline]');
+    await page.keyboard.press('ArrowRight'); await page.keyboard.press('ArrowRight');
+    ok(await P(() => window.__paint.S.fillMode) === 'both', 'arrows move through shape styles');
+    // mouse use of the slider still hands focus back
+    await page.locator('#size').click();
+    ok(await P(() => document.activeElement === document.body), 'mouse on slider releases focus');
+    // tooltip hides when pointer leaves the window
+    await page.hover('[data-cmd="save"]'); await page.waitForTimeout(700);
+    ok(await page.locator('#tip').isVisible(), 'hover tip shown');
+    await page.evaluate(() => document.documentElement.dispatchEvent(new MouseEvent('mouseleave', { relatedTarget: null })));
+    await page.mouse.move(640, -20);
+    await page.waitForTimeout(50);
+    ok(!(await page.locator('#tip').isVisible()), 'tip hides when pointer leaves window');
+    // font size clamps
+    await page.keyboard.press('KeyT');
+    await page.fill('#fontSize', '5000');
+    ok(await P(() => window.__paint.S.fontSize) <= 400, 'font size clamped');
+    await page.locator('#fontSize').press('Enter');
+    ok(await page.locator('#fontSize').inputValue() === '400', 'clamped size written back');
+    // help lists text Enter/Esc
+    await page.keyboard.press('Shift+Slash'); await page.waitForTimeout(100);
+    ok(/Apply text/.test(await page.locator('#helpBody').textContent()), 'help lists Apply text');
+    await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+    // paste that grows the canvas says so
+    await page.keyboard.press('KeyP');
+    await page.mouse.move(cx, cy); await page.mouse.down(); await page.mouse.move(cx + 5, cy, { steps: 2 }); await page.mouse.up();
+    await page.evaluate(() => { const c = document.createElement('canvas'); c.width = 1200; c.height = 300; window.__paint.pasteImage(c); });
+    ok(/enlarged/i.test(await page.locator('#toast').textContent()), 'grow-on-paste toast');
+    // saving over an unsupported format goes to Save As as .png
+    const saveLog = await page.evaluate(async () => {
+      const log = [];
+      window.__paint.S.fileName = 'pic.bmp';
+      window.__paint.S.fileHandle = { name: 'pic.bmp', queryPermission: async () => 'granted', requestPermission: async () => 'granted', createWritable: async () => { log.push('wrote-bmp'); return { write: async () => {}, close: async () => {} }; } };
+      window.showSaveFilePicker = async (o) => { log.push('picker:' + o.suggestedName); return { name: o.suggestedName, createWritable: async () => ({ write: async () => {}, close: async () => {} }) }; };
+      await window.__paint.save(false);
+      return log;
+    });
+    ok(!saveLog.includes('wrote-bmp') && saveLog.includes('picker:pic.png'), 'bmp save goes to Save As pic.png: ' + saveLog);
+    // short options for select/picker on narrow screens
+    await page.setViewportSize({ width: 760, height: 700 }); await page.waitForTimeout(100);
+    await page.keyboard.press('KeyS');
+    ok(await page.locator('.hint[data-for~="select"]').isVisible(), 'select hint visible at 760');
+    await page.keyboard.press('KeyI');
+    ok(await page.locator('.hint[data-for~="picker"]').isVisible(), 'picker hint visible at 760');
+    await page.setViewportSize({ width: 1280, height: 800 });
+    // --- round 5 review fixes ---
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.reload(); await page.waitForTimeout(200);
+    {
+      const png = await page.evaluate(() => { const c = document.createElement('canvas'); c.width = 200; c.height = 100; const g = c.getContext('2d'); g.fillStyle = '#c00'; g.fillRect(0, 0, 100, 100); return c.toDataURL().split(',')[1]; });
+      await page.setInputFiles('#fileInput', { name: 'half.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') });
+      await page.waitForTimeout(200);
+    }
+    // floating paste counts as unsaved, and Undo is available
+    await page.evaluate(() => { const c = document.createElement('canvas'); c.width = 20; c.height = 20; window.__paint.pasteImage(c); });
+    ok(await page.locator('#docDirty').isVisible(), 'floating paste shows Edited');
+    ok(!(await P(() => document.querySelector('[data-cmd="undo"]').disabled)), 'undo enabled with a floating paste');
+    let asked = 0; const onAsk = () => { asked++; }; // the global handler accepts
+    page.on('dialog', onAsk);
+    await page.keyboard.press('Alt+KeyN'); await page.waitForTimeout(100);
+    page.off('dialog', onAsk);
+    ok(asked === 1, 'New asks to discard a floating paste');
+    await page.keyboard.press('Escape'); await page.waitForTimeout(150); // close the New dialog
+    await page.click('[data-cmd="undo"]');
+    ok(!(await page.locator('#docDirty').isVisible()), 'undo of floating paste is clean again');
+    // picker on a transparent pixel doesn't pick black
+    await page.click('#palette [data-color="#3f48cc"]'); // non-black, so picking black would show
+    await page.keyboard.press('KeyI');
+    await page.click('[data-cmd="zoom100"]');
+    const hb = await page.locator('#image').boundingBox();
+    const prim = await P(() => window.__paint.S.primary);
+    await page.mouse.click(hb.x + hb.width * 0.75, hb.y + hb.height / 2);
+    ok(await P(() => window.__paint.S.primary) === prim, 'transparent pick keeps color 1');
+    await page.mouse.click(hb.x + hb.width * 0.25, hb.y + hb.height / 2);
+    ok(await P(() => window.__paint.S.primary) === '#cc0000', 'opaque pick works');
+    // file name live region not rewritten per stroke
+    const muts = await page.evaluate(async () => {
+      let n = 0; const mo = new MutationObserver((m) => { n += m.length; });
+      mo.observe(document.querySelector('#docTitle'), { childList: true, characterData: true, subtree: true });
+      window.__paint.undo(); window.__paint.redo(); window.__paint.undo();
+      await new Promise((r) => setTimeout(r, 50)); mo.disconnect(); return n;
+    });
+    ok(muts === 0, 'doc title not rewritten when unchanged, mutations=' + muts);
+    // unchanged resize says so
+    await page.keyboard.press('Shift+KeyR'); await page.waitForTimeout(100);
+    const w1 = await page.locator('#resizeDlg').evaluate((d) => d.getBoundingClientRect().width);
+    await page.fill('#rW', '99999'); await page.click('#resizeDlg button.primary');
+    const w2 = await page.locator('#resizeDlg').evaluate((d) => d.getBoundingClientRect().width);
+    ok(Math.abs(w1 - w2) < 1, `resize dialog width stable (${w1} vs ${w2})`);
+    await page.fill('#rW', '200'); await page.fill('#rH', '100'); await page.click('#resizeDlg button.primary');
+    await page.waitForTimeout(100);
+    ok(/unchanged/i.test(await page.locator('#toast').textContent()), 'unchanged size toast');
+    // anchor grid: Down goes to the cell below
+    await page.keyboard.press('Shift+KeyC'); await page.waitForTimeout(100);
+    await page.focus('input[name=anchor][value=mc]');
+    await page.keyboard.press('ArrowDown');
+    ok(await P(() => document.querySelector('input[name=anchor]:checked').value) === 'bc', 'anchor Down moves to cell below');
+    await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+    // crop stays reachable by keyboard and explains itself
+    ok(await P(() => { const b = document.querySelector('#cropBtn'); return !b.disabled && b.getAttribute('aria-disabled') === 'true'; }), 'crop aria-disabled, focusable');
+    await page.click('#cropBtn', { force: true }); // Playwright treats aria-disabled as not clickable; users can click it
+    ok(/Select an area/.test(await page.locator('#toast').textContent()), 'crop without selection explains');
+    // zoom presets
+    await page.keyboard.press('Shift+Digit0');
+    await page.click('[data-cmd="zoomIn"]');
+    ok(await P(() => window.__paint.S.zoom) === 1.5, 'zoom in from 100% goes to 150%');
+    await page.keyboard.press('Minus');
+    ok(await P(() => window.__paint.S.zoom) === 1, 'zoom out returns to 100%');
+    // help complete and fits at 1280x800
+    await page.keyboard.press('Shift+Slash'); await page.waitForTimeout(150);
+    const ht = await page.locator('#helpBody').textContent();
+    ok(/⌘\+/.test(ht) && /Cancel shape or selection drag/.test(ht), 'help lists ⌘+ and Esc cancel for drags');
+    ok(await P(() => { const b = document.querySelector('#helpBody'); return b.scrollHeight <= b.clientHeight + 1; }), 'help fits at 1280x800 without scrolling');
+    await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+    // 600px wide: nothing clipped
+    await page.setViewportSize({ width: 600, height: 700 }); await page.waitForTimeout(100);
+    ok(await P(() => { const t = document.querySelector('#topbar'); return t.scrollWidth <= t.clientWidth; }), 'top bar fits at 600');
+    await page.keyboard.press('KeyR');
+    ok(await P(() => { const r = document.querySelector('.seg[data-for]').getBoundingClientRect(), o = document.querySelector('.opts').getBoundingClientRect(); return r.right <= o.right + 0.5; }), 'shape style not clipped at 600');
+    await page.setViewportSize({ width: 1280, height: 800 });
+    // --- round 6 review fixes ---
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.reload(); await page.waitForTimeout(200);
+    await page.click('[data-cmd="zoom100"]');
+    const ob = await page.locator('#image').boundingBox();
+    const at = (x, y) => [ob.x + x, ob.y + y];
+    // content to select
+    await page.keyboard.press('KeyR');
+    await page.mouse.move(...at(100, 100)); await page.mouse.down(); await page.mouse.move(...at(160, 140), { steps: 3 }); await page.mouse.up();
+    await page.evaluate(() => { window.__paint.hist.markSaved(); if (window.__paint.updateChrome) window.__paint.updateChrome(); });
+    await page.keyboard.press('KeyS');
+    await page.mouse.move(...at(90, 90)); await page.mouse.down(); await page.mouse.move(...at(170, 150), { steps: 3 }); await page.mouse.up();
+    // a bare click inside the selection changes nothing
+    await page.mouse.click(...at(120, 120));
+    ok(!(await page.locator('#docDirty').isVisible()), 'bare click in selection is not an edit');
+    // Esc during a move cancels it cleanly, with no errors
+    const errsBefore = errs.length;
+    await page.mouse.move(...at(120, 120)); await page.mouse.down(); await page.mouse.move(...at(220, 220), { steps: 3 });
+    await page.keyboard.press('Escape');
+    await page.mouse.move(...at(240, 240), { steps: 3 }); await page.mouse.up();
+    ok(errs.length === errsBefore, 'no errors after Esc mid-move: ' + errs.slice(errsBefore));
+    ok(await P(() => { const s = window.__paint.sel; return !s || (s.x === 90 && s.y === 90); }), 'Esc mid-move returns selection to origin');
+    ok(!(await page.locator('#docDirty').isVisible()), 'cancelled move is not an edit');
+    // tool key / Delete mid-move are ignored
+    await page.keyboard.press('KeyS');
+    await page.mouse.move(...at(90, 90)); await page.mouse.down(); await page.mouse.move(...at(170, 150), { steps: 3 }); await page.mouse.up();
+    await page.mouse.move(...at(120, 120)); await page.mouse.down(); await page.mouse.move(...at(200, 200), { steps: 3 });
+    await page.keyboard.press('KeyP'); await page.keyboard.press('Delete');
+    await page.mouse.move(...at(210, 210), { steps: 2 }); await page.mouse.up();
+    ok(errs.length === errsBefore, 'no errors after keys mid-move');
+    ok(await P(() => window.__paint.S.tool) === 'select', 'tool key ignored mid-drag');
+    // undo of a move clears the marquee
+    await page.keyboard.press('Meta+KeyZ');
+    ok(await P(() => window.__paint.sel) === null, 'undo clears the selection marquee');
+    // a completed move, then undo: no stale marquee left at the destination
+    await page.keyboard.press('KeyS');
+    await page.mouse.move(...at(90, 90)); await page.mouse.down(); await page.mouse.move(...at(170, 150), { steps: 3 }); await page.mouse.up();
+    await page.mouse.move(...at(120, 120)); await page.mouse.down(); await page.mouse.move(...at(300, 260), { steps: 4 }); await page.mouse.up();
+    ok(await P(() => !!window.__paint.sel && window.__paint.sel.x !== 90), 'selection moved');
+    await page.keyboard.press('Meta+KeyZ');
+    ok(await P(() => window.__paint.sel) === null, 'undo after a completed move clears the marquee');
+    // arrows on a focused toolbar button don't nudge a selection
+    await page.keyboard.press('Meta+KeyA');
+    await page.locator('[data-cmd="new"]').focus();
+    await page.keyboard.press('ArrowDown');
+    ok(await P(() => window.__paint.sel.y) === 0, 'ArrowDown on toolbar does not nudge');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await page.evaluate(() => document.activeElement.blur());
+    // zero-size rect click is not an edit
+    await page.evaluate(() => { window.__paint.hist.markSaved(); if (window.__paint.updateChrome) window.__paint.updateChrome(); });
+    await page.keyboard.press('KeyR');
+    await page.mouse.click(...at(400, 300));
+    ok(!(await page.locator('#docDirty').isVisible()), 'zero-size rectangle is not an edit');
+    // paste after explicit New keeps the chosen size
+    await page.keyboard.press('Alt+KeyN'); await page.waitForTimeout(100);
+    await page.fill('#newW', '1200'); await page.fill('#newH', '900');
+    await page.click('#newDlg button.primary'); await page.waitForTimeout(100);
+    await page.evaluate(() => { const c = document.createElement('canvas'); c.width = 120; c.height = 80; window.__paint.pasteImage(c); });
+    ok(await P(() => window.__paint.img.width === 1200 && window.__paint.img.height === 900), 'paste keeps user-chosen New size');
+    await page.keyboard.press('Escape');
+    // focus rings in options bar not clipped
+    await page.keyboard.press('KeyF');
+    await page.focus('#tolerance');
+    ok(await P(() => { const el = document.querySelector('#tolerance'), r = el.getBoundingClientRect(); const o = document.querySelector('.opts').getBoundingClientRect(); return r.top - 3 >= o.top - 0.5 && r.bottom + 3 <= o.bottom + 0.5; }), 'focus ring room inside .opts');
+    ok(await P(() => { const sw = document.querySelector('.well .swap').getBoundingClientRect(), bar = document.querySelector('#optbar').getBoundingClientRect(); return sw.top - 3 >= bar.top; }), 'swap button ring inside bar');
+    // zoom buttons disable at limits
+    await page.evaluate(() => window.__paint.setZoom(32));
+    ok(await P(() => document.querySelector('[data-cmd="zoomIn"]').disabled), 'zoom in disabled at max');
+    await page.evaluate(() => window.__paint.setZoom(1));
+    // hover tooltip doesn't swallow Esc
+    await page.keyboard.press('Meta+KeyA');
+    await page.hover('[data-cmd="save"]'); await page.waitForTimeout(700);
+    await page.keyboard.press('Escape');
+    ok(await P(() => window.__paint.sel) === null, 'Esc deselects even with a hover tooltip');
+    // text commit lands where the editor showed it (within 1 image px)
+    await page.mouse.move(5, 400);
+    await page.evaluate(() => window.__paint.setZoom(2));
+    await page.keyboard.press('KeyT');
+    const tb = await page.locator('#image').boundingBox();
+    const vb = await page.locator('#viewport').boundingBox();
+    await page.mouse.click(vb.x + vb.width / 2, vb.y + vb.height / 2); // image origin may be scrolled away at 200%
+    await page.keyboard.type('HIH');
+    const box1 = await page.locator('#textInput').boundingBox();
+    const clip = { x: box1.x - 10, y: box1.y - 10, width: box1.width + 20, height: box1.height + 20 };
+    const inkBox = async () => page.evaluate(async (clip) => 0, clip);
+    const shotA = await page.screenshot({ clip });
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(100);
+    const shotB = await page.screenshot({ clip });
+    const ink = await page.evaluate(async ([a, b]) => {
+      const load = (b64) => new Promise((r) => { const i = new Image(); i.onload = () => r(i); i.src = 'data:image/png;base64,' + b64; });
+      const box = (img) => { const c = document.createElement('canvas'); c.width = img.width; c.height = img.height; const g = c.getContext('2d'); g.drawImage(img, 0, 0);
+        const d = g.getImageData(0, 0, c.width, c.height).data; let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+        for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) { const i = (y * c.width + x) * 4; if (d[i] < 80 && d[i + 1] < 80 && d[i + 2] < 80) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); } }
+        return [x0, y0, x1, y1]; };
+      return [box(await load(a)), box(await load(b))];
+    }, [shotA.toString('base64'), shotB.toString('base64')]);
+    const dx = Math.abs(ink[0][0] - ink[1][0]), dy = Math.abs(ink[0][1] - ink[1][1]);
+    console.log('text offset css px at 200%:', dx, dy);
+    ok(dx <= 1 && dy <= 1, `committed text within half an image px of editor (dx=${dx}, dy=${dy} css px at 200%)`);
+    await page.evaluate(() => window.__paint.setZoom(1));
+    // --- round 7 review fixes ---
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.reload(); await page.waitForTimeout(200);
+    // consecutive whole-image ops share canvases: 4000x3000 keeps >= 4 rotations of undo
+    {
+      const big = await page.evaluate(() => { const c = document.createElement('canvas'); c.width = 4000; c.height = 3000; return c.toDataURL().split(',')[1]; });
+      await page.setInputFiles('#fileInput', { name: 'photo.png', mimeType: 'image/png', buffer: Buffer.from(big, 'base64') });
+      await page.waitForTimeout(500);
+      for (let i = 0; i < 4; i++) await page.click('[data-cmd="rotR"]');
+      ok(await P(() => window.__paint.hist.undoStack.length) === 4, 'four rotations of a 4000x3000 image all undoable, got ' + await P(() => window.__paint.hist.undoStack.length));
+      for (let i = 0; i < 6; i++) await page.click('[data-cmd="rotR"]');
+      const n = await P(() => window.__paint.hist.undoStack.length);
+      ok(n < 10 ? /undo/i.test(await page.locator('#toast').textContent()) : true, 'trimmed history is announced (' + n + ' steps)');
+      await page.evaluate(() => { window.__paint.hist.clear(); window.__paint.updateChrome && window.__paint.updateChrome(); });
+      await page.keyboard.press('Alt+KeyN'); await page.waitForTimeout(100);
+      await page.fill('#newW', '800'); await page.fill('#newH', '600'); await page.click('#newDlg button.primary'); await page.waitForTimeout(100);
+    }
+    // shortcuts are ignored mid-gesture
+    const cbox = await page.locator('#viewport').boundingBox();
+    const mx = cbox.x + cbox.width / 2, my = cbox.y + cbox.height / 2;
+    await page.keyboard.press('KeyP');
+    await page.mouse.move(mx, my); await page.mouse.down(); await page.mouse.move(mx + 20, my, { steps: 2 });
+    await page.keyboard.press('Shift+KeyR'); await page.keyboard.press('Shift+Slash'); await page.keyboard.press('Meta+KeyA');
+    await page.mouse.move(mx + 40, my, { steps: 2 }); await page.mouse.up();
+    ok(!(await P(() => !!document.querySelector('dialog[open]'))) && await P(() => window.__paint.sel) === null, 'no dialogs or select-all mid-stroke');
+    // Shift constrains a shape without moving the mouse
+    await page.keyboard.press('KeyR');
+    await page.mouse.move(mx, my); await page.mouse.down(); await page.mouse.move(mx + 80, my + 30, { steps: 2 });
+    ok(await P(() => window.__paint.drag && window.__paint.drag.shift === false), 'shape not constrained before Shift');
+    await page.keyboard.down('Shift');
+    ok(await P(() => window.__paint.drag && window.__paint.drag.shift === true), 'Shift constrains shape without mouse move');
+    await page.keyboard.up('Shift');
+    ok(await P(() => window.__paint.drag && window.__paint.drag.shift === false), 'releasing Shift unconstrains');
+    await page.mouse.up();
+    // dirty marker on Save at narrow widths
+    await page.setViewportSize({ width: 600, height: 700 }); await page.waitForTimeout(100);
+    ok(await P(() => getComputedStyle(document.querySelector('[data-cmd="save"]'), '::after').content !== 'none'), 'save button shows unsaved dot at 600px');
+    await page.setViewportSize({ width: 1280, height: 800 }); await page.waitForTimeout(100);
+    // New dialog validates inline, no native bubble
+    await page.evaluate(() => { window.__paint.hist.markSaved(); window.__paint.updateChrome && window.__paint.updateChrome(); });
+    await page.keyboard.press('Alt+KeyN'); await page.waitForTimeout(100);
+    await page.fill('#newW', '0'); await page.click('#newDlg button.primary');
+    ok(await page.locator('#newDlg').evaluate((d) => d.open && d.querySelector('form').noValidate), 'New dialog stays open, novalidate');
+    ok(/between 1 and 16384/.test(await page.locator('#newNote').textContent()), 'New dialog inline error');
+    await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+    // error toasts go to an assertive live region
+    await page.evaluate(() => window.__paint.flash('Save failed: x', true));
+    await page.waitForTimeout(100);
+    ok(/Save failed/.test(await page.locator('#srAlert').textContent()), 'error announced assertively');
+    // canvas has an accessible name
+    ok(/800 × 600/.test(await page.locator('#image').getAttribute('aria-label') || ''), 'image canvas labelled with size');
+    ok(await page.locator('#overlay').getAttribute('aria-hidden') === 'true', 'overlay hidden from AT');
+    // clicking a toolbar zoom button while typing keeps the text open
+    await page.keyboard.press('KeyT');
+    await page.mouse.click(mx, my); await page.keyboard.type('ok');
+    await page.click('[data-cmd="zoomIn"]');
+    ok(await P(() => !document.querySelector('#textInput').hidden), 'zoom click keeps text editing open');
+    await page.keyboard.press('Escape');
+    // --- round 8 review fixes ---
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.reload(); await page.waitForTimeout(200);
+    {
+      const vb = await page.locator('#viewport').boundingBox();
+      const mx = vb.x + vb.width / 2, my = vb.y + vb.height / 2;
+      // open text + dialog + cancel: text is never left dead
+      for (const cmd of ['resize', 'help', 'new']) {
+        await page.keyboard.press('KeyT');
+        await page.mouse.click(mx, my); await page.keyboard.type('Hi');
+        await page.click(`[data-cmd="${cmd}"]`); await page.waitForTimeout(100);
+        await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+        const st = await P(() => [document.querySelector('#textInput').hidden, document.activeElement.id]);
+        ok(st[0] === true || st[1] === 'textInput', `text not left dead after ${cmd} dialog: ${st}`);
+        if (!st[0]) await page.keyboard.press('Escape');
+      }
+      // resize error announced + bad field marked
+      await page.keyboard.press('Shift+KeyR'); await page.waitForTimeout(100);
+      await page.fill('#rW', '0'); await page.click('#resizeDlg button.primary');
+      ok(await P(() => !!document.querySelector('#resizeDlg [role=alert]') && /between/.test(document.querySelector('#resizeDlg [role=alert]').textContent)), 'resize error in an alert region');
+      ok(await P(() => document.querySelector('#rW').getAttribute('aria-invalid') === 'true' && document.activeElement.id === 'rW'), 'bad resize field marked and focused');
+      await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+      await page.keyboard.press('Alt+KeyN'); await page.waitForTimeout(100);
+      await page.fill('#newH', '0'); await page.click('#newDlg button.primary');
+      ok(await P(() => document.querySelector('#newH').getAttribute('aria-invalid') === 'true' && document.activeElement.id === 'newH'), 'bad New field marked and focused');
+      await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+      // Save label says unsaved when dirty
+      await page.keyboard.press('KeyP');
+      await page.mouse.move(mx, my); await page.mouse.down(); await page.mouse.move(mx + 10, my, { steps: 2 }); await page.mouse.up();
+      ok(/unsaved/i.test(await page.locator('[data-cmd="save"]').getAttribute('aria-label')), 'Save label mentions unsaved changes');
+      // held ⌘S opens one picker
+      const calls = await page.evaluate(async () => {
+        let n = 0; window.showSaveFilePicker = () => { n++; return new Promise(() => {}); };
+        window.__paint.S.fileHandle = null;
+        for (let i = 0; i < 5; i++) window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', code: 'KeyS', metaKey: true, ctrlKey: true, repeat: i > 0, bubbles: true, cancelable: true }));
+        await new Promise((r) => setTimeout(r, 50)); return n;
+      });
+      ok(calls === 1, 'held ⌘S opens one save picker, got ' + calls);
+      // paste with no image says so
+      await page.evaluate(() => { const dt = new DataTransfer(); dt.setData('text/plain', 'hello'); window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); });
+      await page.waitForTimeout(100);
+      ok(/No image on the clipboard/.test(await page.locator('#toast').textContent()), 'paste without image explains');
+      // SVG explains
+      await page.setInputFiles('#fileInput', { name: 't.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>') });
+      await page.waitForTimeout(200);
+      ok(/SVG/.test(await page.locator('#toast').textContent()), 'SVG open gives a specific message: ' + await page.locator('#toast').textContent());
+      // slider value text has units
+      ok(/px/.test(await page.locator('#size').getAttribute('aria-valuetext') || ''), 'size slider aria-valuetext has px');
+    }
+    // picker hint not clipped at 600
+    await page.setViewportSize({ width: 600, height: 700 }); await page.waitForTimeout(100);
+    await page.keyboard.press('KeyI');
+    ok(await P(() => { const h = document.querySelector('.hint[data-for~="picker"]'); return h.scrollWidth <= h.clientWidth; }), 'picker hint fits at 600');
+    await page.setViewportSize({ width: 1280, height: 800 });
+    ok(errs.length === 0, 'console errors: ' + JSON.stringify(errs));
+    // non-Mac labels
+    const wpage = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await wpage.addInitScript(() => Object.defineProperty(Navigator.prototype, 'platform', { get: () => 'Win32' }));
+    await wpage.goto(url); await wpage.waitForTimeout(200);
+    await wpage.keyboard.press('Shift+Slash'); await wpage.waitForTimeout(100);
+    const wtxt = await wpage.locator('#helpBody').textContent();
+    ok(!/[⌘⇧⌫⌥]/.test(wtxt), 'no Mac glyphs in help on Windows: ' + (wtxt.match(/.{20}[⌘⇧⌫⌥].{10}/g) || []).join(' | '));
+    const dangling = await wpage.evaluate(() => [...document.querySelectorAll('#helpBody kbd')].map((k) => k.textContent).filter((t) => t !== '+' && t.endsWith('+')));
+    ok(dangling.length === 0, 'no dangling "+" key labels in help: ' + dangling);
+    await wpage.keyboard.press('Escape'); await wpage.waitForTimeout(150);
+    await wpage.hover('[data-cmd="fit"]'); await wpage.waitForTimeout(700);
+    ok(!/[⌘⇧]/.test(await wpage.locator('#tip').textContent()), 'no Mac glyphs in tooltip on Windows');
+    await wpage.close();
+  } finally { await browser.close(); }
+  console.log(`${passes} passed, ${fails} failed`);
+  process.exit(fails ? 1 : 0);
+})();

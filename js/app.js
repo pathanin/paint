@@ -270,6 +270,9 @@
     if ($('#docTitle').textContent !== S.fileName) $('#docTitle').textContent = S.fileName;
     $('#docDirty').hidden = !dirty;
     document.body.classList.toggle('dirty', dirty);
+    const sv = $('[data-cmd="save"]');
+    sv.setAttribute('aria-label', dirty ? 'Save (unsaved changes)' : 'Save');
+    sv.dataset.hint = dirty ? 'Unsaved changes' : '';
     $('#undoBtn').disabled = !hist.canUndo() && !(sel && sel.float); // undo drops a floating paste/move
     $('#redoBtn').disabled = !hist.canRedo();
   }
@@ -290,13 +293,14 @@
     });
     document.querySelectorAll('.opts [data-for]').forEach((l) => { l.hidden = !l.dataset.for.split(' ').includes(t); });
     ring.hidden = true;
-    if (S.sizes[t] != null) { $('#size').value = S.sizes[t]; $('#sizeOut').textContent = S.sizes[t]; }
+    if (S.sizes[t] != null) { $('#size').value = S.sizes[t]; $('#sizeOut').textContent = S.sizes[t]; $('#size').setAttribute('aria-valuetext', S.sizes[t] + ' px'); }
   }
   function setSize(v) {
     if (S.sizes[S.tool] == null) return;
     S.sizes[S.tool] = clamp(v, 1, 100);
     $('#size').value = S.sizes[S.tool];
     $('#sizeOut').textContent = S.sizes[S.tool];
+    $('#size').setAttribute('aria-valuetext', S.sizes[S.tool] + ' px');
   }
   function setColor(which, hex) {
     S[which] = hex;
@@ -306,7 +310,8 @@
       b.classList.toggle('is1', b.dataset.color === S.primary);
       b.classList.toggle('is2', b.dataset.color === S.secondary);
       b.setAttribute('aria-pressed', b.dataset.color === S.primary);
-      b.setAttribute('aria-label', b.dataset.tip + (b.dataset.color === S.secondary ? ' (color 2)' : ''));
+      b.dataset.tip = b.dataset.name + (b.dataset.color === S.secondary ? ' (color 2)' : '');
+      b.setAttribute('aria-label', b.dataset.tip);
     });
   }
 
@@ -601,11 +606,13 @@
       if (err.name !== 'AbortError') flash(err.message, true);
     }
   }
+  const cantOpen = (file) => (file.type === 'image/svg+xml' || /\.svg$/i.test(file.name)
+    ? "Can't open SVG files. Use PNG, JPEG, WebP, GIF or BMP." : 'Not an image: ' + file.name);
   async function loadFile(file, handle, decoded) {
     let bmp = decoded;
     if (!bmp) {
       try { bmp = await createImageBitmap(file); }
-      catch { flash('Not an image: ' + file.name, true); return; }
+      catch { flash(cantOpen(file), true); return; }
     }
     cancelText();
     setDoc(bmp, bmp.width, bmp.height);
@@ -634,7 +641,13 @@
     }
     return new Promise((res, rej) => src.toBlob((b) => (b ? res(b) : rej(new Error('encode failed'))), type, 0.92));
   }
+  let saving = false;
   async function save(as) {
+    if (saving) return; // one picker/write at a time
+    saving = true;
+    try { await saveNow(as); } finally { saving = false; }
+  }
+  async function saveNow(as) {
     commitText();
     commitSelection();
     const savedAt = hist.top(); // edits made while the save is in flight stay unsaved
@@ -683,9 +696,23 @@
   }
 
   // ---------- dialogs ----------
+  // Dialog validation: message in an alert region, the bad field marked and focused.
+  function fieldError(note, field, msg) {
+    $(note).textContent = msg;
+    const f = $(field);
+    f.setAttribute('aria-invalid', 'true');
+    f.setAttribute('aria-describedby', note.slice(1));
+    f.focus();
+    f.select();
+  }
+  function clearFieldErrors(note) {
+    $(note).textContent = '';
+    $(note).closest('form').querySelectorAll('[aria-invalid]').forEach((f) => f.removeAttribute('aria-invalid'));
+  }
   function openNewDialog() {
+    commitText(); // a text box left behind a modal would lose its focus and go dead
     if (!confirmDiscard()) return;
-    $('#newNote').textContent = '';
+    clearFieldErrors('#newNote');
     $('#newW').value = img.width;
     $('#newH').value = img.height;
     $('#newDlg').showModal();
@@ -697,7 +724,7 @@
     const w = Math.round(+$('#newW').value), h = Math.round(+$('#newH').value);
     if (!(w >= 1 && h >= 1 && w <= MAX_DIM && h <= MAX_DIM)) {
       e.preventDefault();
-      $('#newNote').textContent = `Width and height must be between 1 and ${MAX_DIM} px.`;
+      fieldError('#newNote', !(w >= 1 && w <= MAX_DIM) ? '#newW' : '#newH', `Width and height must be between 1 and ${MAX_DIM} px.`);
       return;
     }
     newDoc(w, h);
@@ -707,6 +734,7 @@
   const rForm = $('#resizeDlg form');
   function resizeMode() { return rForm.rmode.value; }
   function openResize(mode) {
+    commitText();
     rForm.rmode.value = mode === 'canvas' ? 'canvas' : 'scale';
     $('#rLock').checked = mode !== 'canvas'; // adding canvas space usually means growing one side
     $('#rUnit').value = 'px';
@@ -722,7 +750,7 @@
     $('#rAnchor').disabled = !canvas;
     $('#resizeTitle').textContent = canvas ? 'Canvas size' : 'Resize image';
     $('#rNote').textContent = canvas ? 'Adds or trims space around the image.' : 'Stretches or shrinks the whole image.';
-    $('#rNote').classList.remove('error');
+    clearFieldErrors('#rErr');
   }
   function syncUnitLabels() {
     document.querySelectorAll('.rUnitLbl').forEach((u) => { u.textContent = $('#rUnit').value === 'pct' ? '%' : 'px'; });
@@ -737,6 +765,7 @@
     if (changed === 'w') $('#rH').value = d.h; else $('#rW').value = d.w;
   }
   $('#rW').addEventListener('input', () => { syncResize('w'); syncResizeMode(); });
+  ['#newW', '#newH'].forEach((id) => $(id).addEventListener('input', () => clearFieldErrors('#newNote')));
   $('#rH').addEventListener('input', () => { syncResize('h'); syncResizeMode(); });
   $('#rUnit').addEventListener('change', () => {
     const pct = $('#rUnit').value === 'pct';
@@ -756,9 +785,8 @@
     w = Math.round(w); h = Math.round(h);
     if (!(w >= 1 && h >= 1 && w <= MAX_DIM && h <= MAX_DIM)) {
       e.preventDefault();
-      $('#rNote').textContent = `Width and height must be between 1 and ${MAX_DIM} px` +
-        (w >= 1 && h >= 1 ? ` (this would be ${w} × ${h} px).` : '.');
-      $('#rNote').classList.add('error');
+      fieldError('#rErr', !(w >= 1 && w <= MAX_DIM) ? '#rW' : '#rH',
+        `Width and height must be between 1 and ${MAX_DIM} px` + (w >= 1 && h >= 1 ? ` (this would be ${w} × ${h} px).` : '.'));
       return;
     }
     resizeDoc(w, h, resizeMode(), rForm.anchor.value);
@@ -1008,6 +1036,7 @@
     const mod = e.metaKey || e.ctrlKey;
     const k = keyId(e);
     if (mod) {
+      if (e.repeat && !['KeyZ', 'KeyY', 'Equal', 'Minus'].includes(k)) { e.preventDefault(); return; }
       const act = {
         KeyZ: () => (e.shiftKey ? redo() : undo()),
         KeyY: redo,
@@ -1061,7 +1090,7 @@
   window.addEventListener('paste', async (e) => {
     if (isTyping(e.target) || modalOpen()) return;
     const item = [...(e.clipboardData ? e.clipboardData.items : [])].find((i) => i.type.startsWith('image/'));
-    if (!item) return;
+    if (!item) { flash('No image on the clipboard'); return; }
     e.preventDefault();
     try {
       const bmp = await createImageBitmap(item.getAsFile());
@@ -1084,7 +1113,7 @@
     // Decode before asking to discard, so a file that isn't an image never prompts.
     let bmp;
     try { bmp = await createImageBitmap(file); }
-    catch { flash('Not an image: ' + file.name, true); return; }
+    catch { flash(cantOpen(file), true); return; }
     if (!confirmDiscard()) { bmp.close(); return; }
     let handle = null;
     try { handle = hp ? await hp : null; } catch { handle = null; }
@@ -1161,7 +1190,7 @@
     const b = document.createElement('button');
     b.style.background = c;
     b.dataset.color = c;
-    b.dataset.tip = name;
+    b.dataset.name = b.dataset.tip = name;
     b.dataset.hint = 'Right-click or Shift-click for color 2';
     b.setAttribute('aria-label', name);
     pal.appendChild(b);
@@ -1284,6 +1313,7 @@
       ['Pan', 'Space', '~drag / middle-drag'], ['This list', '?']]],
   ];
   function openHelp() {
+    commitText();
     const body = $('#helpBody');
     if (!body.firstChild) {
       const cols = [document.createElement('div'), document.createElement('div')];
