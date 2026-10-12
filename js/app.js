@@ -140,7 +140,7 @@
   function layout() {
     stage.style.width = img.width * S.zoom + 'px';
     stage.style.height = img.height * S.zoom + 'px';
-    stage.classList.toggle('pixelated', S.zoom >= 2);
+    stage.classList.toggle('pixelated', S.zoom * devicePixelRatio >= 1); // hard pixels, incl. 100% on Retina
     if (textAt) placeTextBox();
     updateStatus();
   }
@@ -633,6 +633,8 @@
     }
     if (e.button !== 0 && e.button !== 2) return;
     commitText();
+    // mousedown is suppressed on the canvas, so drop focus from toolbar fields ourselves (else shortcuts stay dead).
+    if (document.activeElement && document.activeElement !== textBox) document.activeElement.blur();
     ov.setPointerCapture(e.pointerId);
     const p = imgPt(e), ip = { x: Math.floor(p.x), y: Math.floor(p.y) };
     const right = e.button === 2;
