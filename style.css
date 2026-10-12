@@ -147,7 +147,7 @@ button.labeled { padding: 0 9px 0 7px; }
 .seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 0; }
 
 /* colors */
-.colors { display: flex; align-items: center; gap: 16px; flex: none; }
+.colors { display: flex; align-items: center; gap: 20px; flex: none; }
 .well { position: relative; width: 44px; height: 36px; flex: none; }
 .well input[type=color] {
   position: absolute; width: 25px; height: 25px; padding: 0; margin: 0;
@@ -159,7 +159,7 @@ button.labeled { padding: 0 9px 0 7px; }
 #primary { left: 0; top: 0; z-index: 1; }
 #secondary { left: 15px; top: 11px; }
 .well .swap {
-  position: absolute; right: -9px; top: -2px;
+  position: absolute; right: -11px; top: -2px;
   min-width: 0; width: 22px; height: 22px; padding: 0; border-radius: 5px; color: var(--muted);
 }
 .well .swap:hover { color: var(--text); }
@@ -281,6 +281,9 @@ button.labeled { padding: 0 9px 0 7px; }
 }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 #toast.error { background: #b42318; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* Unsaved marker on Save when the file name is hidden (narrow windows). */
+[data-cmd=save] { position: relative; }
 @media (prefers-color-scheme: dark) { #toast, #tip { background: #34363c; box-shadow: var(--pop), inset 0 0 0 1px rgba(255,255,255,.08); } }
 #dropZone {
   position: fixed; inset: 0; z-index: 30;
@@ -369,7 +372,7 @@ dialog fieldset:disabled { opacity: .4; }
 #helpBody .keys { display: flex; gap: 3px; flex: none; align-items: center; color: var(--muted); font-size: 11px; }
 
 /* ---------- narrow windows ---------- */
-@media (max-width: 1100px) {
+@media (max-width: 1000px) {
   button.labeled span { display: none; }
   button.labeled { padding: 0 7px; }
 }
@@ -379,10 +382,12 @@ dialog fieldset:disabled { opacity: .4; }
   #toolName { min-width: 0; }
 }
 @media (max-width: 820px) {
-  #docTitle { display: none; }
-  #docName { padding: 0; }
-  /* Unsaved state collapses to a dot. */
-  #docDirty { font-size: 0; width: 8px; height: 8px; padding: 0; border-radius: 50%; background: var(--accent); }
+  #docName { visibility: hidden; padding: 0; }
+  body.dirty [data-cmd=save]::after {
+    content: ""; position: absolute; top: 5px; right: 5px;
+    width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 0 1.5px var(--panel);
+  }
   #toolName { display: none; }
   #palette { grid-template-columns: repeat(10, 16px); grid-auto-rows: 16px; gap: 2px; }
   #palette button { width: 16px; height: 16px; }

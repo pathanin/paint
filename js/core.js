@@ -161,13 +161,16 @@
       this.redoStack = [];
       this.undoStack.push(entry);
       this.bytes += entry.bytes || 0;
+      let evicted = 0;
       while (this.undoStack.length > 1 &&
              (this.undoStack.length > this.maxCount || this.bytes > this.maxBytes)) {
         const gone = this.undoStack.shift();
         this.bytes -= gone.bytes || 0;
         if (this.saved === null) this.saved = LOST; // the base state is gone
         else if (gone === this.saved) this.saved = null; // the saved state is the new base
+        evicted++;
       }
+      return evicted;
     }
     undo() {
       const e = this.undoStack.pop();

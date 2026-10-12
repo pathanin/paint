@@ -7,6 +7,8 @@ A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, ann
 
 ## Shortcuts
 
+⌘ is Ctrl and ⌥ is Alt on Windows/Linux; the app's tooltips and help show the right keys for your platform.
+
 | Keys | Action |
 |---|---|
 | S P B E F I T L R O | Select, Pencil, Brush, Eraser, Fill, Picker, Text, Line, Rect, Ellipse |
@@ -15,7 +17,7 @@ A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, ann
 | [ ] | Smaller / bigger size |
 | Shift while dragging | Square / circle / 45° line |
 | ⌘Z / ⌘⇧Z (or ⌘Y) | Undo / redo |
-| ⌘A, Esc, Delete (or Backspace) | Select all, deselect (Esc also cancels a shape or canvas drag), clear selection to color 2 |
+| ⌘A, Esc, Delete (or Backspace) | Select all, deselect (Esc also cancels a shape, selection, move or canvas drag), clear selection to color 2 |
 | Enter, Shift+Enter, Esc (text tool) | Apply text, new line, cancel |
 | Arrows (Shift = 10px) | Nudge selection |
 | ⌘C ⌘X ⌘V | Copy, cut, paste (selection, or the whole image when nothing is selected) |

@@ -60,6 +60,10 @@
   function flash(msg, isError) {
     const t = $('#toast');
     t.textContent = msg;
+    // Screen readers: errors are assertive; clear first so a repeated message is announced again.
+    const live = $(isError ? '#srAlert' : '#srStatus');
+    live.textContent = '';
+    setTimeout(() => { live.textContent = msg; }, 50);
     t.classList.toggle('error', !!isError);
     t.classList.add('show');
     clearTimeout(msgTimer);
@@ -113,10 +117,19 @@
     pushDocHist(before, next);
   }
   function pushDocHist(before, after) {
-    pushHist({ type: 'doc', before, after, bytes: (before.width * before.height + after.width * after.height) * 4 });
+    // Back-to-back whole-image ops (rotate, flip, resize...) share the canvas between them:
+    // the previous step's "after" is this step's "before", so photos keep many more undo steps.
+    const top = hist.top();
+    const shared = top && top.type === 'doc' && top.after.width === before.width && top.after.height === before.height;
+    if (shared) before = top.after;
+    const bytes = (after.width * after.height + (shared ? 0 : before.width * before.height)) * 4;
+    pushHist({ type: 'doc', before, after, bytes });
   }
   function pushHist(e) {
-    hist.push(e);
+    if (hist.push(e) && !S.trimWarned) {
+      S.trimWarned = true;
+      flash('Oldest undo steps were dropped to save memory');
+    }
     S.pristine = false;
     updateChrome();
   }
@@ -147,7 +160,7 @@
     commitText();
     setDoc(null, w, h);
     hist.clear();
-    Object.assign(S, { fileHandle: null, fileName: 'untitled.png', pristine: true });
+    Object.assign(S, { fileHandle: null, fileName: 'untitled.png', pristine: true, trimWarned: false });
     fitZoom(true);
     updateChrome();
   }
@@ -235,6 +248,8 @@
     const r = drag && drag.t === 'select' ? Core.normRect(drag.start, drag.end) : sel;
     $('#stSelWrap').hidden = !r;
     $('#stSel').textContent = r ? `${r.w} × ${r.h} px` : '';
+    const label = `Image, ${img.width} × ${img.height} px`;
+    if (img.getAttribute('aria-label') !== label) img.setAttribute('aria-label', label);
     $('#stSize').textContent = drag && drag.t === 'canvas'
       ? `${img.width} × ${img.height} → ${drag.w} × ${drag.h} px · Esc to cancel`
       : `${img.width} × ${img.height} px`;
@@ -254,6 +269,7 @@
     document.title = (dirty ? '● ' : '') + S.fileName + ' — Paint';
     if ($('#docTitle').textContent !== S.fileName) $('#docTitle').textContent = S.fileName;
     $('#docDirty').hidden = !dirty;
+    document.body.classList.toggle('dirty', dirty);
     $('#undoBtn').disabled = !hist.canUndo() && !(sel && sel.float); // undo drops a floating paste/move
     $('#redoBtn').disabled = !hist.canRedo();
   }
@@ -595,7 +611,7 @@
     setDoc(bmp, bmp.width, bmp.height);
     bmp.close();
     hist.clear();
-    Object.assign(S, { fileHandle: handle || null, fileName: file.name, pristine: false });
+    Object.assign(S, { fileHandle: handle || null, fileName: file.name, pristine: false, trimWarned: false });
     fitZoom(true);
     updateChrome();
   }
@@ -669,6 +685,7 @@
   // ---------- dialogs ----------
   function openNewDialog() {
     if (!confirmDiscard()) return;
+    $('#newNote').textContent = '';
     $('#newW').value = img.width;
     $('#newH').value = img.height;
     $('#newDlg').showModal();
@@ -677,11 +694,14 @@
   // Apply on submit (synchronous), not 'close' (async): a fast follow-up action must see the result.
   $('#newDlg form').addEventListener('submit', (e) => {
     if (!e.submitter || e.submitter.value !== 'ok') return;
-    const w = +$('#newW').value, h = +$('#newH').value;
-    if (w >= 1 && h >= 1 && w <= MAX_DIM && h <= MAX_DIM) {
-      newDoc(w, h);
-      S.pristine = false; // the user chose this size: a paste goes onto it, not in place of it
+    const w = Math.round(+$('#newW').value), h = Math.round(+$('#newH').value);
+    if (!(w >= 1 && h >= 1 && w <= MAX_DIM && h <= MAX_DIM)) {
+      e.preventDefault();
+      $('#newNote').textContent = `Width and height must be between 1 and ${MAX_DIM} px.`;
+      return;
     }
+    newDoc(w, h);
+    S.pristine = false; // the user chose this size: a paste goes onto it, not in place of it
   });
 
   const rForm = $('#resizeDlg form');
@@ -956,7 +976,7 @@
   });
   textBox.addEventListener('blur', (e) => {
     // Picking a font, size or color in the toolbars restyles the open text instead of committing it.
-    if (e.relatedTarget && e.relatedTarget.closest('#optbar')) return;
+    if (e.relatedTarget && e.relatedTarget.closest('.chrome')) return; // toolbar commands commit it themselves when needed
     commitText();
   });
 
@@ -977,6 +997,12 @@
       if (fromKeyboard) { e.preventDefault(); return; } // first Esc dismisses a focus tooltip (WCAG 1.4.13)
     }
     if (document.querySelector('dialog[open]') || isTyping(e.target)) return;
+    if (drag) { // mid-gesture, only Esc (cancel) applies; other keys would pull state out from under it
+      if (e.key === 'Escape') cancelDrag();
+      else if (e.key === 'Shift' && SHAPES.has(drag.t)) { drag.shift = true; requestRender(); }
+      if (e.code !== 'Space') e.preventDefault();
+      return;
+    }
     // Space/Enter on a focused control activate it (keyboard users); they are not shortcuts there.
     if ((e.code === 'Space' || e.key === 'Enter') && e.target.closest && e.target.closest('button, input, select')) return;
     const mod = e.metaKey || e.ctrlKey;
@@ -1005,11 +1031,6 @@
     if (e.shiftKey && k === 'KeyC') { e.preventDefault(); openResize('canvas'); return; }
     if (e.key === '?') { openHelp(); return; }
     if (e.shiftKey && k === 'Digit0') { setZoom(1); return; }
-    if (drag) { // mid-gesture, only Esc (cancel) applies; other keys would pull state out from under it
-      if (k === 'Escape') cancelDrag();
-      if (k !== 'Space') e.preventDefault();
-      return;
-    }
     if (e.shiftKey && k === 'Digit1') { fitZoom(false); return; }
     if (TOOL_KEYS[k] && !e.shiftKey) { setTool(TOOL_KEYS[k]); return; }
     const step = e.shiftKey ? 10 : 1;
@@ -1031,6 +1052,7 @@
     }
   });
   window.addEventListener('keyup', (e) => {
+    if (e.key === 'Shift' && drag && SHAPES.has(drag.t)) { drag.shift = false; requestRender(); }
     if (e.code === 'Space') { S.panKey = false; if (!drag || drag.t !== 'pan') stage.classList.remove('panning'); }
   });
 
@@ -1330,5 +1352,5 @@
   setTool('pencil');
 
   // Handle for scripted smoke tests in the console.
-  window.__paint = { S, hist, img, flash, save, updateChrome, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, setZoom, fitZoom };
+  window.__paint = { S, hist, img, flash, save, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, setZoom, fitZoom };
 })();

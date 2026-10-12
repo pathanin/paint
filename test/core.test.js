@@ -259,3 +259,12 @@ test('History save point survives eviction of the saved entry (it becomes the ba
   h.undo(); h.undo();
   assert.equal(h.isClean(), true);
 });
+
+test('History.push reports how many old entries were evicted', () => {
+  const h = new Core.History({ maxBytes: 100, maxCount: 3 });
+  assert.equal(h.push({ bytes: 40 }), 0);
+  assert.equal(h.push({ bytes: 40 }), 0);
+  assert.equal(h.push({ bytes: 40 }), 1); // 120 > 100
+  assert.equal(h.push({ bytes: 10 }), 0); // 90
+  assert.equal(h.push({ bytes: 1 }), 1); // count 4 > 3
+});

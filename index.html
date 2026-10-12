@@ -133,8 +133,8 @@
 
   <main id="viewport">
     <div id="stage">
-      <canvas id="image" width="800" height="600"></canvas>
-      <canvas id="overlay" width="800" height="600"></canvas>
+      <canvas id="image" width="800" height="600" role="img" aria-label="Image, 800 × 600 px"></canvas>
+      <canvas id="overlay" width="800" height="600" aria-hidden="true"></canvas>
       <div id="ring" hidden></div>
       <textarea id="textInput" hidden spellcheck="false" rows="1" aria-label="Text"></textarea>
       <div id="resizeGhost" hidden></div>
@@ -152,28 +152,31 @@
   <span class="st-hint" id="stHint" hidden>Enter applies · Shift+Enter new line · Esc cancels</span>
 </footer>
 
-<div id="toast" role="status" aria-live="polite"></div>
+<div id="toast" aria-hidden="true"></div>
+<div class="sr-only" id="srStatus" role="status"></div>
+<div class="sr-only" id="srAlert" role="alert"></div>
 <div id="dropZone" hidden><div>Drop image to open</div></div>
 <div id="tip" role="tooltip" hidden></div>
 
 <input type="file" id="fileInput" accept="image/*" hidden>
 
 <dialog id="newDlg" aria-labelledby="newTitle">
-  <form method="dialog">
+  <form method="dialog" novalidate>
     <h2 id="newTitle">New image</h2>
     <div class="fields">
       <label>Width<span class="field"><input type="number" id="newW" min="1" max="16384" required autofocus><span class="unit">px</span></span></label>
       <label>Height<span class="field"><input type="number" id="newH" min="1" max="16384" required><span class="unit">px</span></span></label>
     </div>
+    <p class="note error" id="newNote" role="alert"></p>
     <menu><button type="button" data-close>Cancel</button><button value="ok" class="primary">Create</button></menu>
   </form>
 </dialog>
 
 <dialog id="resizeDlg" aria-labelledby="resizeTitle">
-  <form method="dialog">
+  <form method="dialog" novalidate>
     <h2 id="resizeTitle">Resize</h2>
     <div class="seg wide" role="radiogroup" aria-label="Resize mode">
-      <label><input type="radio" name="rmode" value="scale" checked><span>Resample image</span></label>
+      <label><input type="radio" name="rmode" value="scale" checked><span>Resize image</span></label>
       <label><input type="radio" name="rmode" value="canvas"><span>Canvas size</span></label>
     </div>
     <p class="note" id="rNote"></p>
