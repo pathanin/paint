@@ -183,3 +183,28 @@ test('History evicts oldest by count and by bytes', () => {
   byBytes.push({ id: 4, bytes: 500 });
   assert.equal(byBytes.undo().id, 4);
 });
+
+test('dragResize: edges lock one axis, corner moves both, zoom scales the delta', () => {
+  // 30 screen px at zoom 2 = 15 image px
+  assert.deepEqual(Core.dragResize(100, 80, 30, 50, 'e', 2, false, 16384), { w: 115, h: 80 });
+  assert.deepEqual(Core.dragResize(100, 80, 30, 50, 's', 2, false, 16384), { w: 100, h: 105 });
+  assert.deepEqual(Core.dragResize(100, 80, 30, -20, 'se', 1, false, 16384), { w: 130, h: 60 });
+  assert.deepEqual(Core.dragResize(100, 80, 0.4, 0.6, 'se', 1, false, 16384), { w: 100, h: 81 }); // rounds
+});
+
+test('dragResize clamps to [1, max] on both sides of the boundary', () => {
+  assert.deepEqual(Core.dragResize(100, 80, -99, 0, 'e', 1, false, 200), { w: 1, h: 80 });
+  assert.deepEqual(Core.dragResize(100, 80, -100, 0, 'e', 1, false, 200), { w: 1, h: 80 });
+  assert.deepEqual(Core.dragResize(100, 80, -98, 0, 'e', 1, false, 200), { w: 2, h: 80 });
+  assert.deepEqual(Core.dragResize(100, 80, 100, 0, 'e', 1, false, 200), { w: 200, h: 80 });
+  assert.deepEqual(Core.dragResize(100, 80, 101, 0, 'e', 1, false, 200), { w: 200, h: 80 });
+});
+
+test('dragResize shift on corner keeps aspect, driven by the larger relative change', () => {
+  // 200x100: dx=+100 (x1.5) dominates dy=+10 (x1.1) -> 300x150
+  assert.deepEqual(Core.dragResize(200, 100, 100, 10, 'se', 1, true, 16384), { w: 300, h: 150 });
+  // dy=+100 (x2) dominates dx=+20 (x1.1) -> 400x200
+  assert.deepEqual(Core.dragResize(200, 100, 20, 100, 'se', 1, true, 16384), { w: 400, h: 200 });
+  // shift is ignored on single edges
+  assert.deepEqual(Core.dragResize(200, 100, 100, 0, 'e', 1, true, 16384), { w: 300, h: 100 });
+});

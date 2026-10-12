@@ -97,6 +97,23 @@ select, input[type=number] {
   white-space: pre; line-height: 1.2;
 }
 
+.handle {
+  position: absolute; z-index: 3;
+  width: 8px; height: 8px; margin: 1px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  box-sizing: border-box;
+  touch-action: none;
+}
+.handle[data-edge=e]  { left: 100%; top: calc(50% - 4px); cursor: ew-resize; }
+.handle[data-edge=s]  { top: 100%; left: calc(50% - 4px); cursor: ns-resize; }
+.handle[data-edge=se] { left: 100%; top: 100%; cursor: nwse-resize; }
+#resizeGhost {
+  position: absolute; left: 0; top: 0; z-index: 3;
+  outline: 1px dashed var(--accent);
+  pointer-events: none;
+}
+
 #status {
   display: flex; gap: 18px;
   padding: 3px 10px;

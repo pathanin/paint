@@ -32,7 +32,8 @@
   </div>
   <div class="group">
     <button data-cmd="crop" title="Crop to selection (⌘⇧X)">Crop</button>
-    <button data-cmd="resize" title="Resize image / canvas (Shift+R)">Resize</button>
+    <button data-cmd="resize" title="Resize image (Shift+R)">Resize</button>
+    <button data-cmd="canvasSize" title="Canvas size (Shift+C) — or drag the handles at the image edge">Canvas</button>
     <button data-cmd="rotL" title="Rotate 90° left">⟲</button>
     <button data-cmd="rotR" title="Rotate 90° right">⟳</button>
     <button data-cmd="flipH" title="Flip horizontal">⇋</button>
@@ -76,6 +77,10 @@
     <canvas id="image" width="800" height="600"></canvas>
     <canvas id="overlay" width="800" height="600"></canvas>
     <textarea id="textInput" hidden spellcheck="false" rows="1"></textarea>
+    <div id="resizeGhost" hidden></div>
+    <div class="handle" data-edge="e" title="Drag to resize canvas"></div>
+    <div class="handle" data-edge="s" title="Drag to resize canvas"></div>
+    <div class="handle" data-edge="se" title="Drag to resize canvas (Shift keeps aspect)"></div>
   </div>
 </main>
 
@@ -139,7 +144,8 @@
       <tr><td>Arrows (Shift = 10px)</td><td>Nudge selection</td></tr>
       <tr><td>⌘C ⌘X ⌘V</td><td>Copy, cut, paste (selection, or whole image)</td></tr>
       <tr><td>⌘⇧X</td><td>Crop to selection</td></tr>
-      <tr><td>Shift+R</td><td>Resize image / canvas</td></tr>
+      <tr><td>Shift+R</td><td>Resize image (resample)</td></tr>
+      <tr><td>Shift+C, drag edge/corner</td><td>Canvas size (Shift+drag corner keeps aspect, Esc cancels)</td></tr>
       <tr><td>⌘O ⌘S ⌘⇧S Alt+N</td><td>Open, save, save as, new</td></tr>
       <tr><td>⌘+wheel / pinch, + −</td><td>Zoom</td></tr>
       <tr><td>⌘0 / ⌘1</td><td>Fit / 100%</td></tr>

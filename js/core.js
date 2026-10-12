@@ -126,6 +126,19 @@
     return { dx, dy };
   }
 
+  // New canvas size from dragging a resize handle by (dx, dy) screen px at `zoom`.
+  // edge: 'e' (width), 's' (height), 'se' (both; keepAspect follows the larger relative change).
+  function dragResize(w, h, dx, dy, edge, zoom, keepAspect, max) {
+    let nw = edge === 's' ? w : w + dx / zoom;
+    let nh = edge === 'e' ? h : h + dy / zoom;
+    if (edge === 'se' && keepAspect) {
+      const fw = nw / w, fh = nh / h;
+      const f = Math.abs(fw - 1) >= Math.abs(fh - 1) ? fw : fh;
+      nw = w * f; nh = h * f;
+    }
+    return { w: Math.min(max, Math.max(1, Math.round(nw))), h: Math.min(max, Math.max(1, Math.round(nh))) };
+  }
+
   function rotateDims(w, h, deg) {
     return Math.abs(deg) % 180 === 90 ? { w: h, h: w } : { w, h };
   }
@@ -163,7 +176,7 @@
     clear() { this.undoStack = []; this.redoStack = []; this.bytes = 0; }
   }
 
-  const Core = { rgbaToU32, colorDistance, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, rotateDims, History };
+  const Core = { rgbaToU32, colorDistance, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, rotateDims, History };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core;
   else root.Core = Core;
 })(typeof window !== 'undefined' ? window : globalThis);

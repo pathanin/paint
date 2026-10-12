@@ -208,7 +208,9 @@
     $('#stPos').textContent = cursor ? `${cursor.x}, ${cursor.y} px` : '—';
     const r = drag && drag.t === 'select' ? Core.normRect(drag.start, drag.end) : sel;
     $('#stSel').textContent = r ? `▭ ${r.w} × ${r.h}` : '';
-    $('#stSize').textContent = `${img.width} × ${img.height}`;
+    $('#stSize').textContent = drag && drag.t === 'canvas'
+      ? `${img.width} × ${img.height} → ${drag.w} × ${drag.h}`
+      : `${img.width} × ${img.height}`;
     $('#stZoom').textContent = Math.round(S.zoom * 100) + '%';
   }
   function updateChrome() {
@@ -585,7 +587,9 @@
 
   const rForm = $('#resizeDlg form');
   function resizeMode() { return rForm.rmode.value; }
-  function openResize() {
+  function openResize(mode) {
+    rForm.rmode.value = mode === 'canvas' ? 'canvas' : 'scale';
+    $('#rLock').checked = mode !== 'canvas'; // adding canvas space usually means growing one side
     $('#rUnit').value = 'px';
     $('#rW').value = img.width;
     $('#rH').value = img.height;
@@ -619,6 +623,43 @@
       h = Math.max(1, Math.round(img.height * h / 100));
     }
     resizeDoc(Math.round(w), Math.round(h), resizeMode(), rForm.anchor.value);
+  });
+
+  // ---------- canvas resize handles (Paint-style: right, bottom, corner; top-left stays put) ----------
+  const ghost = $('#resizeGhost');
+  function showGhost(d) {
+    ghost.hidden = false;
+    ghost.style.width = d.w * S.zoom + 'px';
+    ghost.style.height = d.h * S.zoom + 'px';
+  }
+  function endCanvasDrag(apply) {
+    const d = drag;
+    drag = null;
+    ghost.hidden = true;
+    if (apply) resizeDoc(d.w, d.h, 'canvas', 'tl');
+    updateStatus();
+  }
+  document.querySelectorAll('.handle').forEach((h) => {
+    h.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || drag) return;
+      e.preventDefault();
+      e.stopPropagation();
+      commitText();
+      if (document.activeElement) document.activeElement.blur();
+      try { h.setPointerCapture(e.pointerId); } catch { /* inactive pointer: drag still works while over the handle */ }
+      drag = { t: 'canvas', edge: h.dataset.edge, sx: e.clientX, sy: e.clientY, w: img.width, h: img.height };
+      showGhost(drag);
+      updateStatus();
+    });
+    h.addEventListener('pointermove', (e) => {
+      if (!drag || drag.t !== 'canvas') return;
+      const n = Core.dragResize(img.width, img.height, e.clientX - drag.sx, e.clientY - drag.sy, drag.edge, S.zoom, e.shiftKey, MAX_DIM);
+      drag.w = n.w; drag.h = n.h;
+      showGhost(drag);
+      updateStatus();
+    });
+    h.addEventListener('pointerup', () => { if (drag && drag.t === 'canvas') endCanvasDrag(true); });
+    h.addEventListener('pointercancel', () => { if (drag && drag.t === 'canvas') endCanvasDrag(false); });
   });
 
   // ---------- pointer ----------
@@ -781,7 +822,8 @@
       if (k === 'KeyN') { e.preventDefault(); openNewDialog(); }
       return;
     }
-    if (e.shiftKey && k === 'KeyR') { e.preventDefault(); openResize(); return; }
+    if (e.shiftKey && k === 'KeyR') { e.preventDefault(); openResize('scale'); return; }
+    if (e.shiftKey && k === 'KeyC') { e.preventDefault(); openResize('canvas'); return; }
     if (e.key === '?') { $('#helpDlg').showModal(); return; }
     if (TOOL_KEYS[k] && !e.shiftKey) { setTool(TOOL_KEYS[k]); return; }
     const step = e.shiftKey ? 10 : 1;
@@ -789,7 +831,8 @@
       case 'KeyX': { const p = S.primary; setColor('primary', S.secondary); setColor('secondary', p); break; }
       case 'Delete': case 'Backspace': e.preventDefault(); deleteSelection(); break;
       case 'Escape':
-        if (drag && (SHAPES.has(drag.t) || drag.t === 'select')) { drag = null; requestRender(); }
+        if (drag && drag.t === 'canvas') endCanvasDrag(false);
+        else if (drag && (SHAPES.has(drag.t) || drag.t === 'select')) { drag = null; requestRender(); }
         else dropSelection();
         break;
       case 'BracketLeft': setSize(S.sizes[S.tool] - (S.sizes[S.tool] > 10 ? 2 : 1)); break;
@@ -847,7 +890,7 @@
   // ---------- toolbar wiring ----------
   const CMDS = {
     new: openNewDialog, open: openFile, save: () => save(false), saveAs: () => save(true),
-    undo, redo, crop, resize: openResize,
+    undo, redo, crop, resize: () => openResize('scale'), canvasSize: () => openResize('canvas'),
     rotL: () => transformDoc('rotL'), rotR: () => transformDoc('rotR'),
     flipH: () => transformDoc('flipH'), flipV: () => transformDoc('flipV'),
     zoomIn: () => setZoom(S.zoom * 1.25), zoomOut: () => setZoom(S.zoom / 1.25),

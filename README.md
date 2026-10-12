@@ -19,7 +19,8 @@ A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, ann
 | Arrows (Shift = 10px) | Nudge selection |
 | ⌘C ⌘X ⌘V | Copy, cut, paste (selection, or the whole image when nothing is selected) |
 | ⌘⇧X | Crop to selection |
-| Shift+R | Resize image (resample) or canvas (with anchor) |
+| Shift+R | Resize image (resample) |
+| Shift+C, or drag the handles on the right/bottom/corner | Canvas size (new area = color 2; Shift+drag corner keeps aspect; Esc cancels) |
 | ⌘O ⌘S ⌘⇧S Alt+N | Open, save, save as, new |
 | ⌘+wheel / pinch, + − | Zoom; ⌘0 fit, ⌘1 100% |
 | Space+drag, middle drag | Pan |
