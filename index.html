@@ -61,12 +61,12 @@
     <button data-cmd="canvasSize" class="labeled" data-tip="Canvas size" data-kbd="⇧C" data-hint="Or drag the handles at the image edge" aria-label="Canvas size"><svg><use href="#i-canvas"/></svg><span>Canvas</span></button>
   </div>
   <div class="group">
-    <button data-cmd="rotL" data-tip="Rotate left 90°" aria-label="Rotate left 90°"><svg><use href="#i-rotl"/></svg></button>
-    <button data-cmd="rotR" data-tip="Rotate right 90°" aria-label="Rotate right 90°"><svg><use href="#i-rotr"/></svg></button>
-    <button data-cmd="flipH" data-tip="Flip horizontal" aria-label="Flip horizontal"><svg><use href="#i-fliph"/></svg></button>
-    <button data-cmd="flipV" data-tip="Flip vertical" aria-label="Flip vertical"><svg><use href="#i-flipv"/></svg></button>
+    <button data-cmd="rotL" data-tip="Rotate left 90°" data-hint="Whole image" aria-label="Rotate left 90°"><svg><use href="#i-rotl"/></svg></button>
+    <button data-cmd="rotR" data-tip="Rotate right 90°" data-hint="Whole image" aria-label="Rotate right 90°"><svg><use href="#i-rotr"/></svg></button>
+    <button data-cmd="flipH" data-tip="Flip horizontal" data-hint="Whole image" aria-label="Flip horizontal"><svg><use href="#i-fliph"/></svg></button>
+    <button data-cmd="flipV" data-tip="Flip vertical" data-hint="Whole image" aria-label="Flip vertical"><svg><use href="#i-flipv"/></svg></button>
   </div>
-  <div id="docName" aria-live="polite"><span id="docTitle">untitled.png</span><span id="docDirty" hidden title="Unsaved changes">Edited</span></div>
+  <div id="docName"><span id="docTitle">untitled.png</span><span id="docDirty" hidden title="Unsaved changes">Edited</span></div>
   <div class="group zoom">
     <button data-cmd="zoomOut" data-tip="Zoom out" data-kbd="−" aria-label="Zoom out"><svg><use href="#i-minus"/></svg></button>
     <button data-cmd="zoom100" id="zoomBtn" class="zoom-val" data-tip="Actual size" data-kbd="⇧0" aria-label="Zoom 100%. Activate for actual size">100%</button>
@@ -81,7 +81,7 @@
 <div id="optbar" class="chrome">
   <span id="toolName">Pencil</span>
   <div class="opts">
-    <label data-for="pencil brush eraser line rect ellipse" data-tip="Size" data-kbd="[ ]">Size
+    <label data-for="pencil brush eraser line rect ellipse" data-tip="Size" data-kbd="[ ]" data-hint="[ smaller · ] bigger">Size
       <input type="range" id="size" min="1" max="100" value="1" aria-label="Size"><output id="sizeOut">1</output><span class="unit">px</span></label>
     <div data-for="rect ellipse" class="seg" role="radiogroup" aria-label="Shape style">
       <label><input type="radio" name="fillMode" value="outline" checked><span>Outline</span></label>
@@ -100,7 +100,7 @@
     <span class="hint" data-for="select">Drag to select · drag inside to move</span>
     <span class="hint" data-for="eraser">Paints with color 2</span>
     <span class="hint" data-for="fill">Click: color 1 · right-click: color 2</span>
-    <span class="hint" data-for="picker">Click: color 1 · right-click: color 2</span>
+    <span class="hint" data-for="picker">Click: color 1 · right-click: color 2 · then back to your tool</span>
     <span class="hint" data-for="text">Click where the text should start</span>
     <span class="hint" data-for="line rect ellipse">Hold Shift to constrain</span>
   </div>
@@ -123,7 +123,7 @@
     <button data-tool="eraser" data-tip="Eraser" data-kbd="E" data-hint="Paints with color 2" aria-label="Eraser"><svg><use href="#i-eraser"/></svg></button>
     <hr>
     <button data-tool="fill" data-tip="Fill" data-kbd="F" aria-label="Fill"><svg><use href="#i-fill"/></svg></button>
-    <button data-tool="picker" data-tip="Color picker" data-kbd="I" aria-label="Color picker"><svg><use href="#i-picker"/></svg></button>
+    <button data-tool="picker" data-tip="Color picker" data-kbd="I" data-hint="Returns to your previous tool after one pick" aria-label="Color picker"><svg><use href="#i-picker"/></svg></button>
     <button data-tool="text" data-tip="Text" data-kbd="T" aria-label="Text"><svg><use href="#i-text"/></svg></button>
     <hr>
     <button data-tool="line" data-tip="Line" data-kbd="L" aria-label="Line"><svg><use href="#i-line"/></svg></button>

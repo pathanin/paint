@@ -72,7 +72,7 @@ button {
 }
 button:hover { background: var(--hover); }
 button:active { background: var(--press); }
-button:disabled { opacity: .35; background: transparent; }
+button:disabled, button[aria-disabled=true] { opacity: .35; background: transparent; }
 button:focus-visible, input:focus-visible, select:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 1px;
 }
@@ -186,6 +186,7 @@ button.labeled { padding: 0 9px 0 7px; }
 #rail hr { width: 22px; border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
 #rail button.active, #rail button.active:hover { background: var(--accent-soft); color: var(--accent-text); }
 
+#viewport:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 #viewport {
   display: flex;
   overflow: auto;
@@ -356,12 +357,13 @@ dialog fieldset:disabled { opacity: .4; }
 .anchor input:checked { background: var(--accent); border-color: var(--accent); }
 .anchor input:not(:disabled):hover:not(:checked) { background: var(--hover); }
 #helpDlg { width: min(720px, calc(100vw - 32px)); }
+#resizeDlg { width: min(420px, calc(100vw - 32px)); }
 #helpBody { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); column-gap: 32px; align-items: start; max-height: calc(100vh - 180px); overflow: auto; padding-right: 4px; }
 #helpBody:focus:not(:focus-visible) { outline: none; }
 #helpBody.more { -webkit-mask-image: linear-gradient(#000 calc(100% - 40px), transparent); mask-image: linear-gradient(#000 calc(100% - 40px), transparent); }
-#helpBody section { margin-bottom: 14px; }
+#helpBody section { margin-bottom: 12px; }
 #helpBody h3 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 6px; }
-#helpBody .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 2px 0; min-height: 26px; border-bottom: 1px solid var(--border); }
+#helpBody .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 1px 0; min-height: 24px; border-bottom: 1px solid var(--border); }
 #helpBody .row:last-child { border-bottom: 0; }
 #helpBody .keys { display: flex; gap: 3px; flex: none; align-items: center; color: var(--muted); font-size: 11px; }
 
@@ -392,6 +394,13 @@ dialog fieldset:disabled { opacity: .4; }
   .opts { gap: 12px; }
   .opts input[type=range] { width: 72px; }
 }
+@media (max-width: 640px) {
+  #docName { display: none; }
+  #topbar { justify-content: space-between; }
+  #topbar button { min-width: 26px; padding: 0 4px; }
+  .group + .group::before { margin: 0 2px 0 1px; }
+  .opts { gap: 10px; overflow-x: auto; scrollbar-width: thin; }
+  .opts input[type=range] { width: 60px; }
+}
 /* Last resort for very narrow windows: let the bars scroll rather than clip controls. */
-#topbar, #optbar { overflow-x: auto; scrollbar-width: none; }
-#topbar::-webkit-scrollbar, #optbar::-webkit-scrollbar { display: none; }
+#topbar, #optbar { overflow-x: auto; scrollbar-width: thin; }

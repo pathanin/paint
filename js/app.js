@@ -70,7 +70,7 @@
   const MAC = /Mac|iPhone|iPad/.test(navigator.platform);
   const keyLabel = (k) => (MAC ? k.replace(/Alt\+/g, '⌥')
     : k === '⌘' ? 'Ctrl' : k === '⇧' ? 'Shift' : k === '⌫' ? 'Backspace'
-    : k.replace(/⌘/g, 'Ctrl+').replace(/⇧([- ])/g, 'Shift$1').replace(/⇧/g, 'Shift+').replace(/\+\+/g, '+'));
+    : k.replace(/⌘/g, 'Ctrl+').replace(/⇧([- ])/g, 'Shift$1').replace(/⇧/g, 'Shift+').replace(/\+\+$/, '+Plus'));
 
   // ---------- document & history ----------
   function setDoc(source, w, h) {
@@ -173,6 +173,12 @@
     vp.scrollLeft += r2.left + ix * z - cx;
     vp.scrollTop += r2.top + iy * z - cy;
   }
+  // Buttons and keys step through familiar percentages (wheel/pinch stay continuous).
+  const ZOOMS = [0.05, 0.1, 0.25, 0.33, 0.5, 0.67, 1, 1.5, 2, 3, 4, 6, 8, 12, 16, 24, 32];
+  function zoomStep(dir) {
+    const z = dir > 0 ? ZOOMS.find((v) => v > S.zoom * 1.001) : [...ZOOMS].reverse().find((v) => v < S.zoom / 1.001);
+    if (z) setZoom(z);
+  }
   function fitZoom(capAt1) {
     const pad = 2 * parseFloat(getComputedStyle(vp).paddingLeft);
     const z = Math.min((vp.clientWidth - pad) / img.width, (vp.clientHeight - pad) / img.height);
@@ -233,15 +239,18 @@
     const pct = Math.round(S.zoom * 100) + '%';
     $('#zoomBtn').textContent = pct;
     $('#zoomBtn').setAttribute('aria-label', `Zoom ${pct}. Activate for actual size`);
-    $('#cropBtn').disabled = !sel;
-    $('#cropBtn').dataset.hint = sel ? '' : 'Select an area first';
+    // aria-disabled (not disabled) keeps Crop focusable, so keyboard users can reach the explanation.
+    const cb = $('#cropBtn');
+    cb.setAttribute('aria-disabled', !sel);
+    cb.dataset.hint = sel ? '' : 'Select an area first';
+    if (sel) cb.removeAttribute('aria-description'); else cb.setAttribute('aria-description', 'Select an area first');
   }
   function updateChrome() {
     const dirty = isDirty();
     document.title = (dirty ? '● ' : '') + S.fileName + ' — Paint';
-    $('#docTitle').textContent = S.fileName;
+    if ($('#docTitle').textContent !== S.fileName) $('#docTitle').textContent = S.fileName;
     $('#docDirty').hidden = !dirty;
-    $('#undoBtn').disabled = !hist.canUndo();
+    $('#undoBtn').disabled = !hist.canUndo() && !(sel && sel.float); // undo drops a floating paste/move
     $('#redoBtn').disabled = !hist.canRedo();
   }
 
@@ -315,6 +324,7 @@
   function pick(p, right) {
     if (p.x < 0 || p.y < 0 || p.x >= img.width || p.y >= img.height) return;
     const d = ctx.getImageData(p.x, p.y, 1, 1).data;
+    if (d[3] === 0) { flash('That pixel is transparent. No color picked.'); return; }
     setColor(right ? 'secondary' : 'primary', toHex(d[0], d[1], d[2]));
     setTool(S.prevTool);
   }
@@ -401,6 +411,7 @@
     ctx.fillRect(sel.x, sel.y, sel.w, sel.h);
     touch(sel.x, sel.y, sel.w, sel.h);
     sel.float = f;
+    updateChrome();
   }
   function commitSelection() {
     if (!sel || !sel.float) return;
@@ -504,6 +515,7 @@
     setTool('select');
     beginOp();
     sel = { x, y, w: bmp.width, h: bmp.height, float: cloneCanvas(bmp), growFrom };
+    updateChrome();
     requestRender();
   }
 
@@ -538,7 +550,7 @@
   }
   function resizeDoc(w, h, mode, anchor) {
     if (w > MAX_DIM || h > MAX_DIM) { flash(`Max size is ${MAX_DIM}px`); return; }
-    if (w === img.width && h === img.height) return;
+    if (w === img.width && h === img.height) { flash('Size unchanged'); return; }
     commitText();
     dropSelection();
     if (mode === 'scale') { docOp(resample(img, w, h)); return; }
@@ -552,7 +564,8 @@
 
   // ---------- file I/O ----------
   const IMAGE_TYPES = [{ description: 'Images', accept: { 'image/*': ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'] } }];
-  const isDirty = () => !hist.isClean();
+  // A floating selection or open text box isn't in history yet, but it is still unsaved work.
+  const isDirty = () => !hist.isClean() || !!(sel && sel.float) || !!(textAt && textBox.value.trim());
   const confirmDiscard = () => !isDirty() || confirm(`Discard unsaved changes to ${S.fileName}?`);
 
   async function openFile() {
@@ -942,9 +955,8 @@
         KeyC: () => copySel(false),
         KeyX: () => (e.shiftKey ? crop() : copySel(true)),
         Digit0: () => fitZoom(false),
-        Digit1: () => setZoom(1),
-        Equal: () => setZoom(S.zoom * 1.25),
-        Minus: () => setZoom(S.zoom / 1.25),
+        Equal: () => zoomStep(1),
+        Minus: () => zoomStep(-1),
       }[k];
       if (act) { e.preventDefault(); act(); }
       return; // ⌘V falls through to the native paste event
@@ -970,8 +982,8 @@
         break;
       case 'BracketLeft': setSize(S.sizes[S.tool] - (S.sizes[S.tool] > 10 ? 2 : 1)); break;
       case 'BracketRight': setSize(S.sizes[S.tool] + (S.sizes[S.tool] >= 10 ? 2 : 1)); break;
-      case 'Equal': setZoom(S.zoom * 1.25); break;
-      case 'Minus': setZoom(S.zoom / 1.25); break;
+      case 'Equal': zoomStep(1); break;
+      case 'Minus': zoomStep(-1); break;
       case 'Space': e.preventDefault(); S.panKey = true; ring.hidden = true; stage.classList.add('panning'); break;
       case 'ArrowLeft': if (sel) { e.preventDefault(); nudge(-step, 0); } break;
       case 'ArrowRight': if (sel) { e.preventDefault(); nudge(step, 0); } break;
@@ -1034,7 +1046,7 @@
     undo, redo, crop, resize: () => openResize('scale'), canvasSize: () => openResize('canvas'),
     rotL: () => transformDoc('rotL'), rotR: () => transformDoc('rotR'),
     flipH: () => transformDoc('flipH'), flipV: () => transformDoc('flipV'),
-    zoomIn: () => setZoom(S.zoom * 1.25), zoomOut: () => setZoom(S.zoom / 1.25),
+    zoomIn: () => zoomStep(1), zoomOut: () => zoomStep(-1),
     fit: () => fitZoom(false), zoom100: () => setZoom(1),
     help: openHelp, swap: swapColors,
   };
@@ -1196,7 +1208,7 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden) resetTransientKeys(); });
 
   // ---------- help ----------
-  // Placed alternately into two columns: Tools/Drawing/File | Edit/Image/View.
+  const HELP_COL = { Tools: 0, View: 0, File: 0, Edit: 1, Drawing: 1, Image: 1 }; // ~20 rows per column
   const HELP = [
     ['Tools', [['Select', 'S'], ['Pencil', 'P'], ['Brush', 'B'], ['Eraser', 'E'], ['Fill', 'F'], ['Color picker', 'I'],
       ['Text', 'T'], ['Line', 'L'], ['Rectangle', 'R'], ['Ellipse', 'O']]],
@@ -1205,9 +1217,9 @@
     ['Drawing', [['Draw with color 1 / color 2', '~Left / right click'], ['Swap colors', 'X'], ['Smaller / bigger size', '[', ']'],
       ['Square, circle, 45° line', '⇧', '~drag'], ['Pick color 2 from a swatch', '~right-click / ⇧-click'],
       ['Apply text', 'Enter'], ['New line in text', '⇧Enter'], ['Cancel text', 'Esc']]],
-    ['Image', [['Resize image', '⇧R'], ['Canvas size', '⇧C'], ['Canvas: keep aspect', '⇧', '~drag corner'], ['Cancel canvas drag', 'Esc']]],
+    ['Image', [['Resize image', '⇧R'], ['Canvas size', '⇧C'], ['Canvas: keep aspect', '⇧', '~drag corner'], ['Cancel canvas drag', 'Esc'], ['Cancel shape or selection drag', 'Esc']]],
     ['File', [['New', 'Alt+N'], ['Open', '⌘O'], ['Save', '⌘S'], ['Save as', '⌘⇧S']]],
-    ['View', [['Zoom in / out', '+', '−'], ['Zoom at pointer', '⌘', '~scroll'], ['Fit to window', '⇧1', '⌘0'], ['Actual size', '⇧0'],
+    ['View', [['Zoom in / out', '+', '−', '⌘+', '⌘−'], ['Zoom at pointer', '⌘', '~scroll'], ['Fit to window', '⇧1', '⌘0'], ['Actual size', '⇧0'],
       ['Pan', 'Space', '~drag / middle-drag'], ['This list', '?']]],
   ];
   function openHelp() {
@@ -1235,7 +1247,7 @@
           row.append(l, k);
           sec.appendChild(row);
         }
-        cols[i % 2].appendChild(sec);
+        cols[HELP_COL[title]].appendChild(sec);
       });
     }
     $('#helpDlg').showModal();
@@ -1248,7 +1260,19 @@
   window.addEventListener('dragleave', (e) => { if (hasFiles(e) && --dragDepth <= 0) { dragDepth = 0; $('#dropZone').hidden = true; } });
   window.addEventListener('drop', () => { dragDepth = 0; $('#dropZone').hidden = true; }, true);
 
+  textBox.addEventListener('input', updateChrome);
+  // Anchor grid: Up/Down move between rows (radios alone would step through the DOM order).
+  $('.anchor').addEventListener('keydown', (e) => {
+    const d = { ArrowUp: -3, ArrowDown: 3 }[e.key];
+    if (!d) return;
+    const cells = [...document.querySelectorAll('input[name=anchor]')];
+    const i = cells.indexOf(document.activeElement) + d;
+    e.preventDefault();
+    if (i >= 0 && i < 9) { cells[i].checked = true; cells[i].focus(); }
+  });
+
   // ---------- boot ----------
+  document.querySelectorAll('[data-hint]').forEach((el) => { if (el.dataset.hint) el.setAttribute('aria-description', keyLabel(el.dataset.hint)); });
   // Expose shortcuts to assistive tech (aria-keyshortcuts uses Control/Meta/Shift names).
   document.querySelectorAll('[data-kbd]').forEach((el) => {
     const k = el.dataset.kbd;
