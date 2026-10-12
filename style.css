@@ -20,6 +20,9 @@
   --check-b: #d9d9d9;
   --radius: 6px;
   --well-ring: rgba(0, 0, 0, .38);
+  --accent-fill: #2563eb; /* filled buttons: white text stays above 4.5:1 in both themes */
+  --danger: #d92d20;
+  --seg-on: #ffffff;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -41,6 +44,8 @@
     --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px rgba(0,0,0,.35);
     --pop: 0 10px 32px rgba(0,0,0,.5), 0 1px 3px rgba(0,0,0,.4);
     --well-ring: rgba(255, 255, 255, .35);
+    --danger: #f97066;
+    --seg-on: #43464e;
   }
 }
 
@@ -71,8 +76,8 @@ button:disabled { opacity: .35; background: transparent; }
 button:focus-visible, input:focus-visible, select:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 1px;
 }
-button.primary { background: var(--accent); color: #fff; font-weight: 500; }
-button.primary:hover { background: color-mix(in srgb, var(--accent) 88%, #000); }
+button.primary { background: var(--accent-fill); color: #fff; font-weight: 500; }
+button.primary:hover { background: color-mix(in srgb, var(--accent-fill) 88%, #000); }
 select, input[type=number] {
   font: inherit; color: inherit; background: var(--field);
   border: 1px solid var(--border-strong); border-radius: 5px;
@@ -137,7 +142,7 @@ button.labeled { padding: 0 9px 0 7px; }
 .seg input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: default; }
 .seg span { display: block; padding: 3px 10px; border-radius: 5px; line-height: 18px; }
 .seg label:hover span { background: var(--hover); }
-.seg input:checked + span { background: var(--panel); box-shadow: 0 1px 2px rgba(0,0,0,.15), 0 0 0 .5px rgba(0,0,0,.08); font-weight: 500; }
+.seg input:checked + span { background: var(--seg-on); box-shadow: 0 1px 2px rgba(0,0,0,.15), 0 0 0 .5px rgba(0,0,0,.08); font-weight: 500; }
 .seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 0; }
 
 /* colors */
@@ -164,6 +169,8 @@ button.labeled { padding: 0 9px 0 7px; }
   border: 0; border-radius: 4px;
   box-shadow: inset 0 0 0 1px rgba(0,0,0,.18);
 }
+#palette button.is2 { box-shadow: inset 0 0 0 1px rgba(0,0,0,.18), 0 0 0 1.5px var(--panel), 0 0 0 3px var(--muted); }
+#palette button.is1 { box-shadow: inset 0 0 0 1px rgba(0,0,0,.18), 0 0 0 1.5px var(--panel), 0 0 0 3px var(--text); }
 #palette button:hover { transform: scale(1.18); box-shadow: inset 0 0 0 1px rgba(0,0,0,.3), 0 1px 3px rgba(0,0,0,.25); }
 
 /* ---------- main area ---------- */
@@ -174,7 +181,7 @@ button.labeled { padding: 0 9px 0 7px; }
   border-right: 1px solid var(--border);
   overflow-y: auto;
 }
-#rail button { width: 36px; height: 36px; padding: 0; }
+#rail button { width: 36px; height: 36px; padding: 0; flex: none; }
 #rail svg { width: 20px; height: 20px; }
 #rail hr { width: 22px; border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
 #rail button.active, #rail button.active:hover { background: var(--accent-soft); color: var(--accent-text); }
@@ -224,7 +231,11 @@ button.labeled { padding: 0 9px 0 7px; }
   border-radius: 2px;
   touch-action: none;
 }
-.handle::after { content: ""; position: absolute; inset: -7px; } /* bigger hit area */
+/* Bigger hit areas that grow outward only, so strokes at the image edge still reach the canvas. */
+.handle::after { content: ""; position: absolute; inset: -7px; }
+.handle[data-edge=e]::after { left: -1px; }
+.handle[data-edge=s]::after { top: -1px; }
+.handle[data-edge=se]::after { left: -1px; top: -1px; }
 .handle:hover { background: var(--accent); }
 .handle[data-edge=e]  { left: 100%; top: calc(50% - 4.5px); cursor: ew-resize; }
 .handle[data-edge=s]  { top: 100%; left: calc(50% - 4.5px); cursor: ns-resize; }
@@ -250,7 +261,7 @@ button.labeled { padding: 0 9px 0 7px; }
 .st { display: inline-flex; align-items: center; gap: 6px; }
 .st[hidden] { display: none; }
 .st svg { width: 14px; height: 14px; opacity: .75; }
-#stPos { min-width: 13ch; }
+#stPos { min-width: 11ch; }
 
 /* ---------- toast, drop zone, tooltip ---------- */
 #toast {
@@ -314,12 +325,12 @@ dialog .field {
   background: var(--field); border: 1px solid var(--border-strong); border-radius: 6px;
 }
 dialog .field:focus-within { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
-dialog .field input { border: 0; outline: 0; background: none; width: 84px; height: 28px; font-size: 13px; }
+dialog .field input { border: 0; outline: 0; background: none; color: var(--text); width: 84px; height: 28px; font-size: 13px; }
 dialog .fields select { height: 30px; font-size: 13px; color: var(--text); }
 dialog .check { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
 dialog .check input { accent-color: var(--accent); margin: 0; }
 dialog .note { color: var(--muted); font-size: 12px; margin: 8px 0 0; min-height: 16px; }
-dialog .note.error { color: #d92d20; }
+dialog .note.error { color: var(--danger); }
 dialog .seg.wide { display: flex; }
 dialog .seg.wide label { flex: 1; text-align: center; }
 dialog menu { display: flex; justify-content: flex-end; gap: 8px; margin: 20px 0 0; padding: 0; }
@@ -342,7 +353,8 @@ dialog fieldset:disabled { opacity: .4; }
 .anchor input:not(:disabled):hover:not(:checked) { background: var(--hover); }
 #helpDlg { width: min(720px, calc(100vw - 32px)); }
 #helpBody { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); column-gap: 32px; align-items: start; max-height: calc(100vh - 180px); overflow: auto; padding-right: 4px; }
-#helpBody:focus { outline: none; }
+#helpBody:focus:not(:focus-visible) { outline: none; }
+#helpBody.more { -webkit-mask-image: linear-gradient(#000 calc(100% - 40px), transparent); mask-image: linear-gradient(#000 calc(100% - 40px), transparent); }
 #helpBody section { margin-bottom: 14px; }
 #helpBody h3 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 6px; }
 #helpBody .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 2px 0; min-height: 26px; border-bottom: 1px solid var(--border); }
@@ -359,7 +371,9 @@ dialog fieldset:disabled { opacity: .4; }
   #toolName { min-width: 0; }
 }
 @media (max-width: 820px) {
-  #docName { visibility: hidden; }
+  #docTitle { display: none; }
+  /* Unsaved state collapses to a dot. */
+  #docDirty { font-size: 0; width: 8px; height: 8px; padding: 0; border-radius: 50%; background: var(--accent); }
   #toolName { display: none; }
   #palette { grid-template-columns: repeat(10, 16px); grid-auto-rows: 16px; gap: 2px; }
   #palette button { width: 16px; height: 16px; }

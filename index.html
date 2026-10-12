@@ -66,12 +66,12 @@
     <button data-cmd="flipH" data-tip="Flip horizontal" aria-label="Flip horizontal"><svg><use href="#i-fliph"/></svg></button>
     <button data-cmd="flipV" data-tip="Flip vertical" aria-label="Flip vertical"><svg><use href="#i-flipv"/></svg></button>
   </div>
-  <div id="docName" aria-live="polite"><span id="docTitle">untitled.png</span><span id="docDirty" hidden>Edited</span></div>
+  <div id="docName" aria-live="polite"><span id="docTitle">untitled.png</span><span id="docDirty" hidden title="Unsaved changes">Edited</span></div>
   <div class="group zoom">
     <button data-cmd="zoomOut" data-tip="Zoom out" data-kbd="−" aria-label="Zoom out"><svg><use href="#i-minus"/></svg></button>
-    <button data-cmd="zoom100" id="zoomBtn" class="zoom-val" data-tip="Actual size" data-kbd="⌘1" aria-label="Zoom level, click for actual size">100%</button>
+    <button data-cmd="zoom100" id="zoomBtn" class="zoom-val" data-tip="Actual size" data-kbd="⇧0" aria-label="Zoom 100%, actual size">100%</button>
     <button data-cmd="zoomIn" data-tip="Zoom in" data-kbd="+" aria-label="Zoom in"><svg><use href="#i-plus"/></svg></button>
-    <button data-cmd="fit" data-tip="Fit to window" data-kbd="⌘0" aria-label="Fit to window"><svg><use href="#i-fit"/></svg></button>
+    <button data-cmd="fit" data-tip="Fit to window" data-kbd="⇧1" aria-label="Fit to window"><svg><use href="#i-fit"/></svg></button>
   </div>
   <div class="group">
     <button data-cmd="help" data-tip="Keyboard shortcuts" data-kbd="?" aria-label="Keyboard shortcuts"><svg><use href="#i-help"/></svg></button>
@@ -101,7 +101,7 @@
     <span class="hint" data-for="eraser">Paints with color 2</span>
     <span class="hint" data-for="fill">Click: color 1 · right-click: color 2</span>
     <span class="hint" data-for="picker">Click: color 1 · right-click: color 2</span>
-    <span class="hint" data-for="text">Click to place · Enter to apply · Esc to cancel</span>
+    <span class="hint" data-for="text">Click to place · Enter to apply · Shift+Enter for a new line · Esc to cancel</span>
     <span class="hint" data-for="line rect ellipse">Hold Shift to constrain</span>
   </div>
   <div class="colors">
@@ -198,7 +198,7 @@
 <dialog id="helpDlg" aria-labelledby="helpTitle">
   <form method="dialog">
     <h2 id="helpTitle">Keyboard shortcuts</h2>
-    <div id="helpBody"></div>
+    <div id="helpBody" tabindex="0" role="region" aria-label="Shortcut list"></div>
     <menu><button value="ok" class="primary" autofocus>Done</button></menu>
   </form>
 </dialog>
