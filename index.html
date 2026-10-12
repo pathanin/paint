@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paint</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="toolbar">
+  <div class="group">
+    <button data-cmd="new" title="New image (Alt+N)">New</button>
+    <button data-cmd="open" title="Open (⌘O) — or drop a file">Open</button>
+    <button data-cmd="save" title="Save (⌘S)">Save</button>
+    <button data-cmd="saveAs" title="Save as (⌘⇧S)">Save as</button>
+  </div>
+  <div class="group">
+    <button data-cmd="undo" id="undoBtn" title="Undo (⌘Z)">↶</button>
+    <button data-cmd="redo" id="redoBtn" title="Redo (⌘⇧Z)">↷</button>
+  </div>
+  <div class="group" id="tools">
+    <button data-tool="select" title="Select (S)">⬚</button>
+    <button data-tool="pencil" title="Pencil (P)">✏️</button>
+    <button data-tool="brush" title="Brush (B)">🖌️</button>
+    <button data-tool="eraser" title="Eraser (E) — paints color 2">🧽</button>
+    <button data-tool="fill" title="Fill (F)">🪣</button>
+    <button data-tool="picker" title="Color picker (I) — right-click sets color 2">💧</button>
+    <button data-tool="text" title="Text (T)">A</button>
+    <button data-tool="line" title="Line (L) — Shift snaps 45°">╱</button>
+    <button data-tool="rect" title="Rectangle (R) — Shift = square">▭</button>
+    <button data-tool="ellipse" title="Ellipse (O) — Shift = circle">◯</button>
+  </div>
+  <div class="group">
+    <button data-cmd="crop" title="Crop to selection (⌘⇧X)">Crop</button>
+    <button data-cmd="resize" title="Resize image / canvas (Shift+R)">Resize</button>
+    <button data-cmd="rotL" title="Rotate 90° left">⟲</button>
+    <button data-cmd="rotR" title="Rotate 90° right">⟳</button>
+    <button data-cmd="flipH" title="Flip horizontal">⇋</button>
+    <button data-cmd="flipV" title="Flip vertical">⇵</button>
+  </div>
+  <div class="group opts">
+    <label data-for="pencil brush eraser line rect ellipse" title="Size ([ / ])">Size
+      <input type="range" id="size" min="1" max="100" value="1"><output id="sizeOut">1</output></label>
+    <label data-for="rect ellipse">
+      <select id="fillMode" title="Shape style">
+        <option value="outline">Outline</option>
+        <option value="fill">Fill</option>
+        <option value="both">Outline + fill (color 2)</option>
+      </select></label>
+    <label data-for="fill" title="Fill tolerance">Tolerance
+      <input type="range" id="tolerance" min="0" max="100" value="10"><output id="tolOut">10</output></label>
+    <label data-for="text">
+      <select id="font">
+        <option value="system-ui, sans-serif">Sans</option>
+        <option value="Georgia, serif">Serif</option>
+        <option value="ui-monospace, Menlo, monospace">Mono</option>
+      </select></label>
+    <label data-for="text">Size <input type="number" id="fontSize" min="6" max="400" value="24"></label>
+  </div>
+  <div class="group colors">
+    <input type="color" id="primary" value="#000000" title="Color 1 (left click)">
+    <input type="color" id="secondary" value="#ffffff" title="Color 2 (right click) — X swaps">
+    <div id="palette"></div>
+  </div>
+  <div class="group last">
+    <button data-cmd="zoomOut" title="Zoom out (−)">−</button>
+    <button data-cmd="fit" title="Fit (⌘0)">Fit</button>
+    <button data-cmd="zoom100" title="100% (⌘1)">1:1</button>
+    <button data-cmd="zoomIn" title="Zoom in (+)">+</button>
+    <button data-cmd="help" title="Shortcuts (?)">?</button>
+  </div>
+</header>
+
+<main id="viewport">
+  <div id="stage">
+    <canvas id="image" width="800" height="600"></canvas>
+    <canvas id="overlay" width="800" height="600"></canvas>
+    <textarea id="textInput" hidden spellcheck="false" rows="1"></textarea>
+  </div>
+</main>
+
+<footer id="status">
+  <span id="stPos">—</span>
+  <span id="stSel"></span>
+  <span id="stSize"></span>
+  <span id="stZoom"></span>
+  <span id="stMsg"></span>
+</footer>
+
+<input type="file" id="fileInput" accept="image/*" hidden>
+
+<dialog id="newDlg">
+  <form method="dialog">
+    <h3>New image</h3>
+    <div class="row">
+      <label>Width <input type="number" id="newW" min="1" max="16384" required></label>
+      <label>Height <input type="number" id="newH" min="1" max="16384" required></label>
+    </div>
+    <menu><button type="button" data-close>Cancel</button><button value="ok" class="primary">Create</button></menu>
+  </form>
+</dialog>
+
+<dialog id="resizeDlg">
+  <form method="dialog">
+    <h3>Resize</h3>
+    <div class="row">
+      <label><input type="radio" name="rmode" value="scale" checked> Resample image</label>
+      <label><input type="radio" name="rmode" value="canvas"> Canvas size only</label>
+    </div>
+    <div class="row">
+      <label>Width <input type="number" id="rW" min="1" required></label>
+      <label>Height <input type="number" id="rH" min="1" required></label>
+      <select id="rUnit"><option value="px">px</option><option value="pct">%</option></select>
+    </div>
+    <label><input type="checkbox" id="rLock" checked> Keep aspect ratio</label>
+    <fieldset id="rAnchor" disabled>
+      <legend>Anchor</legend>
+      <div class="anchor">
+        <input type="radio" name="anchor" value="tl"><input type="radio" name="anchor" value="tc"><input type="radio" name="anchor" value="tr">
+        <input type="radio" name="anchor" value="ml"><input type="radio" name="anchor" value="mc" checked><input type="radio" name="anchor" value="mr">
+        <input type="radio" name="anchor" value="bl"><input type="radio" name="anchor" value="bc"><input type="radio" name="anchor" value="br">
+      </div>
+    </fieldset>
+    <menu><button type="button" data-close>Cancel</button><button value="ok" class="primary">Apply</button></menu>
+  </form>
+</dialog>
+
+<dialog id="helpDlg">
+  <form method="dialog">
+    <h3>Shortcuts</h3>
+    <table>
+      <tr><td>S P B E F I T L R O</td><td>Select, Pencil, Brush, Eraser, Fill, Picker, Text, Line, Rect, Ellipse</td></tr>
+      <tr><td>Left / right click</td><td>Draw with color 1 / color 2</td></tr>
+      <tr><td>X</td><td>Swap colors</td></tr>
+      <tr><td>[ ]</td><td>Smaller / bigger size</td></tr>
+      <tr><td>Shift (while dragging)</td><td>Square / circle / 45° line</td></tr>
+      <tr><td>⌘Z / ⌘⇧Z</td><td>Undo / redo</td></tr>
+      <tr><td>⌘A, Esc, Delete</td><td>Select all, deselect, clear selection</td></tr>
+      <tr><td>Arrows (Shift = 10px)</td><td>Nudge selection</td></tr>
+      <tr><td>⌘C ⌘X ⌘V</td><td>Copy, cut, paste (selection, or whole image)</td></tr>
+      <tr><td>⌘⇧X</td><td>Crop to selection</td></tr>
+      <tr><td>Shift+R</td><td>Resize image / canvas</td></tr>
+      <tr><td>⌘O ⌘S ⌘⇧S Alt+N</td><td>Open, save, save as, new</td></tr>
+      <tr><td>⌘+wheel / pinch, + −</td><td>Zoom</td></tr>
+      <tr><td>⌘0 / ⌘1</td><td>Fit / 100%</td></tr>
+      <tr><td>Space+drag, middle drag</td><td>Pan</td></tr>
+    </table>
+    <menu><button value="ok" class="primary">Close</button></menu>
+  </form>
+</dialog>
+
+<script src="js/core.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
