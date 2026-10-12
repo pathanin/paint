@@ -17,7 +17,7 @@
     font: 'system-ui, sans-serif', fontSize: 24,
     zoom: 1,
     fileHandle: null, fileName: 'untitled.png',
-    dirty: false, pristine: true, panKey: false,
+    pristine: true, panKey: false,
   };
   const hist = new Core.History({ maxBytes: 256 * 1024 * 1024, maxCount: 100 });
   const SHAPES = new Set(['line', 'rect', 'ellipse']);
@@ -26,8 +26,10 @@
     KeyI: 'picker', KeyT: 'text', KeyL: 'line', KeyR: 'rect', KeyO: 'ellipse',
   };
   const PALETTE = [
-    '#000000', '#7f7f7f', '#880015', '#ed1c24', '#ff7f27', '#fff200', '#22b14c', '#00a2e8', '#3f48cc', '#a349a4',
-    '#ffffff', '#c3c3c3', '#b97a57', '#ffaec9', '#ffc90e', '#efe4b0', '#b5e61d', '#99d9ea', '#7092be', '#c8bfe7',
+    ['#000000', 'Black'], ['#7f7f7f', 'Gray'], ['#880015', 'Dark red'], ['#ed1c24', 'Red'], ['#ff7f27', 'Orange'],
+    ['#fff200', 'Yellow'], ['#22b14c', 'Green'], ['#00a2e8', 'Turquoise'], ['#3f48cc', 'Indigo'], ['#a349a4', 'Purple'],
+    ['#ffffff', 'White'], ['#c3c3c3', 'Light gray'], ['#b97a57', 'Brown'], ['#ffaec9', 'Rose'], ['#ffc90e', 'Gold'],
+    ['#efe4b0', 'Light yellow'], ['#b5e61d', 'Lime'], ['#99d9ea', 'Light turquoise'], ['#7092be', 'Blue-gray'], ['#c8bfe7', 'Lavender'],
   ];
   const MAX_DIM = 16384;
 
@@ -113,13 +115,12 @@
   }
   function pushHist(e) {
     hist.push(e);
-    S.dirty = true; S.pristine = false;
+    S.pristine = false;
     updateChrome();
   }
   function applyHist(e, which) {
     if (e.type === 'region') ctx.putImageData(e[which], e.x, e.y);
     else setDoc(e[which], e[which].width, e[which].height);
-    S.dirty = true;
     updateChrome();
     requestRender();
   }
@@ -142,7 +143,7 @@
     commitText();
     setDoc(null, w, h);
     hist.clear();
-    Object.assign(S, { fileHandle: null, fileName: 'untitled.png', dirty: false, pristine: true });
+    Object.assign(S, { fileHandle: null, fileName: 'untitled.png', pristine: true });
     fitZoom(true);
     updateChrome();
   }
@@ -222,15 +223,17 @@
     $('#stSelWrap').hidden = !r;
     $('#stSel').textContent = r ? `${r.w} × ${r.h} px` : '';
     $('#stSize').textContent = drag && drag.t === 'canvas'
-      ? `${img.width} × ${img.height} → ${drag.w} × ${drag.h} px`
+      ? `${img.width} × ${img.height} → ${drag.w} × ${drag.h} px · Esc to cancel`
       : `${img.width} × ${img.height} px`;
     $('#zoomBtn').textContent = Math.round(S.zoom * 100) + '%';
     $('#cropBtn').disabled = !sel;
+    $('#cropBtn').dataset.hint = sel ? '' : 'Select an area first';
   }
   function updateChrome() {
-    document.title = (S.dirty ? '● ' : '') + S.fileName + ' — Paint';
+    const dirty = isDirty();
+    document.title = (dirty ? '● ' : '') + S.fileName + ' — Paint';
     $('#docTitle').textContent = S.fileName;
-    $('#docDirty').hidden = !S.dirty;
+    $('#docDirty').hidden = !dirty;
     $('#undoBtn').disabled = !hist.canUndo();
     $('#redoBtn').disabled = !hist.canRedo();
   }
@@ -246,6 +249,7 @@
       const on = b.dataset.tool === t;
       b.classList.toggle('active', on);
       b.setAttribute('aria-pressed', on);
+      b.tabIndex = on ? 0 : -1;
       if (on) $('#toolName').textContent = b.dataset.tip;
     });
     document.querySelectorAll('.opts [data-for]').forEach((l) => { l.hidden = !l.dataset.for.split(' ').includes(t); });
@@ -261,6 +265,7 @@
   function setColor(which, hex) {
     S[which] = hex;
     $('#' + which).value = hex;
+    if (textAt && which === 'primary') { textAt.color = hex; placeTextBox(); }
   }
 
   function stampLine(a, b, color, size) {
@@ -529,7 +534,8 @@
 
   // ---------- file I/O ----------
   const IMAGE_TYPES = [{ description: 'Images', accept: { 'image/*': ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'] } }];
-  const confirmDiscard = () => !S.dirty || confirm('Discard unsaved changes?');
+  const isDirty = () => !hist.isClean();
+  const confirmDiscard = () => !isDirty() || confirm(`Discard unsaved changes to ${S.fileName}?`);
 
   async function openFile() {
     if (!confirmDiscard()) return;
@@ -549,7 +555,7 @@
     setDoc(bmp, bmp.width, bmp.height);
     bmp.close();
     hist.clear();
-    Object.assign(S, { fileHandle: handle || null, fileName: file.name, dirty: false, pristine: false });
+    Object.assign(S, { fileHandle: handle || null, fileName: file.name, pristine: false });
     fitZoom(true);
     updateChrome();
   }
@@ -572,6 +578,7 @@
   async function save(as) {
     commitText();
     commitSelection();
+    const savedAt = hist.top(); // edits made while the save is in flight stay unsaved
     let h = as ? null : S.fileHandle;
     try {
       if (h && (await h.queryPermission({ mode: 'readwrite' })) !== 'granted' &&
@@ -583,7 +590,7 @@
           a.download = S.fileName;
           a.click();
           setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-          S.dirty = false; updateChrome();
+          hist.markSaved(savedAt); updateChrome();
           return;
         }
         h = await window.showSaveFilePicker({
@@ -599,7 +606,8 @@
       const w = await h.createWritable();
       await w.write(blob);
       await w.close();
-      Object.assign(S, { fileHandle: h, fileName: h.name, dirty: false });
+      hist.markSaved(savedAt);
+      Object.assign(S, { fileHandle: h, fileName: h.name });
       updateChrome();
       flash('Saved ' + h.name);
     } catch (err) {
@@ -609,6 +617,7 @@
 
   // ---------- dialogs ----------
   function openNewDialog() {
+    if (!confirmDiscard()) return;
     $('#newW').value = img.width;
     $('#newH').value = img.height;
     $('#newDlg').showModal();
@@ -618,7 +627,7 @@
   $('#newDlg form').addEventListener('submit', (e) => {
     if (!e.submitter || e.submitter.value !== 'ok') return;
     const w = +$('#newW').value, h = +$('#newH').value;
-    if (w >= 1 && h >= 1 && w <= MAX_DIM && h <= MAX_DIM && confirmDiscard()) newDoc(w, h);
+    if (w >= 1 && h >= 1 && w <= MAX_DIM && h <= MAX_DIM) newDoc(w, h);
   });
 
   const rForm = $('#resizeDlg form');
@@ -638,6 +647,7 @@
     const canvas = resizeMode() === 'canvas';
     $('#rAnchor').disabled = !canvas;
     $('#rNote').textContent = canvas ? 'Adds or trims space around the image.' : 'Stretches or shrinks the whole image.';
+    $('#rNote').classList.remove('error');
   }
   function syncUnitLabels() {
     document.querySelectorAll('.rUnitLbl').forEach((u) => { u.textContent = $('#rUnit').value === 'pct' ? '%' : 'px'; });
@@ -651,8 +661,8 @@
     const d = Core.fitDims(img.width, img.height, changed === 'w' ? { w: v, lockAspect: true } : { h: v, lockAspect: true });
     if (changed === 'w') $('#rH').value = d.h; else $('#rW').value = d.w;
   }
-  $('#rW').addEventListener('input', () => syncResize('w'));
-  $('#rH').addEventListener('input', () => syncResize('h'));
+  $('#rW').addEventListener('input', () => { syncResize('w'); syncResizeMode(); });
+  $('#rH').addEventListener('input', () => { syncResize('h'); syncResizeMode(); });
   $('#rUnit').addEventListener('change', () => {
     const pct = $('#rUnit').value === 'pct';
     $('#rW').value = pct ? 100 : img.width;
@@ -664,12 +674,19 @@
   rForm.addEventListener('submit', (e) => {
     if (!e.submitter || e.submitter.value !== 'ok') return;
     let w = +$('#rW').value, h = +$('#rH').value;
-    if (!(w > 0 && h > 0)) return;
     if ($('#rUnit').value === 'pct') {
       w = Math.max(1, Math.round(img.width * w / 100));
       h = Math.max(1, Math.round(img.height * h / 100));
     }
-    resizeDoc(Math.round(w), Math.round(h), resizeMode(), rForm.anchor.value);
+    w = Math.round(w); h = Math.round(h);
+    if (!(w >= 1 && h >= 1 && w <= MAX_DIM && h <= MAX_DIM)) {
+      e.preventDefault();
+      $('#rNote').textContent = `Width and height must be between 1 and ${MAX_DIM} px` +
+        (w >= 1 && h >= 1 ? ` (this would be ${w} × ${h} px).` : '.');
+      $('#rNote').classList.add('error');
+      return;
+    }
+    resizeDoc(w, h, resizeMode(), rForm.anchor.value);
   });
 
   // ---------- canvas resize handles (Paint-style: right, bottom, corner; top-left stays put) ----------
@@ -859,11 +876,19 @@
     if (e.key === 'Escape') { e.preventDefault(); cancelText(); }
     else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commitText(); }
   });
-  textBox.addEventListener('blur', commitText);
+  textBox.addEventListener('blur', (e) => {
+    // Picking a font, size or color in the toolbars restyles the open text instead of committing it.
+    if (e.relatedTarget && e.relatedTarget.closest('#optbar')) return;
+    commitText();
+  });
 
   window.addEventListener('keydown', (e) => {
     if (document.querySelector('dialog[open]') || isTyping(e.target)) return;
-    const mod = e.metaKey || e.ctrlKey, k = e.code;
+    // Space/Enter on a focused control activate it (keyboard users); they are not shortcuts there.
+    if ((e.code === 'Space' || e.key === 'Enter') && e.target.closest && e.target.closest('button, input, select')) return;
+    const mod = e.metaKey || e.ctrlKey;
+    // Letters follow the user's layout (AZERTY, Dvorak); other keys and non-Latin layouts use the physical key.
+    const k = /^[a-z]$/i.test(e.key) ? 'Key' + e.key.toUpperCase() : e.code;
     if (mod) {
       const act = {
         KeyZ: () => (e.shiftKey ? redo() : undo()),
@@ -946,7 +971,7 @@
     e.target.value = '';
   });
   window.addEventListener('beforeunload', (e) => {
-    if (S.dirty) { e.preventDefault(); e.returnValue = ''; }
+    if (isDirty()) { e.preventDefault(); e.returnValue = ''; }
   });
   window.addEventListener('resize', () => updateStatus());
 
@@ -967,14 +992,19 @@
     hideTip();
     if (b.dataset.cmd) CMDS[b.dataset.cmd]();
     else if (b.dataset.tool) setTool(b.dataset.tool);
-    b.blur(); // keep Space/Enter from re-triggering the button
+    // After a mouse click, hand focus back so single-key shortcuts (and Space-to-pan) work.
+    // Keyboard activation (detail 0) keeps focus on the button so Tab order isn't lost.
+    if (e.detail > 0) releaseFocus(b);
   });
-  // After using a toolbar control, hand focus back so single-key shortcuts work.
   document.addEventListener('change', (e) => {
-    if (e.target.closest('.chrome') && e.target.type !== 'number') e.target.blur();
+    if (e.target.closest('.chrome') && e.target.type !== 'number') releaseFocus(e.target);
   });
+  function releaseFocus(el) {
+    el.blur();
+    if (textAt) textBox.focus(); // still typing: go back to the text
+  }
   document.querySelectorAll('.chrome input[type=number]').forEach((i) => i.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === 'Escape') i.blur();
+    if (e.key === 'Enter' || e.key === 'Escape') releaseFocus(i);
   }));
 
   $('#size').addEventListener('input', (e) => setSize(+e.target.value));
@@ -985,23 +1015,66 @@
     const v = +e.target.value;
     if (v >= 1) { S.fontSize = v; if (textAt) placeTextBox(); }
   });
-  $('#primary').addEventListener('input', (e) => { S.primary = e.target.value; });
-  $('#secondary').addEventListener('input', (e) => { S.secondary = e.target.value; });
+  $('#primary').addEventListener('input', (e) => { setColor('primary', e.target.value); });
+  $('#secondary').addEventListener('input', (e) => { setColor('secondary', e.target.value); });
 
   const pal = $('#palette');
-  for (const c of PALETTE) {
+  for (const [c, name] of PALETTE) {
     const b = document.createElement('button');
     b.style.background = c;
     b.dataset.color = c;
-    b.setAttribute('aria-label', c);
+    b.dataset.tip = name;
+    b.dataset.hint = 'Right-click or Shift-click for color 2';
+    b.setAttribute('aria-label', name);
     pal.appendChild(b);
   }
-  pal.addEventListener('click', (e) => { if (e.target.dataset.color) setColor('primary', e.target.dataset.color); });
+  pal.addEventListener('click', (e) => {
+    if (e.target.dataset.color) setColor(e.shiftKey ? 'secondary' : 'primary', e.target.dataset.color);
+  });
   pal.addEventListener('contextmenu', (e) => {
     if (!e.target.dataset.color) return;
     e.preventDefault();
     setColor('secondary', e.target.dataset.color);
   });
+  pal.addEventListener('keydown', (e) => {
+    if (e.target.dataset.color && e.shiftKey && (e.key === 'Enter' || e.code === 'Space')) {
+      e.preventDefault();
+      e.stopPropagation();
+      setColor('secondary', e.target.dataset.color);
+    }
+  });
+
+  // ---------- roving focus: one Tab stop per toolbar, arrow keys inside ----------
+  function rove(box, sel, keys) {
+    const items = () => [...box.querySelectorAll(sel)].filter((b) => !b.disabled && b.offsetParent !== null);
+    box.addEventListener('keydown', (e) => {
+      const list = items(), i = list.indexOf(document.activeElement);
+      if (i < 0) return;
+      const d = e.key === 'Home' ? -Infinity : e.key === 'End' ? Infinity : keys[e.key];
+      if (d == null) return;
+      e.preventDefault();
+      e.stopPropagation(); // arrows would otherwise nudge the selection
+      list[clamp(i + d, 0, list.length - 1)].focus();
+    });
+    box.addEventListener('focusin', (e) => {
+      if (!e.target.matches(sel)) return;
+      box.querySelectorAll(sel).forEach((b) => { b.tabIndex = b === e.target ? 0 : -1; });
+    });
+    const fix = () => {
+      const all = [...box.querySelectorAll(sel)];
+      const cur = all.find((b) => b.tabIndex === 0);
+      if (cur && !cur.disabled && cur.offsetParent !== null) return;
+      const next = items()[0];
+      all.forEach((b) => { b.tabIndex = b === next ? 0 : -1; });
+    };
+    fix();
+    return fix;
+  }
+  const fixTopbar = rove($('#topbar'), 'button', { ArrowLeft: -1, ArrowRight: 1 });
+  rove($('#rail'), 'button', { ArrowUp: -1, ArrowDown: 1 });
+  rove(pal, 'button', { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -10, ArrowDown: 10 });
+  new MutationObserver(fixTopbar).observe($('#topbar'), { subtree: true, attributeFilter: ['disabled'] });
+  window.addEventListener('resize', fixTopbar);
 
   // ---------- tooltips ----------
   const tip = $('#tip');
@@ -1043,6 +1116,11 @@
     tipTimer = setTimeout(() => showTip(el), performance.now() < tipWarmUntil ? 0 : 450);
   });
   document.addEventListener('pointerdown', hideTip, true);
+  document.addEventListener('focusin', (e) => {
+    const el = e.target.closest && e.target.closest('.chrome [data-tip]');
+    if (el && e.target.matches(':focus-visible')) { hideTip(); showTip(el); }
+  });
+  document.addEventListener('focusout', () => { if (tipFor) hideTip(); });
   window.addEventListener('blur', hideTip);
 
   // ---------- help ----------

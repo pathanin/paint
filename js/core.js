@@ -144,19 +144,29 @@
   }
 
   // Undo/redo stacks bounded by entry count and total bytes (both stacks). Newest entry always survives.
+  // The save point is the entry on top of the undo stack when the document was last saved
+  // (null = the base state). It becomes LOST once that state can no longer be reached.
+  const LOST = {};
   class History {
     constructor({ maxBytes = 256 * 1024 * 1024, maxCount = 100 } = {}) {
       this.maxBytes = maxBytes; this.maxCount = maxCount;
-      this.undoStack = []; this.redoStack = []; this.bytes = 0;
+      this.clear();
     }
+    top() { return this.undoStack.length ? this.undoStack[this.undoStack.length - 1] : null; }
     push(entry) {
-      for (const e of this.redoStack) this.bytes -= e.bytes || 0;
+      for (const e of this.redoStack) {
+        this.bytes -= e.bytes || 0;
+        if (e === this.saved) this.saved = LOST;
+      }
       this.redoStack = [];
       this.undoStack.push(entry);
       this.bytes += entry.bytes || 0;
       while (this.undoStack.length > 1 &&
              (this.undoStack.length > this.maxCount || this.bytes > this.maxBytes)) {
-        this.bytes -= this.undoStack.shift().bytes || 0;
+        const gone = this.undoStack.shift();
+        this.bytes -= gone.bytes || 0;
+        if (this.saved === null) this.saved = LOST; // the base state is gone
+        else if (gone === this.saved) this.saved = null; // the saved state is the new base
       }
     }
     undo() {
@@ -173,7 +183,9 @@
     }
     canUndo() { return this.undoStack.length > 0; }
     canRedo() { return this.redoStack.length > 0; }
-    clear() { this.undoStack = []; this.redoStack = []; this.bytes = 0; }
+    markSaved(entry = this.top()) { this.saved = entry; }
+    isClean() { return this.saved !== LOST && this.top() === this.saved; }
+    clear() { this.undoStack = []; this.redoStack = []; this.bytes = 0; this.saved = null; }
   }
 
   const Core = { rgbaToU32, colorDistance, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, rotateDims, History };

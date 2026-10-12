@@ -208,3 +208,54 @@ test('dragResize shift on corner keeps aspect, driven by the larger relative cha
   // shift is ignored on single edges
   assert.deepEqual(Core.dragResize(200, 100, 100, 0, 'e', 1, true, 16384), { w: 300, h: 100 });
 });
+
+test('History save point: clean only at the saved state', () => {
+  const h = new Core.History({ maxBytes: 1e9, maxCount: 10 });
+  assert.equal(h.isClean(), true); // fresh document
+  h.push({ id: 1 });
+  assert.equal(h.isClean(), false);
+  h.undo();
+  assert.equal(h.isClean(), true); // undone back to the start
+  h.redo();
+  h.markSaved();
+  assert.equal(h.isClean(), true);
+  h.push({ id: 2 });
+  assert.equal(h.isClean(), false);
+  h.undo();
+  assert.equal(h.isClean(), true); // back at the save
+  h.undo();
+  assert.equal(h.isClean(), false); // before the save
+  h.redo();
+  assert.equal(h.isClean(), true);
+});
+
+test('History save point becomes unreachable when its state is discarded', () => {
+  const h = new Core.History({ maxBytes: 1e9, maxCount: 10 });
+  h.push({ id: 1 });
+  h.markSaved();
+  h.undo();
+  h.push({ id: 2 }); // saved state was on the redo stack and is now gone
+  assert.equal(h.isClean(), false);
+  h.undo();
+  assert.equal(h.isClean(), false); // the base state was never saved
+  // a saved base state is lost once its entries are evicted
+  const e = new Core.History({ maxBytes: 1e9, maxCount: 2 });
+  [1, 2, 3].forEach((id) => e.push({ id }));
+  e.undo(); e.undo();
+  assert.equal(e.canUndo(), false);
+  assert.equal(e.isClean(), false); // the empty stack is no longer the original image
+  // clear() starts a new clean document
+  e.clear();
+  assert.equal(e.isClean(), true);
+});
+
+test('History save point survives eviction of the saved entry (it becomes the base state)', () => {
+  const h = new Core.History({ maxBytes: 1e9, maxCount: 2 });
+  h.push({ id: 1 });
+  h.markSaved(); // state after 1
+  h.push({ id: 2 });
+  h.push({ id: 3 }); // evicts 1: "after 1" is now the base state
+  assert.equal(h.isClean(), false);
+  h.undo(); h.undo();
+  assert.equal(h.isClean(), true);
+});
