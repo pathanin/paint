@@ -4,154 +4,201 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Paint</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232f6fde'/%3E%3Cpath d='M9 23c0-2.5 1.6-4 3.6-4 1.7 0 3 1.3 3 3 0 2.6-2.4 4-5.6 4 .6-.7-1-1.2-1-3z' fill='%23fff'/%3E%3Cpath d='M15.2 18.4 25 8.6' stroke='%23fff' stroke-width='3.2' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header id="toolbar">
+<!-- Icons: paths adapted from Lucide (ISC license, lucide.dev). Inline so file:// works. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-select" viewBox="0 0 24 24"><path d="M5 3a2 2 0 0 0-2 2M19 3a2 2 0 0 1 2 2M21 19a2 2 0 0 1-2 2M5 21a2 2 0 0 1-2-2M9 3h1M9 21h1M14 3h1M14 21h1M3 9v1M21 9v1M3 14v1M21 14v1"/></symbol>
+    <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M21.17 6.81a1 1 0 0 0-3.99-3.99L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5zM15 5l4 4"/></symbol>
+    <symbol id="i-brush" viewBox="0 0 24 24"><path d="m9.06 11.9 8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z"/></symbol>
+    <symbol id="i-eraser" viewBox="0 0 24 24"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21M22 21H7M5 11l9 9"/></symbol>
+    <symbol id="i-fill" viewBox="0 0 24 24"><path d="m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11ZM5 2l5 5M2 13h15M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4Z"/></symbol>
+    <symbol id="i-picker" viewBox="0 0 24 24"><path d="m2 22 1-1h3l9-9M3 21v-3l9-9M15 6l3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/></symbol>
+    <symbol id="i-text" viewBox="0 0 24 24"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></symbol>
+    <symbol id="i-line" viewBox="0 0 24 24"><path d="M5 19 19 5"/></symbol>
+    <symbol id="i-rect" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1.5"/></symbol>
+    <symbol id="i-ellipse" viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="9.5" ry="7.5"/></symbol>
+    <symbol id="i-new" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7ZM14 2v4a2 2 0 0 0 2 2h4M9 15h6M12 18v-6"/></symbol>
+    <symbol id="i-open" viewBox="0 0 24 24"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7M7 3v4a1 1 0 0 0 1 1h7"/></symbol>
+    <symbol id="i-saveas" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7ZM14 2v4a2 2 0 0 0 2 2h4M12 18v-6M9 15l3 3 3-3"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
+    <symbol id="i-redo" viewBox="0 0 24 24"><path d="m15 14 5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></symbol>
+    <symbol id="i-crop" viewBox="0 0 24 24"><path d="M6 2v14a2 2 0 0 0 2 2h14M18 22V8a2 2 0 0 0-2-2H2"/></symbol>
+    <symbol id="i-resize" viewBox="0 0 24 24"><path d="M21 3 9 15M12 3H3v18h18v-9M16 3h5v5M14 15H9v-5"/></symbol>
+    <symbol id="i-canvas" viewBox="0 0 24 24"><rect x="3" y="3" width="11" height="11" rx="1"/><path d="M18 3h1a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1" stroke-dasharray="2.5 2.5"/></symbol>
+    <symbol id="i-rotl" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5"/></symbol>
+    <symbol id="i-rotr" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8M21 3v5h-5"/></symbol>
+    <symbol id="i-fliph" viewBox="0 0 24 24"><path d="m3 7 5 5-5 5V7M21 7l-5 5 5 5V7M12 20v2M12 14v2M12 8v2M12 2v2"/></symbol>
+    <symbol id="i-flipv" viewBox="0 0 24 24"><path d="m17 3-5 5-5-5h10M17 21l-5-5-5 5h10M4 12H2M10 12H8M16 12h-2M22 12h-2"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
+    <symbol id="i-fit" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/></symbol>
+    <symbol id="i-swap" viewBox="0 0 24 24"><path d="M4 9V7a3 3 0 0 1 3-3h10M14 1l3 3-3 3M20 15v2a3 3 0 0 1-3 3H7M10 23l-3-3 3-3"/></symbol>
+    <symbol id="i-cursor" viewBox="0 0 24 24"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><circle cx="12" cy="12" r="1"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21"/></symbol>
+  </defs>
+</svg>
+
+<header id="topbar" class="chrome" role="toolbar" aria-label="Commands">
   <div class="group">
-    <button data-cmd="new" title="New image (Alt+N)">New</button>
-    <button data-cmd="open" title="Open (⌘O) — or drop a file">Open</button>
-    <button data-cmd="save" title="Save (⌘S)">Save</button>
-    <button data-cmd="saveAs" title="Save as (⌘⇧S)">Save as</button>
+    <button data-cmd="new" data-tip="New image" data-kbd="Alt+N" aria-label="New image"><svg><use href="#i-new"/></svg></button>
+    <button data-cmd="open" data-tip="Open" data-kbd="⌘O" data-hint="Or drop a file on the window" aria-label="Open"><svg><use href="#i-open"/></svg></button>
+    <button data-cmd="save" data-tip="Save" data-kbd="⌘S" aria-label="Save"><svg><use href="#i-save"/></svg></button>
+    <button data-cmd="saveAs" data-tip="Save as" data-kbd="⌘⇧S" aria-label="Save as"><svg><use href="#i-saveas"/></svg></button>
   </div>
   <div class="group">
-    <button data-cmd="undo" id="undoBtn" title="Undo (⌘Z)">↶</button>
-    <button data-cmd="redo" id="redoBtn" title="Redo (⌘⇧Z)">↷</button>
-  </div>
-  <div class="group" id="tools">
-    <button data-tool="select" title="Select (S)">⬚</button>
-    <button data-tool="pencil" title="Pencil (P)">✏️</button>
-    <button data-tool="brush" title="Brush (B)">🖌️</button>
-    <button data-tool="eraser" title="Eraser (E) — paints color 2">🧽</button>
-    <button data-tool="fill" title="Fill (F)">🪣</button>
-    <button data-tool="picker" title="Color picker (I) — right-click sets color 2">💧</button>
-    <button data-tool="text" title="Text (T)">A</button>
-    <button data-tool="line" title="Line (L) — Shift snaps 45°">╱</button>
-    <button data-tool="rect" title="Rectangle (R) — Shift = square">▭</button>
-    <button data-tool="ellipse" title="Ellipse (O) — Shift = circle">◯</button>
+    <button data-cmd="undo" id="undoBtn" data-tip="Undo" data-kbd="⌘Z" aria-label="Undo"><svg><use href="#i-undo"/></svg></button>
+    <button data-cmd="redo" id="redoBtn" data-tip="Redo" data-kbd="⌘⇧Z" aria-label="Redo"><svg><use href="#i-redo"/></svg></button>
   </div>
   <div class="group">
-    <button data-cmd="crop" title="Crop to selection (⌘⇧X)">Crop</button>
-    <button data-cmd="resize" title="Resize image (Shift+R)">Resize</button>
-    <button data-cmd="canvasSize" title="Canvas size (Shift+C) — or drag the handles at the image edge">Canvas</button>
-    <button data-cmd="rotL" title="Rotate 90° left">⟲</button>
-    <button data-cmd="rotR" title="Rotate 90° right">⟳</button>
-    <button data-cmd="flipH" title="Flip horizontal">⇋</button>
-    <button data-cmd="flipV" title="Flip vertical">⇵</button>
+    <button data-cmd="crop" id="cropBtn" class="labeled" data-tip="Crop to selection" data-kbd="⌘⇧X" aria-label="Crop to selection"><svg><use href="#i-crop"/></svg><span>Crop</span></button>
+    <button data-cmd="resize" class="labeled" data-tip="Resize image" data-kbd="⇧R" aria-label="Resize image"><svg><use href="#i-resize"/></svg><span>Resize</span></button>
+    <button data-cmd="canvasSize" class="labeled" data-tip="Canvas size" data-kbd="⇧C" data-hint="Or drag the handles at the image edge" aria-label="Canvas size"><svg><use href="#i-canvas"/></svg><span>Canvas</span></button>
   </div>
-  <div class="group opts">
-    <label data-for="pencil brush eraser line rect ellipse" title="Size ([ / ])">Size
-      <input type="range" id="size" min="1" max="100" value="1"><output id="sizeOut">1</output></label>
-    <label data-for="rect ellipse">
-      <select id="fillMode" title="Shape style">
-        <option value="outline">Outline</option>
-        <option value="fill">Fill</option>
-        <option value="both">Outline + fill (color 2)</option>
-      </select></label>
-    <label data-for="fill" title="Fill tolerance">Tolerance
-      <input type="range" id="tolerance" min="0" max="100" value="10"><output id="tolOut">10</output></label>
-    <label data-for="text">
-      <select id="font">
+  <div class="group">
+    <button data-cmd="rotL" data-tip="Rotate left 90°" aria-label="Rotate left 90°"><svg><use href="#i-rotl"/></svg></button>
+    <button data-cmd="rotR" data-tip="Rotate right 90°" aria-label="Rotate right 90°"><svg><use href="#i-rotr"/></svg></button>
+    <button data-cmd="flipH" data-tip="Flip horizontal" aria-label="Flip horizontal"><svg><use href="#i-fliph"/></svg></button>
+    <button data-cmd="flipV" data-tip="Flip vertical" aria-label="Flip vertical"><svg><use href="#i-flipv"/></svg></button>
+  </div>
+  <div id="docName" aria-live="polite"><span id="docTitle">untitled.png</span><span id="docDirty" hidden>Edited</span></div>
+  <div class="group zoom">
+    <button data-cmd="zoomOut" data-tip="Zoom out" data-kbd="−" aria-label="Zoom out"><svg><use href="#i-minus"/></svg></button>
+    <button data-cmd="zoom100" id="zoomBtn" class="zoom-val" data-tip="Actual size" data-kbd="⌘1" aria-label="Zoom level, click for actual size">100%</button>
+    <button data-cmd="zoomIn" data-tip="Zoom in" data-kbd="+" aria-label="Zoom in"><svg><use href="#i-plus"/></svg></button>
+    <button data-cmd="fit" data-tip="Fit to window" data-kbd="⌘0" aria-label="Fit to window"><svg><use href="#i-fit"/></svg></button>
+  </div>
+  <div class="group">
+    <button data-cmd="help" data-tip="Keyboard shortcuts" data-kbd="?" aria-label="Keyboard shortcuts"><svg><use href="#i-help"/></svg></button>
+  </div>
+</header>
+
+<div id="optbar" class="chrome">
+  <span id="toolName">Pencil</span>
+  <div class="opts">
+    <label data-for="pencil brush eraser line rect ellipse" data-tip="Size" data-kbd="[ ]">Size
+      <input type="range" id="size" min="1" max="100" value="1" aria-label="Size"><output id="sizeOut">1</output><span class="unit">px</span></label>
+    <div data-for="rect ellipse" class="seg" role="radiogroup" aria-label="Shape style">
+      <label><input type="radio" name="fillMode" value="outline" checked><span>Outline</span></label>
+      <label><input type="radio" name="fillMode" value="fill"><span>Fill</span></label>
+      <label data-tip="Outline + fill" data-hint="Fills with color 2"><input type="radio" name="fillMode" value="both"><span>Both</span></label>
+    </div>
+    <label data-for="fill" data-tip="Tolerance" data-hint="How similar a color must be to get filled">Tolerance
+      <input type="range" id="tolerance" min="0" max="100" value="10" aria-label="Tolerance"><output id="tolOut">10</output></label>
+    <label data-for="text">Font
+      <select id="font" aria-label="Font">
         <option value="system-ui, sans-serif">Sans</option>
         <option value="Georgia, serif">Serif</option>
         <option value="ui-monospace, Menlo, monospace">Mono</option>
       </select></label>
-    <label data-for="text">Size <input type="number" id="fontSize" min="6" max="400" value="24"></label>
+    <label data-for="text">Size <input type="number" id="fontSize" min="6" max="400" value="24" aria-label="Font size"><span class="unit">px</span></label>
+    <span class="hint" data-for="select">Drag to select · drag inside to move · arrows nudge</span>
+    <span class="hint" data-for="eraser">Paints with color 2</span>
+    <span class="hint" data-for="picker">Click: color 1 · right-click: color 2</span>
+    <span class="hint" data-for="text">Click to place · Enter to apply · Esc to cancel</span>
+    <span class="hint" data-for="line rect ellipse">Hold Shift to constrain</span>
   </div>
-  <div class="group colors">
-    <input type="color" id="primary" value="#000000" title="Color 1 (left click)">
-    <input type="color" id="secondary" value="#ffffff" title="Color 2 (right click) — X swaps">
-    <div id="palette"></div>
+  <div class="colors">
+    <div class="well">
+      <input type="color" id="primary" value="#000000" data-tip="Color 1" data-hint="Left click draws with it" aria-label="Color 1">
+      <input type="color" id="secondary" value="#ffffff" data-tip="Color 2" data-hint="Right click draws with it" aria-label="Color 2">
+      <button data-cmd="swap" class="swap" data-tip="Swap colors" data-kbd="X" aria-label="Swap colors"><svg><use href="#i-swap"/></svg></button>
+    </div>
+    <div id="palette" role="group" aria-label="Palette: click for color 1, right-click for color 2"></div>
   </div>
-  <div class="group last">
-    <button data-cmd="zoomOut" title="Zoom out (−)">−</button>
-    <button data-cmd="fit" title="Fit (⌘0)">Fit</button>
-    <button data-cmd="zoom100" title="100% (⌘1)">1:1</button>
-    <button data-cmd="zoomIn" title="Zoom in (+)">+</button>
-    <button data-cmd="help" title="Shortcuts (?)">?</button>
-  </div>
-</header>
+</div>
 
-<main id="viewport">
-  <div id="stage">
-    <canvas id="image" width="800" height="600"></canvas>
-    <canvas id="overlay" width="800" height="600"></canvas>
-    <textarea id="textInput" hidden spellcheck="false" rows="1"></textarea>
-    <div id="resizeGhost" hidden></div>
-    <div class="handle" data-edge="e" title="Drag to resize canvas"></div>
-    <div class="handle" data-edge="s" title="Drag to resize canvas"></div>
-    <div class="handle" data-edge="se" title="Drag to resize canvas (Shift keeps aspect)"></div>
-  </div>
-</main>
+<div id="main">
+  <nav id="rail" class="chrome" role="toolbar" aria-label="Tools" aria-orientation="vertical">
+    <button data-tool="select" data-tip="Select" data-kbd="S" aria-label="Select"><svg><use href="#i-select"/></svg></button>
+    <hr>
+    <button data-tool="pencil" data-tip="Pencil" data-kbd="P" aria-label="Pencil"><svg><use href="#i-pencil"/></svg></button>
+    <button data-tool="brush" data-tip="Brush" data-kbd="B" aria-label="Brush"><svg><use href="#i-brush"/></svg></button>
+    <button data-tool="eraser" data-tip="Eraser" data-kbd="E" data-hint="Paints with color 2" aria-label="Eraser"><svg><use href="#i-eraser"/></svg></button>
+    <hr>
+    <button data-tool="fill" data-tip="Fill" data-kbd="F" aria-label="Fill"><svg><use href="#i-fill"/></svg></button>
+    <button data-tool="picker" data-tip="Color picker" data-kbd="I" aria-label="Color picker"><svg><use href="#i-picker"/></svg></button>
+    <button data-tool="text" data-tip="Text" data-kbd="T" aria-label="Text"><svg><use href="#i-text"/></svg></button>
+    <hr>
+    <button data-tool="line" data-tip="Line" data-kbd="L" aria-label="Line"><svg><use href="#i-line"/></svg></button>
+    <button data-tool="rect" data-tip="Rectangle" data-kbd="R" aria-label="Rectangle"><svg><use href="#i-rect"/></svg></button>
+    <button data-tool="ellipse" data-tip="Ellipse" data-kbd="O" aria-label="Ellipse"><svg><use href="#i-ellipse"/></svg></button>
+  </nav>
+
+  <main id="viewport">
+    <div id="stage">
+      <canvas id="image" width="800" height="600"></canvas>
+      <canvas id="overlay" width="800" height="600"></canvas>
+      <div id="ring" hidden></div>
+      <textarea id="textInput" hidden spellcheck="false" rows="1" aria-label="Text"></textarea>
+      <div id="resizeGhost" hidden></div>
+      <div class="handle" data-edge="e" title="Drag to resize canvas"></div>
+      <div class="handle" data-edge="s" title="Drag to resize canvas"></div>
+      <div class="handle" data-edge="se" title="Drag to resize canvas (Shift keeps aspect)"></div>
+    </div>
+  </main>
+</div>
 
 <footer id="status">
-  <span id="stPos">—</span>
-  <span id="stSel"></span>
-  <span id="stSize"></span>
-  <span id="stZoom"></span>
-  <span id="stMsg"></span>
+  <span class="st"><svg><use href="#i-cursor"/></svg><span id="stPos">—</span></span>
+  <span class="st" id="stSelWrap" hidden><svg><use href="#i-select"/></svg><span id="stSel"></span></span>
+  <span class="st"><svg><use href="#i-image"/></svg><span id="stSize"></span></span>
 </footer>
+
+<div id="toast" role="status" aria-live="polite"></div>
+<div id="dropZone" hidden><div>Drop image to open</div></div>
+<div id="tip" role="tooltip" hidden></div>
 
 <input type="file" id="fileInput" accept="image/*" hidden>
 
-<dialog id="newDlg">
+<dialog id="newDlg" aria-labelledby="newTitle">
   <form method="dialog">
-    <h3>New image</h3>
-    <div class="row">
-      <label>Width <input type="number" id="newW" min="1" max="16384" required></label>
-      <label>Height <input type="number" id="newH" min="1" max="16384" required></label>
+    <h2 id="newTitle">New image</h2>
+    <div class="fields">
+      <label>Width<span class="field"><input type="number" id="newW" min="1" max="16384" required autofocus><span class="unit">px</span></span></label>
+      <label>Height<span class="field"><input type="number" id="newH" min="1" max="16384" required><span class="unit">px</span></span></label>
     </div>
     <menu><button type="button" data-close>Cancel</button><button value="ok" class="primary">Create</button></menu>
   </form>
 </dialog>
 
-<dialog id="resizeDlg">
+<dialog id="resizeDlg" aria-labelledby="resizeTitle">
   <form method="dialog">
-    <h3>Resize</h3>
-    <div class="row">
-      <label><input type="radio" name="rmode" value="scale" checked> Resample image</label>
-      <label><input type="radio" name="rmode" value="canvas"> Canvas size only</label>
+    <h2 id="resizeTitle">Resize</h2>
+    <div class="seg wide" role="radiogroup" aria-label="Resize mode">
+      <label><input type="radio" name="rmode" value="scale" checked><span>Resample image</span></label>
+      <label><input type="radio" name="rmode" value="canvas"><span>Canvas size</span></label>
     </div>
-    <div class="row">
-      <label>Width <input type="number" id="rW" min="1" required></label>
-      <label>Height <input type="number" id="rH" min="1" required></label>
-      <select id="rUnit"><option value="px">px</option><option value="pct">%</option></select>
+    <p class="note" id="rNote"></p>
+    <div class="fields">
+      <label>Width<span class="field"><input type="number" id="rW" min="1" required autofocus><span class="unit rUnitLbl">px</span></span></label>
+      <label>Height<span class="field"><input type="number" id="rH" min="1" required><span class="unit rUnitLbl">px</span></span></label>
+      <label>Units<select id="rUnit"><option value="px">Pixels</option><option value="pct">Percent</option></select></label>
     </div>
-    <label><input type="checkbox" id="rLock" checked> Keep aspect ratio</label>
+    <label class="check"><input type="checkbox" id="rLock" checked> Keep aspect ratio</label>
     <fieldset id="rAnchor" disabled>
       <legend>Anchor</legend>
       <div class="anchor">
-        <input type="radio" name="anchor" value="tl"><input type="radio" name="anchor" value="tc"><input type="radio" name="anchor" value="tr">
-        <input type="radio" name="anchor" value="ml"><input type="radio" name="anchor" value="mc" checked><input type="radio" name="anchor" value="mr">
-        <input type="radio" name="anchor" value="bl"><input type="radio" name="anchor" value="bc"><input type="radio" name="anchor" value="br">
+        <input type="radio" name="anchor" value="tl" aria-label="Top left"><input type="radio" name="anchor" value="tc" aria-label="Top"><input type="radio" name="anchor" value="tr" aria-label="Top right">
+        <input type="radio" name="anchor" value="ml" aria-label="Left"><input type="radio" name="anchor" value="mc" aria-label="Center" checked><input type="radio" name="anchor" value="mr" aria-label="Right">
+        <input type="radio" name="anchor" value="bl" aria-label="Bottom left"><input type="radio" name="anchor" value="bc" aria-label="Bottom"><input type="radio" name="anchor" value="br" aria-label="Bottom right">
       </div>
+      <span class="note">New area is filled with color 2</span>
     </fieldset>
     <menu><button type="button" data-close>Cancel</button><button value="ok" class="primary">Apply</button></menu>
   </form>
 </dialog>
 
-<dialog id="helpDlg">
+<dialog id="helpDlg" aria-labelledby="helpTitle">
   <form method="dialog">
-    <h3>Shortcuts</h3>
-    <table>
-      <tr><td>S P B E F I T L R O</td><td>Select, Pencil, Brush, Eraser, Fill, Picker, Text, Line, Rect, Ellipse</td></tr>
-      <tr><td>Left / right click</td><td>Draw with color 1 / color 2</td></tr>
-      <tr><td>X</td><td>Swap colors</td></tr>
-      <tr><td>[ ]</td><td>Smaller / bigger size</td></tr>
-      <tr><td>Shift (while dragging)</td><td>Square / circle / 45° line</td></tr>
-      <tr><td>⌘Z / ⌘⇧Z</td><td>Undo / redo</td></tr>
-      <tr><td>⌘A, Esc, Delete</td><td>Select all, deselect, clear selection</td></tr>
-      <tr><td>Arrows (Shift = 10px)</td><td>Nudge selection</td></tr>
-      <tr><td>⌘C ⌘X ⌘V</td><td>Copy, cut, paste (selection, or whole image)</td></tr>
-      <tr><td>⌘⇧X</td><td>Crop to selection</td></tr>
-      <tr><td>Shift+R</td><td>Resize image (resample)</td></tr>
-      <tr><td>Shift+C, drag edge/corner</td><td>Canvas size (Shift+drag corner keeps aspect, Esc cancels)</td></tr>
-      <tr><td>⌘O ⌘S ⌘⇧S Alt+N</td><td>Open, save, save as, new</td></tr>
-      <tr><td>⌘+wheel / pinch, + −</td><td>Zoom</td></tr>
-      <tr><td>⌘0 / ⌘1</td><td>Fit / 100%</td></tr>
-      <tr><td>Space+drag, middle drag</td><td>Pan</td></tr>
-    </table>
-    <menu><button value="ok" class="primary">Close</button></menu>
+    <h2 id="helpTitle">Keyboard shortcuts</h2>
+    <div id="helpBody"></div>
+    <menu><button value="ok" class="primary" autofocus>Done</button></menu>
   </form>
 </dialog>
 

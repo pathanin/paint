@@ -2,6 +2,7 @@
   'use strict';
   const $ = (s) => document.querySelector(s);
   const img = $('#image'), ov = $('#overlay'), stage = $('#stage'), vp = $('#viewport'), textBox = $('#textInput');
+  const ring = $('#ring');
   const ctx = img.getContext('2d');
   const octx = ov.getContext('2d');
   // GPU-side copy of the canvas taken at the start of each op; undo regions are read from it at the end.
@@ -54,11 +55,18 @@
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
   let msgTimer = 0;
-  function flash(msg) {
-    $('#stMsg').textContent = msg;
+  function flash(msg, isError) {
+    const t = $('#toast');
+    t.textContent = msg;
+    t.classList.toggle('error', !!isError);
+    t.classList.add('show');
     clearTimeout(msgTimer);
-    msgTimer = setTimeout(() => { $('#stMsg').textContent = ''; }, 3000);
+    msgTimer = setTimeout(() => t.classList.remove('show'), isError ? 5000 : 2200);
   }
+
+  // Shortcut labels are written Mac-style in the markup; show Ctrl/Shift elsewhere.
+  const MAC = /Mac|iPhone|iPad/.test(navigator.platform);
+  const keyLabel = (k) => (MAC ? k.replace(/Alt\+/g, '⌥') : k.replace(/⌘/g, 'Ctrl+').replace(/⇧/g, 'Shift+').replace(/\+\+/g, '+'));
 
   // ---------- document & history ----------
   function setDoc(source, w, h) {
@@ -162,7 +170,8 @@
     vp.scrollTop += r2.top + iy * z - cy;
   }
   function fitZoom(capAt1) {
-    const z = Math.min((vp.clientWidth - 32) / img.width, (vp.clientHeight - 32) / img.height);
+    const pad = 2 * parseFloat(getComputedStyle(vp).paddingLeft);
+    const z = Math.min((vp.clientWidth - pad) / img.width, (vp.clientHeight - pad) / img.height);
     S.zoom = clamp(capAt1 ? Math.min(1, z) : z, 0.05, 32);
     layout();
   }
@@ -210,14 +219,18 @@
   function updateStatus() {
     $('#stPos').textContent = cursor ? `${cursor.x}, ${cursor.y} px` : '—';
     const r = drag && drag.t === 'select' ? Core.normRect(drag.start, drag.end) : sel;
-    $('#stSel').textContent = r ? `▭ ${r.w} × ${r.h}` : '';
+    $('#stSelWrap').hidden = !r;
+    $('#stSel').textContent = r ? `${r.w} × ${r.h} px` : '';
     $('#stSize').textContent = drag && drag.t === 'canvas'
-      ? `${img.width} × ${img.height} → ${drag.w} × ${drag.h}`
-      : `${img.width} × ${img.height}`;
-    $('#stZoom').textContent = Math.round(S.zoom * 100) + '%';
+      ? `${img.width} × ${img.height} → ${drag.w} × ${drag.h} px`
+      : `${img.width} × ${img.height} px`;
+    $('#zoomBtn').textContent = Math.round(S.zoom * 100) + '%';
+    $('#cropBtn').disabled = !sel;
   }
   function updateChrome() {
     document.title = (S.dirty ? '● ' : '') + S.fileName + ' — Paint';
+    $('#docTitle').textContent = S.fileName;
+    $('#docDirty').hidden = !S.dirty;
     $('#undoBtn').disabled = !hist.canUndo();
     $('#redoBtn').disabled = !hist.canRedo();
   }
@@ -229,8 +242,14 @@
     if (t === 'picker' && S.tool !== 'picker') S.prevTool = S.tool;
     S.tool = t;
     stage.dataset.tool = t;
-    document.querySelectorAll('[data-tool]').forEach((b) => b.classList.toggle('active', b.dataset.tool === t));
+    document.querySelectorAll('button[data-tool]').forEach((b) => {
+      const on = b.dataset.tool === t;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on);
+      if (on) $('#toolName').textContent = b.dataset.tip;
+    });
     document.querySelectorAll('.opts [data-for]').forEach((l) => { l.hidden = !l.dataset.for.split(' ').includes(t); });
+    ring.hidden = true;
     if (S.sizes[t] != null) { $('#size').value = S.sizes[t]; $('#sizeOut').textContent = S.sizes[t]; }
   }
   function setSize(v) {
@@ -436,7 +455,7 @@
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
       flash(cut ? 'Cut' : 'Copied');
     } catch (err) {
-      flash('Copy failed: ' + err.message);
+      flash('Copy failed: ' + err.message, true);
     }
   }
   function pasteImage(bmp) {
@@ -519,13 +538,13 @@
       const [h] = await window.showOpenFilePicker({ types: IMAGE_TYPES });
       await loadFile(await h.getFile(), h);
     } catch (err) {
-      if (err.name !== 'AbortError') flash(err.message);
+      if (err.name !== 'AbortError') flash(err.message, true);
     }
   }
   async function loadFile(file, handle) {
     let bmp;
     try { bmp = await createImageBitmap(file); }
-    catch { flash('Not an image: ' + file.name); return; }
+    catch { flash('Not an image: ' + file.name, true); return; }
     cancelText();
     setDoc(bmp, bmp.width, bmp.height);
     bmp.close();
@@ -584,7 +603,7 @@
       updateChrome();
       flash('Saved ' + h.name);
     } catch (err) {
-      if (err.name !== 'AbortError') flash('Save failed: ' + err.message);
+      if (err.name !== 'AbortError') flash('Save failed: ' + err.message, true);
     }
   }
 
@@ -593,6 +612,7 @@
     $('#newW').value = img.width;
     $('#newH').value = img.height;
     $('#newDlg').showModal();
+    $('#newW').select();
   }
   // Apply on submit (synchronous), not 'close' (async): a fast follow-up action must see the result.
   $('#newDlg form').addEventListener('submit', (e) => {
@@ -609,8 +629,18 @@
     $('#rUnit').value = 'px';
     $('#rW').value = img.width;
     $('#rH').value = img.height;
-    $('#rAnchor').disabled = resizeMode() !== 'canvas';
+    syncResizeMode();
+    syncUnitLabels();
     $('#resizeDlg').showModal();
+    $('#rW').select();
+  }
+  function syncResizeMode() {
+    const canvas = resizeMode() === 'canvas';
+    $('#rAnchor').disabled = !canvas;
+    $('#rNote').textContent = canvas ? 'Adds or trims space around the image.' : 'Stretches or shrinks the whole image.';
+  }
+  function syncUnitLabels() {
+    document.querySelectorAll('.rUnitLbl').forEach((u) => { u.textContent = $('#rUnit').value === 'pct' ? '%' : 'px'; });
   }
   function syncResize(changed) {
     if (!$('#rLock').checked) return;
@@ -627,8 +657,9 @@
     const pct = $('#rUnit').value === 'pct';
     $('#rW').value = pct ? 100 : img.width;
     $('#rH').value = pct ? 100 : img.height;
+    syncUnitLabels();
   });
-  rForm.addEventListener('change', (e) => { if (e.target.name === 'rmode') $('#rAnchor').disabled = resizeMode() !== 'canvas'; });
+  rForm.addEventListener('change', (e) => { if (e.target.name === 'rmode') syncResizeMode(); });
   document.querySelectorAll('dialog [data-close]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));
   rForm.addEventListener('submit', (e) => {
     if (!e.submitter || e.submitter.value !== 'ok') return;
@@ -685,7 +716,8 @@
       e.preventDefault();
       ov.setPointerCapture(e.pointerId);
       drag = { t: 'pan', sx: e.clientX, sy: e.clientY, sl: vp.scrollLeft, st: vp.scrollTop };
-      stage.classList.add('panning');
+      stage.classList.add('panning', 'dragging');
+      ring.hidden = true;
       return;
     }
     if (e.button !== 0 && e.button !== 2) return;
@@ -736,6 +768,7 @@
     const r = img.getBoundingClientRect();
     const p = imgPt(e, r);
     cursor = { x: Math.floor(p.x), y: Math.floor(p.y) };
+    updateRing(p);
     if (!drag) {
       ov.style.cursor = S.tool === 'select' && sel && inside(p, sel) ? 'move' : '';
       updateStatus();
@@ -771,11 +804,25 @@
     requestRender();
   });
 
+  // Outline of the brush footprint, so big sizes show what they'll cover.
+  const RING_TOOLS = new Set(['pencil', 'brush', 'eraser']);
+  function updateRing(p) {
+    const size = S.sizes[S.tool], px = size * S.zoom;
+    if (!RING_TOOLS.has(S.tool) || S.panKey || (drag && drag.t === 'pan') || px < 4) { ring.hidden = true; return; }
+    let x, y;
+    if (S.tool === 'brush') { x = p.x - size / 2; y = p.y - size / 2; }
+    else { const off = Math.floor(size / 2); x = Math.floor(p.x) - off; y = Math.floor(p.y) - off; }
+    ring.classList.toggle('round', S.tool === 'brush');
+    ring.style.width = ring.style.height = px + 'px';
+    ring.style.transform = `translate(${x * S.zoom}px, ${y * S.zoom}px)`;
+    ring.hidden = false;
+  }
+
   function finishDrag() {
     const d = drag;
     if (!d) return;
     drag = null;
-    if (d.t === 'pan') stage.classList.remove('panning');
+    if (d.t === 'pan') { stage.classList.remove('dragging'); if (!S.panKey) stage.classList.remove('panning'); }
     else if (d.t === 'pencil' || d.t === 'eraser' || d.t === 'brush') endOp();
     else if (SHAPES.has(d.t)) {
       beginOp();
@@ -790,7 +837,7 @@
   }
   ov.addEventListener('pointerup', finishDrag);
   ov.addEventListener('pointercancel', finishDrag);
-  ov.addEventListener('pointerleave', () => { if (!drag) { cursor = null; updateStatus(); } });
+  ov.addEventListener('pointerleave', () => { ring.hidden = true; if (!drag) { cursor = null; updateStatus(); } });
   ov.addEventListener('mousedown', (e) => e.preventDefault()); // keep focus where we put it (text box)
   vp.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -840,11 +887,11 @@
     }
     if (e.shiftKey && k === 'KeyR') { e.preventDefault(); openResize('scale'); return; }
     if (e.shiftKey && k === 'KeyC') { e.preventDefault(); openResize('canvas'); return; }
-    if (e.key === '?') { $('#helpDlg').showModal(); return; }
+    if (e.key === '?') { openHelp(); return; }
     if (TOOL_KEYS[k] && !e.shiftKey) { setTool(TOOL_KEYS[k]); return; }
     const step = e.shiftKey ? 10 : 1;
     switch (k) {
-      case 'KeyX': { const p = S.primary; setColor('primary', S.secondary); setColor('secondary', p); break; }
+      case 'KeyX': swapColors(); break;
       case 'Delete': case 'Backspace': e.preventDefault(); deleteSelection(); break;
       case 'Escape':
         if (drag && drag.t === 'canvas') endCanvasDrag(false);
@@ -855,7 +902,7 @@
       case 'BracketRight': setSize(S.sizes[S.tool] + (S.sizes[S.tool] >= 10 ? 2 : 1)); break;
       case 'Equal': setZoom(S.zoom * 1.25); break;
       case 'Minus': setZoom(S.zoom / 1.25); break;
-      case 'Space': e.preventDefault(); S.panKey = true; stage.classList.add('panning'); break;
+      case 'Space': e.preventDefault(); S.panKey = true; ring.hidden = true; stage.classList.add('panning'); break;
       case 'ArrowLeft': if (sel) { e.preventDefault(); nudge(-step, 0); } break;
       case 'ArrowRight': if (sel) { e.preventDefault(); nudge(step, 0); } break;
       case 'ArrowUp': if (sel) { e.preventDefault(); nudge(0, -step); } break;
@@ -877,7 +924,7 @@
       pasteImage(bmp);
       bmp.close();
     } catch (err) {
-      flash('Paste failed: ' + err.message);
+      flash('Paste failed: ' + err.message, true);
     }
   });
   window.addEventListener('dragover', (e) => e.preventDefault());
@@ -904,6 +951,7 @@
   window.addEventListener('resize', () => updateStatus());
 
   // ---------- toolbar wiring ----------
+  function swapColors() { const p = S.primary; setColor('primary', S.secondary); setColor('secondary', p); }
   const CMDS = {
     new: openNewDialog, open: openFile, save: () => save(false), saveAs: () => save(true),
     undo, redo, crop, resize: () => openResize('scale'), canvasSize: () => openResize('canvas'),
@@ -911,21 +959,27 @@
     flipH: () => transformDoc('flipH'), flipV: () => transformDoc('flipV'),
     zoomIn: () => setZoom(S.zoom * 1.25), zoomOut: () => setZoom(S.zoom / 1.25),
     fit: () => fitZoom(false), zoom100: () => setZoom(1),
-    help: () => $('#helpDlg').showModal(),
+    help: openHelp, swap: swapColors,
   };
-  $('#toolbar').addEventListener('click', (e) => {
-    const b = e.target.closest('button');
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('.chrome button');
     if (!b) return;
+    hideTip();
     if (b.dataset.cmd) CMDS[b.dataset.cmd]();
     else if (b.dataset.tool) setTool(b.dataset.tool);
     b.blur(); // keep Space/Enter from re-triggering the button
   });
   // After using a toolbar control, hand focus back so single-key shortcuts work.
-  $('#toolbar').addEventListener('change', (e) => { if (e.target.type !== 'number') e.target.blur(); });
+  document.addEventListener('change', (e) => {
+    if (e.target.closest('.chrome') && e.target.type !== 'number') e.target.blur();
+  });
+  document.querySelectorAll('.chrome input[type=number]').forEach((i) => i.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === 'Escape') i.blur();
+  }));
 
   $('#size').addEventListener('input', (e) => setSize(+e.target.value));
   $('#tolerance').addEventListener('input', (e) => { S.tolerance = +e.target.value; $('#tolOut').textContent = S.tolerance; });
-  $('#fillMode').addEventListener('change', (e) => { S.fillMode = e.target.value; });
+  document.querySelectorAll('input[name=fillMode]').forEach((r) => r.addEventListener('change', () => { S.fillMode = r.value; }));
   $('#font').addEventListener('change', (e) => { S.font = e.target.value; if (textAt) placeTextBox(); });
   $('#fontSize').addEventListener('input', (e) => {
     const v = +e.target.value;
@@ -938,8 +992,8 @@
   for (const c of PALETTE) {
     const b = document.createElement('button');
     b.style.background = c;
-    b.title = c;
     b.dataset.color = c;
+    b.setAttribute('aria-label', c);
     pal.appendChild(b);
   }
   pal.addEventListener('click', (e) => { if (e.target.dataset.color) setColor('primary', e.target.dataset.color); });
@@ -949,10 +1003,104 @@
     setColor('secondary', e.target.dataset.color);
   });
 
+  // ---------- tooltips ----------
+  const tip = $('#tip');
+  let tipTimer = 0, tipWarmUntil = 0, tipFor = null;
+  function showTip(el) {
+    tipFor = el;
+    tip.textContent = el.dataset.tip;
+    if (el.dataset.kbd) {
+      const k = document.createElement('kbd');
+      k.textContent = keyLabel(el.dataset.kbd);
+      tip.appendChild(k);
+    }
+    if (el.dataset.hint) {
+      const h = document.createElement('span');
+      h.className = 'hint';
+      h.textContent = el.dataset.hint;
+      tip.appendChild(h);
+    }
+    tip.hidden = false;
+    const r = el.getBoundingClientRect(), t = tip.getBoundingClientRect();
+    const side = el.closest('#rail');
+    let x = side ? r.right + 8 : r.left + r.width / 2 - t.width / 2;
+    let y = side ? r.top + r.height / 2 - t.height / 2 : r.bottom + 6;
+    x = clamp(x, 6, innerWidth - t.width - 6);
+    y = clamp(y, 6, innerHeight - t.height - 6);
+    tip.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+  }
+  function hideTip() {
+    clearTimeout(tipTimer);
+    if (!tip.hidden) tipWarmUntil = performance.now() + 400;
+    tip.hidden = true;
+    tipFor = null;
+  }
+  document.addEventListener('pointerover', (e) => {
+    const el = e.target.closest('.chrome [data-tip]');
+    if (el === tipFor) return;
+    hideTip();
+    if (!el || e.pointerType === 'touch' || drag) return;
+    tipTimer = setTimeout(() => showTip(el), performance.now() < tipWarmUntil ? 0 : 450);
+  });
+  document.addEventListener('pointerdown', hideTip, true);
+  window.addEventListener('blur', hideTip);
+
+  // ---------- help ----------
+  // Placed alternately into two columns: Tools/Drawing/File | Edit/Image/View.
+  const HELP = [
+    ['Tools', [['Select', 'S'], ['Pencil', 'P'], ['Brush', 'B'], ['Eraser', 'E'], ['Fill', 'F'], ['Color picker', 'I'],
+      ['Text', 'T'], ['Line', 'L'], ['Rectangle', 'R'], ['Ellipse', 'O']]],
+    ['Edit', [['Undo', '⌘Z'], ['Redo', '⌘⇧Z'], ['Select all', '⌘A'], ['Deselect', 'Esc'], ['Clear selection to color 2', 'Delete'],
+      ['Nudge selection (⇧ = 10px)', '←', '↑', '→', '↓'], ['Copy, cut, paste', '⌘C', '⌘X', '⌘V'], ['Crop to selection', '⌘⇧X']]],
+    ['Drawing', [['Draw with color 1 / color 2', '~Left / right click'], ['Swap colors', 'X'], ['Smaller / bigger size', '[', ']'],
+      ['Square, circle, 45° line', '⇧', '~drag']]],
+    ['Image', [['Resize image', '⇧R'], ['Canvas size', '⇧C'], ['Canvas: keep aspect', '⇧', '~drag corner'], ['Cancel canvas drag', 'Esc']]],
+    ['File', [['New', 'Alt+N'], ['Open', '⌘O'], ['Save', '⌘S'], ['Save as', '⌘⇧S']]],
+    ['View', [['Zoom in / out', '+', '−'], ['Zoom at pointer', '⌘', '~scroll'], ['Fit to window', '⌘0'], ['Actual size', '⌘1'],
+      ['Pan', 'Space', '~drag'], ['This list', '?']]],
+  ];
+  function openHelp() {
+    const body = $('#helpBody');
+    if (!body.firstChild) {
+      const cols = [document.createElement('div'), document.createElement('div')];
+      body.append(...cols);
+      HELP.forEach(([title, rows], i) => {
+        const sec = document.createElement('section');
+        const h = document.createElement('h3');
+        h.textContent = title;
+        sec.appendChild(h);
+        for (const [label, ...keys] of rows) {
+          const row = document.createElement('div');
+          row.className = 'row';
+          const l = document.createElement('span');
+          l.textContent = label.replace('⇧', MAC ? '⇧' : 'Shift');
+          const k = document.createElement('span');
+          k.className = 'keys';
+          for (const key of keys) {
+            const el = document.createElement(key[0] === '~' ? 'span' : 'kbd');
+            el.textContent = key[0] === '~' ? key.slice(1) : key === '⇧' && !MAC ? 'Shift' : keyLabel(key);
+            k.appendChild(el);
+          }
+          row.append(l, k);
+          sec.appendChild(row);
+        }
+        cols[i % 2].appendChild(sec);
+      });
+    }
+    $('#helpDlg').showModal();
+  }
+
+  // ---------- drop zone ----------
+  let dragDepth = 0;
+  const hasFiles = (e) => e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+  window.addEventListener('dragenter', (e) => { if (hasFiles(e)) { dragDepth++; $('#dropZone').hidden = false; } });
+  window.addEventListener('dragleave', (e) => { if (hasFiles(e) && --dragDepth <= 0) { dragDepth = 0; $('#dropZone').hidden = true; } });
+  window.addEventListener('drop', () => { dragDepth = 0; $('#dropZone').hidden = true; }, true);
+
   // ---------- boot ----------
   newDoc(800, 600);
   setTool('pencil');
 
   // Handle for scripted smoke tests in the console.
-  window.__paint = { S, hist, img, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, setZoom, fitZoom };
+  window.__paint = { S, hist, img, flash, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, setZoom, fitZoom };
 })();
