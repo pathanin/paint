@@ -153,6 +153,7 @@
     stage.style.width = img.width * S.zoom + 'px';
     stage.style.height = img.height * S.zoom + 'px';
     stage.classList.toggle('pixelated', S.zoom * devicePixelRatio >= 1); // hard pixels, incl. 100% on Retina
+    stage.classList.toggle('tiny', img.width * S.zoom < 48 || img.height * S.zoom < 48); // corner handle only
     if (textAt) placeTextBox();
     updateStatus();
   }
@@ -173,7 +174,9 @@
   function fitZoom(capAt1) {
     const pad = 2 * parseFloat(getComputedStyle(vp).paddingLeft);
     const z = Math.min((vp.clientWidth - pad) / img.width, (vp.clientHeight - pad) / img.height);
-    S.zoom = clamp(capAt1 ? Math.min(1, z) : z, 0.05, 32);
+    // On open: never upscale, except icon-sized images, which get a whole-number zoom (crisp pixels).
+    const small = img.width <= 64 && img.height <= 64;
+    S.zoom = clamp(!capAt1 ? z : small ? clamp(Math.floor(z), 1, 8) : Math.min(1, z), 0.05, 32);
     layout();
   }
   function imgPt(e, r) {
@@ -227,7 +230,7 @@
       : `${img.width} × ${img.height} px`;
     const pct = Math.round(S.zoom * 100) + '%';
     $('#zoomBtn').textContent = pct;
-    $('#zoomBtn').setAttribute('aria-label', `Zoom ${pct}, actual size`);
+    $('#zoomBtn').setAttribute('aria-label', `Zoom ${pct}. Activate for actual size`);
     $('#cropBtn').disabled = !sel;
     $('#cropBtn').dataset.hint = sel ? '' : 'Select an area first';
   }
@@ -272,6 +275,7 @@
       b.classList.toggle('is1', b.dataset.color === S.primary);
       b.classList.toggle('is2', b.dataset.color === S.secondary);
       b.setAttribute('aria-pressed', b.dataset.color === S.primary);
+      b.setAttribute('aria-label', b.dataset.tip + (b.dataset.color === S.secondary ? ' (color 2)' : ''));
     });
   }
 
@@ -353,11 +357,13 @@
     textBox.hidden = false;
     placeTextBox();
     textBox.focus(); // the overlay's mousedown default is suppressed, so focus sticks immediately
+    $('#stHint').hidden = false;
   }
   function commitText() {
     if (!textAt) return;
     const t = textAt; textAt = null;
     textBox.hidden = true;
+    $('#stHint').hidden = true;
     const lines = textBox.value.split('\n');
     textBox.value = '';
     if (!lines.join('').trim()) return;
@@ -379,6 +385,7 @@
   function cancelText() {
     textAt = null;
     textBox.hidden = true;
+    $('#stHint').hidden = true;
     textBox.value = '';
   }
 
@@ -462,10 +469,11 @@
     commitText();
     const c = selectionCanvas();
     const blob = new Promise((res) => c.toBlob(res, 'image/png'));
-    if (cut && sel) deleteSelection();
+    const didCut = cut && !!sel; // with nothing selected, ⌘X copies the whole image and keeps it
+    if (didCut) deleteSelection();
     try {
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-      flash(cut ? 'Cut' : 'Copied');
+      flash(didCut ? 'Cut' : sel ? 'Copied' : 'Copied the whole image');
     } catch (err) {
       flash('Copy failed: ' + err.message, true);
     }
@@ -882,6 +890,7 @@
   }
   textBox.addEventListener('keydown', (e) => {
     e.stopPropagation();
+    if (e.isComposing || e.keyCode === 229) return; // IME is using Enter/Esc to pick a candidate
     if (e.key === 'Escape') { e.preventDefault(); cancelText(); }
     else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commitText(); }
   });
@@ -891,14 +900,23 @@
     commitText();
   });
 
+  // Shortcuts follow the characters on the user's layout (AZERTY, Dvorak, German "+"), so the keys
+  // match the labels. Non-Latin layouts fall back to the physical letter key; digits stay physical.
+  const PUNCT = { '[': 'BracketLeft', ']': 'BracketRight', '+': 'Equal', '=': 'Equal', '-': 'Minus', '_': 'Minus' };
+  function keyId(e) {
+    if (/^[a-z]$/i.test(e.key)) return 'Key' + e.key.toUpperCase();
+    if (PUNCT[e.key]) return PUNCT[e.key];
+    if (/^Digit\d$/.test(e.code)) return e.code;
+    if (e.key.length === 1 && e.code !== 'Space') return /^Key[A-Z]$/.test(e.code) && e.key.charCodeAt(0) > 127 ? e.code : '';
+    return e.code;
+  }
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !tip.hidden) { hideTip(); e.preventDefault(); return; }
     if (document.querySelector('dialog[open]') || isTyping(e.target)) return;
     // Space/Enter on a focused control activate it (keyboard users); they are not shortcuts there.
     if ((e.code === 'Space' || e.key === 'Enter') && e.target.closest && e.target.closest('button, input, select')) return;
     const mod = e.metaKey || e.ctrlKey;
-    // Letters follow the user's layout (AZERTY, Dvorak); other keys and non-Latin layouts use the physical key.
-    const k = /^[a-z]$/i.test(e.key) ? 'Key' + e.key.toUpperCase() : e.code;
+    const k = keyId(e);
     if (mod) {
       const act = {
         KeyZ: () => (e.shiftKey ? redo() : undo()),
@@ -974,6 +992,7 @@
     // Both must be requested synchronously, before the DataTransfer expires.
     const hp = item.getAsFileSystemHandle ? item.getAsFileSystemHandle() : null;
     const file = item.getAsFile();
+    if (file && file.type && !file.type.startsWith('image/')) { flash('Not an image: ' + file.name, true); return; }
     if (!confirmDiscard()) return;
     let handle = null;
     try { handle = hp ? await hp : null; } catch { handle = null; }
@@ -1156,14 +1175,15 @@
   const HELP = [
     ['Tools', [['Select', 'S'], ['Pencil', 'P'], ['Brush', 'B'], ['Eraser', 'E'], ['Fill', 'F'], ['Color picker', 'I'],
       ['Text', 'T'], ['Line', 'L'], ['Rectangle', 'R'], ['Ellipse', 'O']]],
-    ['Edit', [['Undo', '⌘Z'], ['Redo', '⌘⇧Z'], ['Select all', '⌘A'], ['Deselect', 'Esc'], ['Clear selection to color 2', 'Delete'],
+    ['Edit', [['Undo', '⌘Z'], ['Redo', '⌘⇧Z', '⌘Y'], ['Select all', '⌘A'], ['Deselect', 'Esc'], ['Clear selection to color 2', 'Delete', '⌫'],
       ['Nudge selection (⇧ = 10px)', '←', '↑', '→', '↓'], ['Copy, cut, paste', '⌘C', '⌘X', '⌘V'], ['Crop to selection', '⌘⇧X']]],
     ['Drawing', [['Draw with color 1 / color 2', '~Left / right click'], ['Swap colors', 'X'], ['Smaller / bigger size', '[', ']'],
-      ['Square, circle, 45° line', '⇧', '~drag'], ['New line in text', '⇧Enter']]],
+      ['Square, circle, 45° line', '⇧', '~drag'], ['Pick color 2 from a swatch', '~right-click / ⇧-click'],
+      ['New line in text', '⇧Enter']]],
     ['Image', [['Resize image', '⇧R'], ['Canvas size', '⇧C'], ['Canvas: keep aspect', '⇧', '~drag corner'], ['Cancel canvas drag', 'Esc']]],
     ['File', [['New', 'Alt+N'], ['Open', '⌘O'], ['Save', '⌘S'], ['Save as', '⌘⇧S']]],
-    ['View', [['Zoom in / out', '+', '−'], ['Zoom at pointer', '⌘', '~scroll'], ['Fit to window', '⇧1'], ['Actual size', '⇧0'],
-      ['Pan', 'Space', '~drag'], ['This list', '?']]],
+    ['View', [['Zoom in / out', '+', '−'], ['Zoom at pointer', '⌘', '~scroll'], ['Fit to window', '⇧1', '⌘0'], ['Actual size', '⇧0'],
+      ['Pan', 'Space', '~drag / middle-drag'], ['This list', '?']]],
   ];
   function openHelp() {
     const body = $('#helpBody');

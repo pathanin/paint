@@ -69,9 +69,9 @@
   <div id="docName" aria-live="polite"><span id="docTitle">untitled.png</span><span id="docDirty" hidden title="Unsaved changes">Edited</span></div>
   <div class="group zoom">
     <button data-cmd="zoomOut" data-tip="Zoom out" data-kbd="−" aria-label="Zoom out"><svg><use href="#i-minus"/></svg></button>
-    <button data-cmd="zoom100" id="zoomBtn" class="zoom-val" data-tip="Actual size" data-kbd="⇧0" aria-label="Zoom 100%, actual size">100%</button>
+    <button data-cmd="zoom100" id="zoomBtn" class="zoom-val" data-tip="Actual size" data-kbd="⇧0" aria-label="Zoom 100%. Activate for actual size">100%</button>
     <button data-cmd="zoomIn" data-tip="Zoom in" data-kbd="+" aria-label="Zoom in"><svg><use href="#i-plus"/></svg></button>
-    <button data-cmd="fit" data-tip="Fit to window" data-kbd="⇧1" aria-label="Fit to window"><svg><use href="#i-fit"/></svg></button>
+    <button data-cmd="fit" data-tip="Fit to window" data-kbd="⇧1" data-hint="Also ⌘0" aria-label="Fit to window"><svg><use href="#i-fit"/></svg></button>
   </div>
   <div class="group">
     <button data-cmd="help" data-tip="Keyboard shortcuts" data-kbd="?" aria-label="Keyboard shortcuts"><svg><use href="#i-help"/></svg></button>
@@ -101,7 +101,7 @@
     <span class="hint" data-for="eraser">Paints with color 2</span>
     <span class="hint" data-for="fill">Click: color 1 · right-click: color 2</span>
     <span class="hint" data-for="picker">Click: color 1 · right-click: color 2</span>
-    <span class="hint" data-for="text">Click to place · Enter to apply · Shift+Enter for a new line · Esc to cancel</span>
+    <span class="hint" data-for="text">Click where the text should start</span>
     <span class="hint" data-for="line rect ellipse">Hold Shift to constrain</span>
   </div>
   <div class="colors">
@@ -149,6 +149,7 @@
   <span class="st"><svg><use href="#i-cursor"/></svg><span id="stPos">—</span></span>
   <span class="st" id="stSelWrap" hidden><svg><use href="#i-select"/></svg><span id="stSel"></span></span>
   <span class="st"><svg><use href="#i-image"/></svg><span id="stSize"></span></span>
+  <span class="st-hint" id="stHint" hidden>Enter applies · Shift+Enter new line · Esc cancels</span>
 </footer>
 
 <div id="toast" role="status" aria-live="polite"></div>
