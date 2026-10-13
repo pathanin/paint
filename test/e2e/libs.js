@@ -61,6 +61,16 @@ function hugeTiff() {
       ok(cdn.length === 0, tag(`nothing loads from the CDN at boot (${cdn.join(' ')})`));
       ok(await P(() => !document.querySelector('script[src*="cdn.jsdelivr"]')), tag('no CDN script tags at boot'));
 
+      // The PNG encoder is prefetched on the first edit, but only when the save will be a PNG.
+      if (mode === 'online') {
+        await P(() => { const p = window.__paint; p.S.fileName = 'photo.jpg'; p.transformDoc('flipH'); p.undo(); });
+        await page.waitForTimeout(500);
+        ok(!cdn.some((u) => /upng/.test(u)), tag('editing a JPEG does not load the PNG encoder'));
+        await P(() => { const p = window.__paint; p.S.fileName = 'untitled.png'; p.transformDoc('flipH'); p.undo(); });
+        await page.waitForFunction(() => window.__paint.libState.upng === 'ok', null, { timeout: 8000 }).catch(() => {});
+        ok(cdn.some((u) => /upng/.test(u)), tag('editing a PNG prefetches the PNG encoder'));
+      }
+
       // ---- resize: pica online, built-in otherwise; a clean result either way
       const t0 = Date.now();
       const r = await P(async () => {
@@ -94,6 +104,18 @@ function hugeTiff() {
         await P(() => window.__paint.undo());
       }
 
+      // ---- past pica's size budget, the built-in path runs even online
+      const big = await P(async () => {
+        const p = window.__paint;
+        await p.resizeDoc(7100, 7100, 'canvas', 'tl'); // 50.4 MP + the result: over the 50 MP budget
+        const t = performance.now();
+        await p.resizeDoc(100, 100, 'scale');
+        const r = { used: p.used.resize, ms: performance.now() - t, w: p.img.width };
+        p.undo(); p.undo();
+        return r;
+      });
+      ok(big.used === 'builtin' && big.w === 100 && big.ms < 2000, tag(`50 MP resize uses the built-in path (${big.used}, ${Math.round(big.ms)} ms)`));
+
       // ---- resize quality: moiré on a zone plate ÷3 (ideal output beyond the new Nyquist = flat gray)
       aliasBy[mode] = await P(async () => {
         const p = window.__paint, W = 1500, K = 900, F = 3, w = W / F;
@@ -126,7 +148,7 @@ function hugeTiff() {
           return { before, after: [p.img.width, p.img.height], toast: document.querySelector('#toast').textContent };
         });
         ok(s.after.join() === [s.before[1], s.before[0]].join(), tag(`stale resize dropped; the rotate stays (${s.before} -> ${s.after})`));
-        ok(/discarded/.test(s.toast), tag('stale resize says so: ' + s.toast));
+        ok(/^Resize failed: the image changed/.test(s.toast), tag('stale resize says so: ' + s.toast));
         cdnMode = 'abort'; // the rest of this mode: unreachable
       }
 
@@ -141,7 +163,7 @@ function hugeTiff() {
           ok(got.px === flat(want), tag(`${f} pixels exact: ${got.px.slice(0, 80)}`));
         } else {
           ok(got.name !== f, tag(`${f} not opened without the library`));
-          ok(/Can't open .*\.tif: opening TIFF needs an internet connection/.test(await toast()), tag('TIFF offline reason: ' + await toast()));
+          ok(/Can't open .*\.tif: the TIFF reader couldn’t be downloaded/.test(await toast()), tag('TIFF offline reason: ' + await toast()));
         }
       }
       if (mode === 'online') {
@@ -180,36 +202,68 @@ function hugeTiff() {
       await page.waitForFunction(() => window.__paint.S.fileName === 'green.png', null, { timeout: 5000 }).catch(() => {});
       ok(await P(() => window.__paint.S.fileName + ' ' + window.__paint.img.width) === 'green.png 30', tag('PNG still opens'));
 
-      // ---- PNG save: UPNG online (smaller, lossless), built-in otherwise; the file decodes to the canvas
-      for (const [w, h, label] of [[640, 400, 'drawing'], [4000, 2200, 'over the UPNG cap']]) {
-        const s = await P(async ([w, h]) => {
+      // ---- PNG save: UPNG online (smaller, lossless), built-in otherwise; the file decodes to the canvas.
+      // UPNG writes a palette PNG (with tRNS) for <= 256 colours and truecolour + alpha otherwise: one
+      // scene each, both with transparent and semi-transparent pixels. Noisy scenes are slow for UPNG:
+      // a small one is within its time budget, a large one isn't. The last is over the size cap.
+      const PNG_CASES = [
+        // [label, w, h, scene, colours: 'palette' | 'truecolor', UPNG expected when online]
+        ['palette', 640, 400, 'flat', 'palette', true],
+        ['truecolor + alpha', 640, 400, 'soft', 'truecolor', true],
+        ['small noisy', 1600, 1000, 'noise', 'truecolor', true],
+        ['noisy, over the time budget', 3000, 2000, 'noise', 'truecolor', false],
+        ['over the size cap', 4000, 2200, 'flat', 'palette', false],
+      ];
+      for (const [label, w, h, scene, kind, upngOnline] of PNG_CASES) {
+        const s = await P(async ([w, h, scene]) => {
           const p = window.__paint;
           await p.resizeDoc(w, h, 'canvas', 'tl');
           const g = p.img.getContext('2d');
-          g.fillStyle = '#ffffff'; g.fillRect(0, 0, w, h);
-          g.clearRect(0, 0, 120, 80); // transparent corner
-          g.fillStyle = 'rgba(63, 72, 204, 0.5)'; g.fillRect(60, 40, 200, 120); // semi-transparent
-          g.font = '16px sans-serif'; g.fillStyle = '#222';
-          for (let y = 200; y < Math.min(h, 400); y += 20) g.fillText('The quick brown fox jumps over the lazy dog', 10, y);
+          if (scene === 'flat') { // a few exact colours: no antialiasing
+            g.fillStyle = '#ffffff'; g.fillRect(0, 0, w, h);
+            g.clearRect(0, 0, 120, 80);
+            g.fillStyle = 'rgba(63, 72, 204, 0.5)'; g.fillRect(60, 40, 200, 120);
+            g.fillStyle = '#ed1c24'; g.fillRect(300, 100, 50, 250);
+          } else if (scene === 'soft') { // gradients and antialiased text, with varying alpha
+            const gr = g.createLinearGradient(0, 0, w, h); gr.addColorStop(0, 'rgba(255,0,0,0.2)'); gr.addColorStop(1, 'rgba(0,0,255,1)');
+            g.clearRect(0, 0, w, h); g.fillStyle = gr; g.fillRect(40, 0, w - 40, h);
+            g.font = '16px sans-serif'; g.fillStyle = '#222';
+            for (let y = 20; y < h; y += 20) g.fillText('The quick brown fox jumps over the lazy dog', 10, y);
+          } else { // photo-like: smooth colour plus per-pixel noise, opaque
+            const id = g.createImageData(w, h), d = id.data;
+            let r = 1;
+            for (let i = 0; i < d.length; i += 4) {
+              r = (r * 1103515245 + 12345) & 0x7fffffff;
+              const x = (i / 4) % w, y = (i / 4 / w) | 0, n = ((r >> 16) % 24) - 12;
+              d[i] = 120 + 80 * Math.sin(x / 90) + n; d[i + 1] = 110 + 70 * Math.cos(y / 70) + n; d[i + 2] = 100 + 60 * Math.sin((x + y) / 130) + n; d[i + 3] = 255;
+            }
+            g.putImageData(id, 0, 0);
+          }
+          const b = g.getImageData(0, 0, w, h).data, colours = new Set(), u32 = new Uint32Array(b.buffer);
+          for (let i = 0; i < u32.length && colours.size <= 256; i++) colours.add(u32[i]);
           let blob = null;
           p.S.fileName = 'out.png';
           p.S.fileHandle = { name: 'out.png', queryPermission: async () => 'granted', requestPermission: async () => 'granted',
-            createWritable: async () => ({ write: async (b) => { blob = b; }, close: async () => {} }) };
+            createWritable: async () => ({ write: async (x) => { blob = x; }, close: async () => {} }) };
           await p.save(false);
           const native = await new Promise((r) => p.img.toBlob(r, 'image/png'));
           if (!blob) return { err: document.querySelector('#toast').textContent };
           const bmp = await createImageBitmap(blob, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
           const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
           const cg = c.getContext('2d'); cg.drawImage(bmp, 0, 0);
-          const a = cg.getImageData(0, 0, c.width, c.height).data, b = g.getImageData(0, 0, w, h).data;
+          const a = cg.getImageData(0, 0, c.width, c.height).data;
           let diff = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) diff++;
-          return { used: p.used.png, size: blob.size, native: native.size, dims: [bmp.width, bmp.height], diff, clean: p.hist.isClean() };
-        }, [w, h]);
+          const head = new Uint8Array(await blob.slice(0, 33).arrayBuffer()); // IHDR colour type: 3 = palette, 6 = RGBA
+          return { used: p.used.png, size: blob.size, native: native.size, dims: [bmp.width, bmp.height], diff, clean: p.hist.isClean(), colours: colours.size, ctype: head[25] };
+        }, [w, h, scene]);
         if (s.err) { ok(false, tag(`${label}: save failed: ${s.err}`)); continue; }
-        const wantUpng = mode === 'online' && label === 'drawing';
+        const wantUpng = mode === 'online' && upngOnline;
+        ok((kind === 'palette') === (s.colours <= 256), tag(`${label}: scene has ${s.colours > 256 ? '> 256' : s.colours} colours`));
         ok(s.used === (wantUpng ? 'upng' : 'builtin'), tag(`${label}: PNG encoded by ${s.used}`));
+        // colour type: 3 = palette (+ tRNS), 6 = RGBA, 2 = RGB (the noisy scenes are opaque)
+        if (wantUpng) ok(s.ctype === (kind === 'palette' ? 3 : scene === 'noise' ? 2 : 6), tag(`${label}: UPNG wrote colour type ${s.ctype}`));
         ok(s.dims.join() === [w, h].join() && s.diff === 0, tag(`${label}: saved PNG decodes to the same pixels (${s.diff} bytes differ)`));
-        ok(wantUpng ? s.size < s.native * 0.9 : s.size === s.native, tag(`${label}: ${s.size} B vs the browser's ${s.native} B`));
+        ok(wantUpng ? s.size < s.native : s.size === s.native, tag(`${label}: ${s.size} B vs the browser's ${s.native} B`));
         ok(s.clean, tag(`${label}: saved state is clean`));
       }
 

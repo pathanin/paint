@@ -326,7 +326,8 @@
   }
   const pushDocHist = (before) => pushHist({ type: 'doc', canvas: before, bytes: before.width * before.height * 4 });
   function pushHist(e) {
-    prefetch('upng'); // there's now something to save: load the PNG encoder before Save needs it
+    // There's now something to save. If it will be a PNG, load the encoder before Save needs it.
+    if (!canWrite(S.fileName) || /\.png$/i.test(S.fileName)) prefetch('upng');
     if (hist.push(e) && !S.trimWarned) {
       S.trimWarned = true;
       flash('Oldest undo steps were dropped to save memory');
@@ -902,9 +903,14 @@
   // built-in halving resampler. On a zone plate ÷3, Lanczos-3 had ~40% less moiré and kept low
   // frequencies ~9× closer to the signal; upscaled, it was closer too. pica's default mks2013 filter
   // adds sharpening, which overshoots in both directions, so it isn't used.
+  // pica is CPU-bound and its downscale cost grows faster than the pixel count (source + result:
+  // 45 MP took 0.8 s, 80 MP 2.3 s, 125 MP 5.2 s on an M4), while the built-in path is a few GPU
+  // draws. Past PICA_MAX_PIXELS the built-in path runs.
+  const PICA_MAX_PIXELS = 50e6;
   let picaInst = null;
   async function scaleImage(src, w, h) {
     try {
+      if (src.width * src.height + w * h > PICA_MAX_PIXELS) throw new Error('too large for pica');
       const p = await lib('pica');
       picaInst = picaInst || p();
       const out = makeCanvas(w, h);
@@ -943,7 +949,7 @@
       const out = await (scaling = scaleImage(src, w, h));
       if (img !== src || hist.top() !== top || drag || (sel && sel.float) || textAt) {
         out.width = 0;
-        flash('Resize discarded: the image changed while it ran', true);
+        flash('Resize failed: the image changed while it ran', true);
         return;
       }
       docOp(out);
@@ -997,7 +1003,7 @@
     catch (err) { if (!isTiff(file)) throw err; }
     let UTIF;
     try { UTIF = await lib('utif'); }
-    catch { throw openError('opening TIFF needs an internet connection'); }
+    catch { throw openError('the TIFF reader couldn’t be downloaded'); }
     const buf = await file.arrayBuffer();
     let page;
     try { page = UTIF.decode(buf).find((p) => p.t256 && p.t257); }
@@ -1053,19 +1059,23 @@
     }
     return new Promise((res, rej) => src.toBlob((b) => (b ? res(b) : rej(new Error('encode failed'))), type, 0.92));
   }
-  // UPNG compresses harder than the browser's PNG encoder: 30-60% smaller files on screenshots,
-  // drawings and photos in a test. It runs on the main thread (~70-600 ms per 1.6 MP), so only up
-  // to a 4K screen's worth of pixels. Both encoders run and the smaller file wins, so a PNG is never
-  // bigger than before. UPNG writes into a buffer of raw size + 100 bytes and silently truncates
-  // past it; incompressible output comes close to that, so anything over 90% of raw is rejected.
-  const UPNG_MAX_PIXELS = 3840 * 2160;
+  // UPNG compresses harder than the browser's PNG encoder. In a test (Chrome, M4), its files were
+  // ~60% smaller on a screenshot, 40-46% on a drawing, 92% on a gradient, 16% on a photo and 13% on
+  // noise. It runs on the main thread: ~30-100 ms per MP when the browser's PNG is under a quarter of
+  // the raw size, ~180-290 ms per MP above that (photos, noise). So the browser's file size picks the
+  // estimate, and UPNG runs only when that's within UPNG_BUDGET_MS, and only up to a 4K screen. Both
+  // encoders run and the smaller file wins, so a PNG is never bigger than before. UPNG writes into a
+  // buffer of raw size + 100 bytes and silently truncates past it; incompressible output comes close
+  // to that, so anything over 90% of raw is rejected.
+  const UPNG_MAX_PIXELS = 3840 * 2160, UPNG_BUDGET_MS = 750;
+  const upngMs = (pixels, nativeRatio) => pixels / 1e6 * (nativeRatio < 0.25 ? 100 : 300);
   async function encodePng() {
     const UPNG = img.width * img.height <= UPNG_MAX_PIXELS ? await lib('upng').catch(() => null) : null;
     // Read the pixels in the same tick as toBlob() snapshots them, so both encoders see one image.
     const w = img.width, h = img.height, raw = UPNG && ctx.getImageData(0, 0, w, h).data.buffer;
     const native = await encode('image/png');
     used.png = 'builtin';
-    if (!UPNG) return native;
+    if (!UPNG || upngMs(w * h, native.size / raw.byteLength) > UPNG_BUDGET_MS) return native;
     try {
       const png = UPNG.encode([raw], w, h, 0); // 0 colours = lossless
       if (png.byteLength >= native.size || png.byteLength > raw.byteLength * 0.9) return native;
