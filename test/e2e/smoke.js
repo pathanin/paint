@@ -284,10 +284,12 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     page.off('dialog', onDlg);
     ok(dialogs === 0, 'non-image drop does not prompt to discard');
     ok(/Not an image/.test(await page.locator('#toast').textContent()), 'non-image drop reports it');
-    // help lists ⌘0, swatch color 2, middle-drag
+    // help lists ⌘0, swatch color 2, middle-drag (shortcuts read Ctrl+ off a Mac: keyLabel())
+    const mac = await P(() => /Mac|iPhone|iPad/.test(navigator.platform));
+    const mod = mac ? '⌘' : 'Ctrl\\+';
     await page.keyboard.press('Shift+Slash'); await page.waitForTimeout(100);
     const helpTxt = await page.locator('#helpBody').textContent();
-    ok(/⌘0/.test(helpTxt) && /swatch/i.test(helpTxt) && /middle/i.test(helpTxt) && /⌘Y/.test(helpTxt), 'help lists ⌘0, swatch, middle-drag, ⌘Y');
+    ok(new RegExp(mod + '0').test(helpTxt) && /swatch/i.test(helpTxt) && /middle/i.test(helpTxt) && new RegExp(mod + 'Y').test(helpTxt), 'help lists ⌘0, swatch, middle-drag, ⌘Y');
     await page.keyboard.press('Escape'); await page.waitForTimeout(150);
     // palette exposes color 2
     ok(/color 2/i.test(await page.locator('#palette [data-color="#ffffff"]').getAttribute('aria-label')), 'color 2 swatch labelled');
@@ -420,7 +422,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     // help complete and fits at 1280x800
     await page.keyboard.press('Shift+Slash'); await page.waitForTimeout(150);
     const ht = await page.locator('#helpBody').textContent();
-    ok(/⌘\+/.test(ht) && /Cancel shape, selection or move drag/.test(ht), 'help lists ⌘+ and Esc cancel for drags');
+    ok((mac ? /⌘\+/ : /Ctrl\+Plus/).test(ht) && /Cancel shape, selection or move drag/.test(ht), 'help lists ⌘+ and Esc cancel for drags');
     ok(await P(() => { const b = document.querySelector('#helpBody'); return b.scrollHeight <= b.clientHeight + 1; }), 'help fits at 1280x800 without scrolling');
     await page.keyboard.press('Escape'); await page.waitForTimeout(150);
     // 600px wide: nothing clipped
