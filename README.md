@@ -1,6 +1,6 @@
 # Paint
 
-A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, annotate. Plain HTML/CSS/JS, no build, no dependencies.
+A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, annotate. Plain HTML/CSS/JS, no build. It works offline; when online, a few features get better through libraries loaded on demand (below).
 
 **Run:** open `index.html` in Chrome (works from `file://`). Drop an image on the window, paste one with ⌘V, or ⌘O.
 ⌘S writes back to the file you opened (Chrome asks for write permission once).
@@ -31,7 +31,17 @@ A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, ann
 
 The brush smooths strokes: it trails the pointer by a short lazy radius (Smoothing, 2 px per step; 0 turns it off), draws quadratic curves rather than straight segments, and always ends exactly where you release. Pencil and eraser stay pixel-exact.
 
-Save format follows the file extension (PNG, JPEG, WebP); JPEG is flattened onto white. Files opened in other formats (GIF, BMP) are saved as a PNG copy, never overwritten.
+Save format follows the file extension (PNG, JPEG, WebP); JPEG is flattened onto white. Files opened in other formats (GIF, BMP, TIFF) are saved as a PNG copy, never overwritten.
+
+### With and without a connection
+
+| Feature | Online (library from jsDelivr, loaded on first use) | Offline (built in) |
+|---|---|---|
+| Resize image | [pica](https://github.com/nodeca/pica), Lanczos-3: less moiré, sharper | Halving resampler |
+| Open TIFF | [UTIF](https://github.com/photopea/UTIF.js): first page, any compression it supports | Not available; the message says why |
+| Save PNG | [UPNG](https://github.com/photopea/UPNG.js), lossless: files are often 30–60% smaller (up to 3840 × 2160) | The browser's PNG encoder |
+
+Versions are pinned and checked with Subresource Integrity. If the CDN can't be reached, or doesn't answer within 4 s, the built-in path runs. Nothing is loaded at startup.
 
 ## Layout
 
@@ -41,5 +51,6 @@ Save format follows the file extension (PNG, JPEG, WebP); JPEG is flattened onto
 - `test/e2e/smoke.js` — browser smoke test (about 280 checks). Dev-only: needs Playwright somewhere on `NODE_PATH` and Google Chrome.
   Serve the folder (`python3 -m http.server 8765`), then `NODE_PATH=/path/to/node_modules node test/e2e/smoke.js [url]`
   (url defaults to `http://localhost:8765/`; `file:///…/index.html` works too). `test/e2e/shots.js PREFIX` saves screenshots.
+- `test/e2e/libs.js` — the optional libraries online, offline and with a CDN that never answers: which path ran, pixel-exact TIFF and PNG round trips, timeouts, and retry after coming back online. Fixtures are in `test/fixtures/`.
 - `test/e2e/history.js` (pixel-exact undo/redo of every edit kind, undo depth on a 12 MP image) and `test/e2e/preview.js` (selection and shape previews on screen at several zooms) — same setup and `[url]` argument as the smoke test.
 - `test/e2e/bench.js [url] [--runs N] [--only substr] [--json out.json]` — performance benchmark: main-thread time, frame times and memory per scenario, median of N runs. `test/e2e/bench-compare.js before.json after.json` prints the deltas and exits 1 on a regression.

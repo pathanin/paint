@@ -118,6 +118,58 @@
     : k === '⌘' ? 'Ctrl' : k === '⇧' ? 'Shift' : k === '⌫' ? 'Backspace'
     : k.replace(/⌘/g, 'Ctrl+').replace(/⇧([- ])/g, 'Shift$1').replace(/⇧/g, 'Shift+').replace(/\+\+$/, '+Plus').replace(/\+−$/, '+Minus'));
 
+  // ---------- optional libraries ----------
+  // A few features use a library from a CDN when it can be reached: pica for resampling, UTIF to open
+  // TIFF, UPNG for smaller PNGs (both on pako). Each loads as a classic script on first use (that
+  // works from file://), pinned to an exact version with SRI. Nothing loads at boot. Every caller
+  // keeps a built-in path, so offline the app still works. A failed or timed-out load is remembered,
+  // so later uses don't wait again, until the browser says it's back online.
+  const CDN = 'https://cdn.jsdelivr.net/npm/';
+  const LIBS = { // UTIF and UPNG read window.pako when they run, so it loads first
+    pako: { global: 'pako', file: ['pako@1.0.11/dist/pako.min.js', 'sha384-4NCF4sE5VX/W8Juvr+V9At6hCk146OuwgRSD6r857Tlar3RMK6IkyQ7W0xnNCZnG'] },
+    pica: { global: 'pica', file: ['pica@10.0.3/dist/pica.min.js', 'sha384-STnqXR16fSVIsRTDBugtOeglB1Uc1wVKemdy6uWYv9xWhjbk+ZlRW2nGneBUvFOo'] },
+    utif: { global: 'UTIF', deps: ['pako'], file: ['utif2@4.1.0/UTIF.js', 'sha384-3OkDLvanKP4HEK1kZmzFAw1sP4497oBXn/T0TdPKCWFbsKvPh5VZ1vQciyrv/EXb'] },
+    upng: { global: 'UPNG', deps: ['pako'], file: ['upng-js@2.1.0/UPNG.js', 'sha384-5zRBkJ6IHy9ezWHX/cBuwC0SnrK23Cfx6G6kIjwR5no9khaSv2md2ZHMXphI3UCB'] },
+  };
+  const LIB_TIMEOUT = 4000;
+  const libLoads = {};
+  const libState = {}; // name -> 'loading' | 'ok' | 'failed' (for the test handle)
+  const used = {};     // feature -> which implementation ran last, e.g. used.resize = 'pica' | 'builtin'
+  function loadScript([path, integrity]) {
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      const done = (err) => { clearTimeout(timer); s.onload = s.onerror = null; if (err) reject(err); else resolve(); };
+      const timer = setTimeout(() => done(new Error('timed out')), LIB_TIMEOUT);
+      s.onload = () => done();
+      s.onerror = () => done(new Error('unavailable'));
+      s.src = CDN + path;
+      s.integrity = integrity;
+      s.crossOrigin = 'anonymous';
+      s.async = false;
+      document.head.appendChild(s);
+    });
+  }
+  function lib(name) {
+    if (libLoads[name]) return libLoads[name];
+    // Known offline: fall back at once, without a request that can only fail. Not cached, so the
+    // first use after reconnecting tries again.
+    if (navigator.onLine === false) return Promise.reject(new Error('offline'));
+    const L = LIBS[name];
+    libState[name] = 'loading';
+    return (libLoads[name] = Promise.all((L.deps || []).map(lib))
+      .then(() => loadScript(L.file))
+      .then(() => {
+        if (!window[L.global]) throw new Error('unavailable');
+        libState[name] = 'ok';
+        return window[L.global];
+      })
+      .catch((err) => { libState[name] = 'failed'; throw err; }));
+  }
+  const prefetch = (name) => { lib(name).catch(() => {}); };
+  window.addEventListener('online', () => {
+    for (const name in libState) if (libState[name] === 'failed') { delete libLoads[name]; delete libState[name]; }
+  });
+
   // ---------- document & history ----------
   // Make canvas c the document, without copying it: it replaces #image in the page.
   function adoptImage(c) {
@@ -274,6 +326,7 @@
   }
   const pushDocHist = (before) => pushHist({ type: 'doc', canvas: before, bytes: before.width * before.height * 4 });
   function pushHist(e) {
+    prefetch('upng'); // there's now something to save: load the PNG encoder before Save needs it
     if (hist.push(e) && !S.trimWarned) {
       S.trimWarned = true;
       flash('Oldest undo steps were dropped to save memory');
@@ -845,7 +898,25 @@
     g.drawImage(img, 0, 0);
     docOp(c);
   }
-  // High-quality downscale: halve repeatedly, then one final smooth draw.
+  // Scale with pica's Lanczos-3 filter (in workers) when it loads; otherwise, or if it fails, the
+  // built-in halving resampler. On a zone plate ÷3, Lanczos-3 had ~40% less moiré and kept low
+  // frequencies ~9× closer to the signal; upscaled, it was closer too. pica's default mks2013 filter
+  // adds sharpening, which overshoots in both directions, so it isn't used.
+  let picaInst = null;
+  async function scaleImage(src, w, h) {
+    try {
+      const p = await lib('pica');
+      picaInst = picaInst || p();
+      const out = makeCanvas(w, h);
+      await picaInst.resize(src, out, { filter: 'lanczos3' });
+      used.resize = 'pica';
+      return out;
+    } catch {
+      used.resize = 'builtin';
+      return resample(src, w, h);
+    }
+  }
+  // Built-in high-quality downscale: halve repeatedly, then one final smooth draw.
   function resample(src, w, h) {
     let cur = src;
     while (cur.width >= w * 2 || cur.height >= h * 2) {
@@ -860,13 +931,35 @@
     g.drawImage(cur, 0, 0, w, h);
     return out;
   }
+  // Scaling is async (the library may still be loading, and pica works off the main thread). If the
+  // document changes meanwhile, the result is stale: drop it rather than overwrite the newer edit.
+  let scaling = null;
+  async function scaleDoc(w, h) {
+    if (scaling) { flash('Still resizing'); return; }
+    const src = img, top = hist.top();
+    let shown = false; // say so only if it takes a noticeable time, then confirm when done
+    const slow = setTimeout(() => { shown = true; flash('Resizing…'); }, 300);
+    try {
+      const out = await (scaling = scaleImage(src, w, h));
+      if (img !== src || hist.top() !== top || drag || (sel && sel.float) || textAt) {
+        out.width = 0;
+        flash('Resize discarded: the image changed while it ran', true);
+        return;
+      }
+      docOp(out);
+      if (shown) flash(`Resized to ${w} × ${h} px`);
+    } finally {
+      clearTimeout(slow);
+      scaling = null;
+    }
+  }
   function resizeDoc(w, h, mode, anchor) {
     const why = sizeProblem(w, h);
     if (why) { flash(`Can't resize: ${why}`, true); return; }
     if (w === img.width && h === img.height) { flash('Size unchanged'); return; }
     commitText();
     dropSelection();
-    if (mode === 'scale') { docOp(resample(img, w, h)); return; }
+    if (mode === 'scale') return scaleDoc(w, h);
     const c = makeCanvas(w, h), g = c.getContext('2d');
     g.fillStyle = S.secondary;
     g.fillRect(0, 0, w, h);
@@ -876,7 +969,7 @@
   }
 
   // ---------- file I/O ----------
-  const IMAGE_TYPES = [{ description: 'Images', accept: { 'image/*': ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'] } }];
+  const IMAGE_TYPES = [{ description: 'Images', accept: { 'image/*': ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.tif', '.tiff'] } }];
   // A floating selection or open text box isn't in history yet, but it is still unsaved work.
   const isDirty = () => !hist.isClean() || !!(sel && sel.float) || !!(textAt && textBox.value.trim());
   const confirmDiscard = () => !isDirty() || confirm(`Discard unsaved changes to ${S.fileName}?`);
@@ -891,8 +984,34 @@
       if (err.name !== 'AbortError') flash("Can't open the file: " + errText(err, 'permission was denied'), true);
     }
   }
-  const cantOpen = (file) => (file.type === 'image/svg+xml' || /\.svg$/i.test(file.name)
-    ? "Can't open SVG files. Use PNG, JPEG, WebP, GIF or BMP." : 'Not an image: ' + file.name);
+  // A decode failure with a reason worth showing (too big, TIFF reader unavailable) carries `why`.
+  const cantOpen = (file, err) => (err && err.why ? `Can't open ${file.name}: ${err.why}`
+    : file.type === 'image/svg+xml' || /\.svg$/i.test(file.name)
+    ? "Can't open SVG files. Use PNG, JPEG, WebP, GIF, BMP or TIFF." : 'Not an image: ' + file.name);
+  const openError = (why) => Object.assign(new Error(why), { why });
+  const isTiff = (file) => file.type === 'image/tiff' || /\.tiff?$/i.test(file.name);
+  // The browser decodes most formats itself. Chrome can't decode TIFF, so that goes through UTIF
+  // (first page only); without the library, TIFF can't be opened, and the message says why.
+  async function decodeFile(file) {
+    try { return await createImageBitmap(file); }
+    catch (err) { if (!isTiff(file)) throw err; }
+    let UTIF;
+    try { UTIF = await lib('utif'); }
+    catch { throw openError('opening TIFF needs an internet connection'); }
+    const buf = await file.arrayBuffer();
+    let page;
+    try { page = UTIF.decode(buf).find((p) => p.t256 && p.t257); }
+    catch { page = null; }
+    if (!page) throw openError('it isn’t a TIFF image this app can read');
+    const w = page.t256[0], h = page.t257[0];
+    const why = sizeProblem(w, h); // check before decoding: the pixels of a huge TIFF may not fit in memory
+    if (why) throw openError(why);
+    try { UTIF.decodeImage(buf, page); }
+    catch { throw openError('it uses a TIFF compression this app can’t read'); }
+    const rgba = UTIF.toRGBA8(page);
+    used.open = 'utif';
+    return createImageBitmap(new ImageData(new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, w * h * 4), w, h));
+  }
   function tooBigToOpen(file, bmp) {
     const why = sizeProblem(bmp.width, bmp.height);
     if (!why) return false;
@@ -903,8 +1022,8 @@
   async function loadFile(file, handle, decoded) {
     let bmp = decoded;
     if (!bmp) {
-      try { bmp = await createImageBitmap(file); }
-      catch { flash(cantOpen(file), true); return; }
+      try { bmp = await decodeFile(file); }
+      catch (err) { flash(cantOpen(file, err), true); return; }
     }
     if (tooBigToOpen(file, bmp)) return;
     cancelText();
@@ -934,6 +1053,29 @@
     }
     return new Promise((res, rej) => src.toBlob((b) => (b ? res(b) : rej(new Error('encode failed'))), type, 0.92));
   }
+  // UPNG compresses harder than the browser's PNG encoder: 30-60% smaller files on screenshots,
+  // drawings and photos in a test. It runs on the main thread (~70-600 ms per 1.6 MP), so only up
+  // to a 4K screen's worth of pixels. Both encoders run and the smaller file wins, so a PNG is never
+  // bigger than before. UPNG writes into a buffer of raw size + 100 bytes and silently truncates
+  // past it; incompressible output comes close to that, so anything over 90% of raw is rejected.
+  const UPNG_MAX_PIXELS = 3840 * 2160;
+  async function encodePng() {
+    const UPNG = img.width * img.height <= UPNG_MAX_PIXELS ? await lib('upng').catch(() => null) : null;
+    // Read the pixels in the same tick as toBlob() snapshots them, so both encoders see one image.
+    const w = img.width, h = img.height, raw = UPNG && ctx.getImageData(0, 0, w, h).data.buffer;
+    const native = await encode('image/png');
+    used.png = 'builtin';
+    if (!UPNG) return native;
+    try {
+      const png = UPNG.encode([raw], w, h, 0); // 0 colours = lossless
+      if (png.byteLength >= native.size || png.byteLength > raw.byteLength * 0.9) return native;
+      used.png = 'upng';
+      return new Blob([png], { type: 'image/png' });
+    } catch {
+      return native;
+    }
+  }
+  const encodeFor = (name) => (mimeFor(name) === 'image/png' ? encodePng() : encode(mimeFor(name)));
   let saving = false;
   async function save(as) {
     if (saving) return; // one picker/write at a time
@@ -962,7 +1104,7 @@
             name = typed;
           }
           const a = document.createElement('a');
-          a.href = URL.createObjectURL(await encode(mimeFor(name)));
+          a.href = URL.createObjectURL(await encodeFor(name));
           a.download = name;
           a.click();
           setTimeout(() => URL.revokeObjectURL(a.href), 10000);
@@ -980,7 +1122,7 @@
           ],
         });
       }
-      const blob = await encode(mimeFor(h.name));
+      const blob = await encodeFor(h.name);
       const w = await h.createWritable();
       await w.write(blob);
       await w.close();
@@ -1048,6 +1190,7 @@
     syncUnitLabels();
     $('#resizeDlg').showModal();
     $('#rW').select();
+    prefetch('pica'); // usually loaded by the time the size is typed
   }
   function syncResizeMode() {
     const canvas = resizeMode() === 'canvas';
@@ -1441,8 +1584,8 @@
     if (!file || (file.type && !file.type.startsWith('image/'))) { flash('Not an image: ' + (file ? file.name : 'file'), true); return; }
     // Decode before asking to discard, so a file that isn't an image never prompts.
     let bmp;
-    try { bmp = await createImageBitmap(file); }
-    catch { flash(cantOpen(file), true); return; }
+    try { bmp = await decodeFile(file); }
+    catch (err) { flash(cantOpen(file, err), true); return; }
     if (tooBigToOpen(file, bmp)) return; // before asking to discard: nothing would replace it
     if (!confirmDiscard()) { bmp.close(); return; }
     let handle = null;
@@ -1716,5 +1859,5 @@
   setTool('pencil');
 
   // Handle for scripted smoke tests in the console.
-  window.__paint = { S, hist, get img() { return img; }, newDoc, flash, save, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, loadFile, setZoom, fitZoom, MAX_PIXELS };
+  window.__paint = { S, hist, libState, used, decodeFile, get img() { return img; }, newDoc, flash, save, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, loadFile, setZoom, fitZoom, MAX_PIXELS };
 })();

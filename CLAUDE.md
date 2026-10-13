@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A small MS-Paint-style image editor written in plain HTML, CSS and JS. It has no build step and no runtime dependencies. It must keep working when `index.html` is opened directly from `file://` in Chrome. That rules out ES modules, `fetch`, CDN assets and external SVG sprite references; icons are inline `<symbol>`s in `index.html`.
+A small MS-Paint-style image editor written in plain HTML, CSS and JS. It has no build step. It must keep working when `index.html` is opened directly from `file://` in Chrome, and offline. That rules out ES modules, `fetch`, and external SVG sprite references; icons are inline `<symbol>`s in `index.html`.
+
+The only CDN code is optional: pica (resize), UTIF (open TIFF) and UPNG (smaller PNG saves), with pako for the last two. See "Optional libraries" below. Nothing loads at boot, and every feature that uses one has a built-in path.
 
 ## Commands
 
@@ -23,6 +25,7 @@ NODE_PATH=/tmp/pw/node_modules node test/e2e/smoke.js file://$PWD/index.html
 NODE_PATH=/tmp/pw/node_modules node test/e2e/shots.js /tmp/pw/shot         # light/dark/dialog/narrow screenshots
 NODE_PATH=/tmp/pw/node_modules node test/e2e/history.js                    # pixel-exact undo/redo, undo depth
 NODE_PATH=/tmp/pw/node_modules node test/e2e/preview.js                    # previews on screen at several zooms
+NODE_PATH=/tmp/pw/node_modules node test/e2e/libs.js                       # CDN libraries: online, offline, CDN hanging
 NODE_PATH=/tmp/pw/node_modules node test/e2e/bench.js --json /tmp/pw/a.json   # perf benchmark (3 runs, medians)
 node test/e2e/bench-compare.js /tmp/pw/before.json /tmp/pw/a.json           # deltas; exit 1 on a regression
 ```
@@ -64,6 +67,14 @@ When smoke fails, read the **first** `FAIL` line, because later failures often c
   - Order in the keydown handler: a focus tooltip swallows the first Esc; dialogs and text fields return; while `drag` is set only Esc (cancel) and Shift (constrain shapes) act; then come modifier shortcuts, then single keys.
   - Arrows nudge the selection only when focus is on the canvas. Toolbars use roving tabindex through `rove()`.
 - **Focus rules:** after a pointer click on a toolbar control, focus is released so single-letter shortcuts work. Keyboard activation keeps focus. The text box doesn't commit when focus moves into `.chrome`. `releaseFocus()` returns focus to an open text box.
+
+## Optional libraries
+
+- The `LIBS` table in `js/app.js` lists each library with an exact version, an SRI hash and its dependencies. `lib(name)` injects a classic `<script crossorigin integrity>` on first use and resolves to the library's global. It rejects after `LIB_TIMEOUT` (4 s), and the rejection is cached until the window's `online` event, so an unreachable CDN costs one wait at most.
+- Every caller catches the rejection and falls back: `scaleImage()` falls back to `resample()`, `encodePng()` to `toBlob`, and `decodeFile()` to an error saying TIFF needs a connection. `__paint.used` records which path ran, and `libs.js` asserts it so that a silent fallback can't pass the online checks.
+- To bump a version, change the path and recompute the hash: `curl -sL https://cdn.jsdelivr.net/npm/<pkg>@<ver>/<file> | openssl dgst -sha384 -binary | openssl base64 -A`.
+- Scaling is async. `scaleDoc()` drops its result if the document changed while it ran.
+- UPNG runs on the main thread, so it is capped at `UPNG_MAX_PIXELS` (one 4K screen). Both encoders run, and the smaller blob is kept.
 
 ## Constraints and conventions
 
