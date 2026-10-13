@@ -21,9 +21,11 @@
   }
 
   // 4-connected scanline flood region from (x, y). tolerance is 0..100 (% of 255, max channel diff).
-  // Doesn't touch u32. Returns {mask, box}: mask[i] = 1 for every pixel in the region (w*h bytes),
-  // box = its bounding box. null when (x, y) is outside the image.
-  // Typed-array stack of pixel indices; no per-span allocation.
+  // Doesn't touch u32. Returns {mask, box, edge}: mask[i] = 1 for every pixel in the region (w*h
+  // bytes), box = its bounding box, edge = the pixels outside it that touch it (8-way) and aren't
+  // near target, each once (for fillEdge; found while scanning, so it costs the perimeter, not the
+  // area). null when (x, y) is outside the image.
+  // Typed-array stacks of pixel indices; no per-span allocation.
   function floodMask(u32, w, h, x, y, tolerance) {
     if (x < 0 || y < 0 || x >= w || y >= h) return null;
     const target = u32[y * w + x];
@@ -43,6 +45,13 @@
       if (sp === stack.length) { const n = new Int32Array(sp * 2); n.set(stack); stack = n; }
       stack[sp++] = i;
     };
+    // Edge pixels are marked 2 in mask while flooding (never near, so the flood never wants them).
+    let edge = new Int32Array(1024), ep = 0;
+    const mark = (i) => {
+      if (mask[i]) return;
+      if (ep === edge.length) { const n = new Int32Array(ep * 2); n.set(edge); edge = n; }
+      mask[i] = 2; edge[ep++] = i;
+    };
     push(y * w + x);
     let minX = x, maxX = x, minY = y, maxY = y;
     while (sp) {
@@ -53,6 +62,8 @@
       while (l > row && !mask[l - 1] && near(u32[l - 1])) l--;
       while (r < row + w - 1 && !mask[r + 1] && near(u32[r + 1])) r++;
       mask.fill(1, l, r + 1);
+      if (l > row && !mask[l - 1]) mark(l - 1); // stopped by a pixel that isn't near
+      if (r < row + w - 1 && !mask[r + 1]) mark(r + 1);
       if (l - row < minX) minX = l - row;
       if (r - row > maxX) maxX = r - row;
       if (sy < minY) minY = sy;
@@ -63,72 +74,63 @@
         const off = (ny - sy) * w;
         let inRun = false;
         for (let j = l; j <= r; j++) {
-          const ok = !mask[j + off] && near(u32[j + off]);
+          const m = mask[j + off], ok = !m && near(u32[j + off]);
           if (ok && !inRun) push(j + off);
+          else if (!m && !ok) mark(j + off);
           inRun = ok;
         }
+        // the corners touch the span diagonally: edge pixels, but not part of the 4-connected flood
+        if (l > row && !mask[l - 1 + off] && !near(u32[l - 1 + off])) mark(l - 1 + off);
+        if (r < row + w - 1 && !mask[r + 1 + off] && !near(u32[r + 1 + off])) mark(r + 1 + off);
       }
     }
-    return { mask, box: { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 } };
+    for (let k = 0; k < ep; k++) mask[edge[k]] = 0;
+    return { mask, box: { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 }, edge: edge.subarray(0, ep) };
   }
 
-  // The anti-aliased ring around a flood region (mask, box from floodMask, seeded on colour target),
-  // for a fill with color. Without it, the soft edge pixels of brush strokes, ellipses and text stay
-  // a blend with the old colour: a light fringe. Each pixel outside the mask that touches it (8-way)
-  // is taken as a blend a*target + (1-a)*ink, where ink is the colour farthest from target in its
-  // 5x5 neighbourhood outside the mask; it becomes a*color + (1-a)*ink, i.e. as if drawn over color.
-  // Pixels that aren't on that line (hard-edged art, another colour) or are within tolerance of
-  // target (another region, touching diagonally) are left alone. Doesn't touch u32. Returns
-  // {idx, val, box}: the pixels that change (indices into u32) and their new values, and box grown
-  // to cover them. Straight RGBA lerp: exact for opaque pixels and for ink over transparency.
-  function fillEdge(u32, w, h, mask, box, target, color, tolerance) {
-    const thr = Math.round((tolerance || 0) * 255 / 100);
+  // The anti-aliased ring around a flood region ({mask, box, edge} from floodMask, seeded on colour
+  // target), for a fill with color. Without it, the soft edge pixels of brush strokes, ellipses and
+  // text stay a blend with the old colour: a light fringe. Each edge pixel (outside the mask,
+  // touching it 8-way, not near target) is taken as a blend a*target + (1-a)*ink, where ink is the
+  // colour farthest from target in its 5x5 neighbourhood outside the mask; it becomes
+  // a*color + (1-a)*ink, i.e. as if drawn over color. Pixels that aren't on that line (hard-edged
+  // art, another colour) are left alone. Doesn't touch u32. Returns {idx, val, box}: the pixels
+  // that change (indices into u32) and their new values, and the region's box grown to cover them.
+  // Straight RGBA lerp: exact for opaque pixels and for ink over transparency.
+  function fillEdge(u32, w, h, region, target, color) {
+    const { mask, box, edge } = region;
     const T = [target & 255, (target >>> 8) & 255, (target >>> 16) & 255, target >>> 24];
     const F = [color & 255, (color >>> 8) & 255, (color >>> 16) & 255, color >>> 24];
     const ch = (v, c) => (v >>> (c * 8)) & 255;
     const dist2 = (v) => { let s = 0; for (let c = 0; c < 4; c++) { const d = ch(v, c) - T[c]; s += d * d; } return s; };
     const idx = [], val = [];
-    const x0 = Math.max(0, box.x - 1), y0 = Math.max(0, box.y - 1);
-    const x1 = Math.min(w - 1, box.x + box.w), y1 = Math.min(h - 1, box.y + box.h);
     let bx0 = box.x, by0 = box.y, bx1 = box.x + box.w - 1, by1 = box.y + box.h - 1;
-    for (let y = y0; y <= y1; y++) {
-      for (let x = x0; x <= x1; x++) {
-        const i = y * w + x;
-        if (mask[i]) continue;
-        let edge = false;
-        for (let yy = Math.max(0, y - 1); yy <= Math.min(h - 1, y + 1) && !edge; yy++) {
-          for (let xx = Math.max(0, x - 1); xx <= Math.min(w - 1, x + 1); xx++) if (mask[yy * w + xx]) { edge = true; break; }
+    for (const i of edge) {
+      const x = i % w, y = (i / w) | 0, p = u32[i];
+      let ink = p, far = dist2(p);
+      for (let yy = Math.max(0, y - 2); yy <= Math.min(h - 1, y + 2); yy++) {
+        for (let xx = Math.max(0, x - 2); xx <= Math.min(w - 1, x + 2); xx++) {
+          const j = yy * w + xx;
+          if (mask[j]) continue;
+          const d = dist2(u32[j]);
+          if (d > far) { far = d; ink = u32[j]; }
         }
-        if (!edge) continue;
-        const p = u32[i];
-        let near = true;
-        for (let c = 0; c < 4; c++) if (Math.abs(ch(p, c) - T[c]) > thr) { near = false; break; }
-        if (near) continue;
-        let ink = p, far = dist2(p);
-        for (let yy = Math.max(0, y - 2); yy <= Math.min(h - 1, y + 2); yy++) {
-          for (let xx = Math.max(0, x - 2); xx <= Math.min(w - 1, x + 2); xx++) {
-            const j = yy * w + xx;
-            if (mask[j]) continue;
-            const d = dist2(u32[j]);
-            if (d > far) { far = d; ink = u32[j]; }
-          }
-        }
-        // a = (p - ink).(target - ink) / |target - ink|^2, then p must lie on that line.
-        let dot = 0;
-        for (let c = 0; c < 4; c++) dot += (ch(p, c) - ch(ink, c)) * (T[c] - ch(ink, c));
-        const a = Math.min(1, dot / far);
-        if (!(a > 0.004)) continue; // under 1/255: nothing to change
-        let on = true, out = 0;
-        for (let c = 0; c < 4 && on; c++) {
-          const v = ch(p, c);
-          if (Math.abs(v - (ch(ink, c) + a * (T[c] - ch(ink, c)))) > 12) on = false;
-          out |= Math.max(0, Math.min(255, Math.round(v + a * (F[c] - T[c])))) << (c * 8);
-        }
-        out >>>= 0;
-        if (!on || out === p) continue;
-        idx.push(i); val.push(out);
-        if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y;
       }
+      // a = (p - ink).(target - ink) / |target - ink|^2, then p must lie on that line.
+      let dot = 0;
+      for (let c = 0; c < 4; c++) dot += (ch(p, c) - ch(ink, c)) * (T[c] - ch(ink, c));
+      const a = Math.min(1, dot / far);
+      if (!(a > 0.004)) continue; // under 1/255: nothing to change
+      let on = true, out = 0;
+      for (let c = 0; c < 4 && on; c++) {
+        const v = ch(p, c);
+        if (Math.abs(v - (ch(ink, c) + a * (T[c] - ch(ink, c)))) > 12) on = false;
+        out |= Math.max(0, Math.min(255, Math.round(v + a * (F[c] - T[c])))) << (c * 8);
+      }
+      out >>>= 0;
+      if (!on || out === p) continue;
+      idx.push(i); val.push(out);
+      if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y;
     }
     return { idx: Uint32Array.from(idx), val: Uint32Array.from(val), box: { x: bx0, y: by0, w: bx1 - bx0 + 1, h: by1 - by0 + 1 } };
   }

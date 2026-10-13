@@ -94,9 +94,11 @@ test('floodFill out of bounds is a no-op', () => {
 // fillEdge: the region of floodMask, then the ring fillEdge returns written over it.
 function fillWithEdge(g, x, y, color, tol) {
   const target = g.u32[y * g.w + x];
-  const { mask, box } = Core.floodMask(g.u32, g.w, g.h, x, y, tol);
-  const e = Core.fillEdge(g.u32, g.w, g.h, mask, box, target, color, tol);
-  for (let i = 0; i < mask.length; i++) if (mask[i]) g.u32[i] = color;
+  const region = Core.floodMask(g.u32, g.w, g.h, x, y, tol);
+  const e = Core.fillEdge(g.u32, g.w, g.h, region, target, color);
+  assert.ok(region.mask.every((m) => m === 0 || m === 1)); // edge marks are cleared
+  assert.equal(new Set(region.edge).size, region.edge.length); // each edge pixel once
+  for (let i = 0; i < region.mask.length; i++) if (region.mask[i]) g.u32[i] = color;
   e.idx.forEach((i, k) => { g.u32[i] = e.val[k]; });
   return e;
 }

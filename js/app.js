@@ -702,9 +702,9 @@
     if (Math.round(S.tolerance * 255 / 100) === 0 && new Uint32Array(ctx.getImageData(p.x, p.y, 1, 1).data.buffer)[0] === c) return;
     const data = ctx.getImageData(0, 0, W, H);
     const u32 = new Uint32Array(data.data.buffer);
-    const { mask, box: region } = Core.floodMask(u32, W, H, p.x, p.y, S.tolerance);
+    const region = Core.floodMask(u32, W, H, p.x, p.y, S.tolerance), mask = region.mask;
     // The soft (anti-aliased) edge around the region is recoloured too, so no light fringe is left.
-    const edge = Core.fillEdge(u32, W, H, mask, region, u32[p.y * W + p.x], c, S.tolerance), box = edge.box;
+    const edge = Core.fillEdge(u32, W, H, region, u32[p.y * W + p.x], c), box = edge.box;
     // The undo entry: the box's pixels before, the region as a bit mask and the edge pixels' new
     // values. "After" is those pixels with the masked ones set to c and the edge ones to theirs, so
     // neither undo nor redo has to read the canvas back.
