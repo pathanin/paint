@@ -94,24 +94,33 @@
   // touching it 8-way, not near target) is taken as a blend a*target + (1-a)*ink, where ink is the
   // colour farthest from target in its 5x5 neighbourhood outside the mask; it becomes
   // a*color + (1-a)*ink, i.e. as if drawn over color. Pixels that aren't on that line (hard-edged
-  // art, another colour) are left alone. Doesn't touch u32. Returns {idx, val, box}: the pixels
-  // that change (indices into u32) and their new values, and the region's box grown to cover them.
-  // Straight RGBA lerp: exact for opaque pixels and for ink over transparency.
-  function fillEdge(u32, w, h, region, target, color) {
+  // art, another colour) are left alone. Soft pixels behind soft pixels (the narrow wedge where two
+  // strokes cross, the inside of an M) are reached by growing the ring up to EDGE_DEPTH more pixels
+  // through pixels that were recoloured, never onto one that touches another region (a pixel near
+  // target outside the mask). Doesn't touch u32 (mask is restored). Returns {idx, val, box}: the
+  // pixels that change (indices into u32) and their new values, and the region's box grown to cover
+  // them. Straight RGBA lerp: exact for opaque pixels and for ink over transparency.
+  const EDGE_DEPTH = 4;
+  function fillEdge(u32, w, h, region, target, color, tolerance) {
     const { mask, box, edge } = region;
+    const thr = Math.round((tolerance || 0) * 255 / 100);
     const T = [target & 255, (target >>> 8) & 255, (target >>> 16) & 255, target >>> 24];
     const F = [color & 255, (color >>> 8) & 255, (color >>> 16) & 255, color >>> 24];
     const ch = (v, c) => (v >>> (c * 8)) & 255;
     const dist2 = (v) => { let s = 0; for (let c = 0; c < 4; c++) { const d = ch(v, c) - T[c]; s += d * d; } return s; };
+    const near = (v) => { for (let c = 0; c < 4; c++) if (Math.abs(ch(v, c) - T[c]) > thr) return false; return true; };
+    // Pixels queued for a look are marked 2 in mask (the region is 1) and unmarked at the end.
+    const queue = Array.from(edge), depth = new Array(queue.length).fill(0);
+    for (const i of queue) mask[i] = 2;
     const idx = [], val = [];
     let bx0 = box.x, by0 = box.y, bx1 = box.x + box.w - 1, by1 = box.y + box.h - 1;
-    for (const i of edge) {
-      const x = i % w, y = (i / w) | 0, p = u32[i];
+    for (let q = 0; q < queue.length; q++) {
+      const i = queue[q], x = i % w, y = (i / w) | 0, p = u32[i];
       let ink = p, far = dist2(p);
       for (let yy = Math.max(0, y - 2); yy <= Math.min(h - 1, y + 2); yy++) {
         for (let xx = Math.max(0, x - 2); xx <= Math.min(w - 1, x + 2); xx++) {
           const j = yy * w + xx;
-          if (mask[j]) continue;
+          if (mask[j] === 1) continue;
           const d = dist2(u32[j]);
           if (d > far) { far = d; ink = u32[j]; }
         }
@@ -131,7 +140,24 @@
       if (!on || out === p) continue;
       idx.push(i); val.push(out);
       if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y;
+      if (depth[q] === EDGE_DEPTH) continue;
+      for (let yy = Math.max(0, y - 1); yy <= Math.min(h - 1, y + 1); yy++) {
+        for (let xx = Math.max(0, x - 1); xx <= Math.min(w - 1, x + 1); xx++) {
+          const j = yy * w + xx;
+          if (mask[j] || near(u32[j])) continue;
+          let other = false; // touches another region: its soft edge is that region's, not ours
+          for (let y2 = Math.max(0, yy - 1); y2 <= Math.min(h - 1, yy + 1) && !other; y2++) {
+            for (let x2 = Math.max(0, xx - 1); x2 <= Math.min(w - 1, xx + 1); x2++) {
+              const k = y2 * w + x2;
+              if (!mask[k] && near(u32[k])) { other = true; break; }
+            }
+          }
+          if (other) continue;
+          mask[j] = 2; queue.push(j); depth.push(depth[q] + 1);
+        }
+      }
     }
+    for (const i of queue) mask[i] = 0;
     return { idx: Uint32Array.from(idx), val: Uint32Array.from(val), box: { x: bx0, y: by0, w: bx1 - bx0 + 1, h: by1 - by0 + 1 } };
   }
 

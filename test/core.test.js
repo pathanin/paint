@@ -95,7 +95,7 @@ test('floodFill out of bounds is a no-op', () => {
 function fillWithEdge(g, x, y, color, tol) {
   const target = g.u32[y * g.w + x];
   const region = Core.floodMask(g.u32, g.w, g.h, x, y, tol);
-  const e = Core.fillEdge(g.u32, g.w, g.h, region, target, color);
+  const e = Core.fillEdge(g.u32, g.w, g.h, region, target, color, tol);
   assert.ok(region.mask.every((m) => m === 0 || m === 1)); // edge marks are cleared
   assert.equal(new Set(region.edge).size, region.edge.length); // each edge pixel once
   for (let i = 0; i < region.mask.length; i++) if (region.mask[i]) g.u32[i] = color;
@@ -124,6 +124,27 @@ test('fillEdge reaches edge pixels that touch the region only diagonally', () =>
   const g = grid(['..gK', '.gKK', 'gKKK', 'KKKK'], { '.': W, g: g50, K });
   fillWithEdge(g, 0, 0, R, 10);
   for (const [x, y] of [[2, 0], [1, 1], [0, 2]]) assert.deepEqual(rgba(g.u32[y * 4 + x]), [128, 0, 0, 255]);
+});
+
+test('fillEdge grows through soft pixels to ones that only touch soft pixels (a narrow wedge)', () => {
+  const W = Core.rgbaToU32(255, 255, 255, 255), K = Core.rgbaToU32(0, 0, 0, 255), R = Core.rgbaToU32(255, 0, 0, 255);
+  const s30 = Core.rgbaToU32(77, 77, 77, 255), s78 = Core.rgbaToU32(199, 199, 199, 255);
+  // w: 78% background, touching the region only through 30% pixels
+  const g = grid(['..sKK', '..swK', '..sKK'], { '.': W, s: s30, w: s78, K });
+  fillWithEdge(g, 0, 0, R, 10);
+  assert.deepEqual(rgba(g.u32[8]), [199, 0, 0, 255]);
+  assert.deepEqual(rgba(g.u32[2]), [77, 0, 0, 255]);
+});
+
+test('fillEdge does not grow onto soft pixels that touch another region', () => {
+  const W = Core.rgbaToU32(255, 255, 255, 255), K = Core.rgbaToU32(0, 0, 0, 255), R = Core.rgbaToU32(255, 0, 0, 255);
+  const s30 = Core.rgbaToU32(77, 77, 77, 255), s78 = Core.rgbaToU32(199, 199, 199, 255);
+  // the w pixels belong to the soft edge of the region on the right, which isn't filled
+  const g = grid(['.sw..', '.sK..', '.sw..'], { '.': W, s: s30, w: s78, K });
+  fillWithEdge(g, 0, 0, R, 10);
+  assert.equal(g.u32[2], s78);
+  assert.equal(g.u32[12], s78);
+  assert.equal(g.u32[3], W);
 });
 
 test('fillEdge leaves hard-edged art byte-identical', () => {
