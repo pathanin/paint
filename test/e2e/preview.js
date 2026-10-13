@@ -76,6 +76,15 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       ok(await colorAt(1500, 1000) === 'white', `${tag}: shrunk preview leaves nothing behind`);
       await page.mouse.up();
       ok(await colorAt(1050, 550) === 'black', `${tag}: rect committed to the image`);
+      // the window grows with no scroll or pointer move: the newly visible part of a float is drawn
+      await P(() => { const p = window.__paint; p.setTool('select'); p.newDoc(3000, 2000); p.S.pristine = false; p.setZoom(1);
+        const c = document.createElement('canvas'); c.width = 3000; c.height = 2000; const g = c.getContext('2d'); g.fillStyle = 'red'; g.fillRect(0, 0, 3000, 2000); p.pasteImage(c); });
+      await P(() => { const v = document.querySelector('#viewport'); v.scrollLeft = v.scrollTop = 0; });
+      await frame();
+      await page.setViewportSize({ width: 1800, height: 1100 });
+      await page.waitForTimeout(100);
+      { const c = await colorAt(1500, 800); ok(c === 'red', `${tag}: float drawn in the area a window resize revealed, got ${c}`); }
+      await page.setViewportSize({ width: 1000, height: 700 });
       if (errs.length) { fails++; console.log('FAIL: page errors', errs); }
       await page.close();
     }

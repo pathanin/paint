@@ -127,6 +127,19 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     ok(kept === 20, `20 wavy strokes on 4000x3000 all stay undoable, kept ${kept}`);
     await P(() => { for (let i = 0; i < 5; i++) window.__paint.undo(); }); await frame();
     ok(await hash() === big[2], '4000x3000: undo 5 strokes is pixel-exact');
+    // ---- 3. one scribble over more tiles than the live-tile cap (512) still undoes exactly ----
+    await P(() => { window.__paint.newDoc(8000, 6000); window.__paint.fitZoom(false); window.__paint.S.sizes.brush = 100; });
+    const before = await hash();
+    const zig = [];
+    for (let r = 0; r <= 24; r++) zig.push([r % 2 ? 7900 : 100, r * 245 + 50]);
+    await drag('brush', zig);
+    const tiles = await P(() => window.__paint.hist.top().parts.length);
+    ok(tiles > 512, `scribble touched ${tiles} tiles (> 512)`);
+    const after = await hash();
+    await P(() => window.__paint.undo()); await frame();
+    ok(await hash() === before, 'scribble over > 512 tiles: undo is pixel-exact');
+    await P(() => window.__paint.redo()); await frame();
+    ok(await hash() === after, 'scribble over > 512 tiles: redo is pixel-exact');
     if (errs.length) { fails++; console.log('FAIL: page errors', errs); }
   } finally {
     await browser.close();

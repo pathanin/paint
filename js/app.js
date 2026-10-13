@@ -159,7 +159,7 @@
   const TILE = 256;
   function beginOp(stroke) {
     dropOp();
-    op = { tiles: new Map(), stroke: !!stroke };
+    op = { tiles: new Map(), stroke: !!stroke, live: 0 };
   }
   function touch(x, y, w, h) {
     if (!op) return;
@@ -178,10 +178,14 @@
     }
     if (!fresh.length) return;
     if (op.stroke) {
+      // Bound the GPU memory a long scribble can pin: past 512 live tile canvases (128 MB), read
+      // them back now. That one readback stalls a frame; the alternative is unbounded memory.
+      if (op.live + fresh.length > 512) { readTiles([...op.tiles.values()].filter((t) => t.c)); op.live = 0; }
       for (const t of fresh) {
         t.c = makeCanvas(t.w, t.h);
         t.c.getContext('2d').drawImage(img, t.ox, t.oy, t.w, t.h, 0, 0, t.w, t.h); // onto transparent: exact, alpha too
       }
+      op.live += fresh.length;
       return;
     }
     // One readback covering the new tiles, cut up per tile.
@@ -197,7 +201,7 @@
     const o = op; op = null;
     if (!o || !o.tiles.size) return;
     const tiles = [...o.tiles.values()];
-    if (o.stroke) readTiles(tiles);
+    if (o.stroke) readTiles(tiles.filter((t) => t.c));
     const parts = [];
     let bytes = 0;
     for (const t of tiles) {
@@ -378,8 +382,9 @@
     const a = pvAt;
     if (a && a.z === z && a.k === k && a.W === img.width && a.H === img.height &&
         vis.x0 >= a.x && vis.y0 >= a.y && vis.x1 <= a.x + a.w && vis.y1 <= a.y + a.h) return;
-    // Half a view of margin on each side, so scrolling rarely needs a move (which is a redraw).
-    const mx = Math.ceil((vis.x1 - vis.x0) / 2) + 1, my = Math.ceil((vis.y1 - vis.y0) / 2) + 1;
+    // A quarter view of margin on each side, so short scrolls don't need a move (a reallocation and
+    // redraw), while the backing stays near screen size.
+    const mx = Math.ceil((vis.x1 - vis.x0) / 4) + 1, my = Math.ceil((vis.y1 - vis.y0) / 4) + 1;
     const x = Math.max(0, vis.x0 - mx), y = Math.max(0, vis.y0 - my);
     const w = Math.max(1, Math.min(img.width, vis.x1 + mx) - x), h = Math.max(1, Math.min(img.height, vis.y1 + my) - y);
     pvAt = { x, y, w, h, z, k, W: img.width, H: img.height };
@@ -390,6 +395,12 @@
   }
   pv.addEventListener('contextrestored', () => { pvAt = null; ovKey = ''; ovBox = null; requestRender(); });
   vp.addEventListener('scroll', () => requestRender(), { passive: true });
+  // The view can also grow (window resize, fullscreen) or change DPR (browser zoom, another monitor)
+  // with no scroll or pointer event: re-place the preview, and redo the pixelated/smooth choice.
+  new ResizeObserver(() => requestRender()).observe(vp);
+  (function watchDpr() {
+    matchMedia(`(resolution: ${devicePixelRatio}dppx)`).addEventListener('change', () => { layout(); watchDpr(); }, { once: true });
+  })();
   const floatIds = new WeakMap(); // canvas -> id, so a new float with the same geometry still redraws
   let nFloats = 0;
   const floatId = (c) => { if (!floatIds.has(c)) floatIds.set(c, ++nFloats); return floatIds.get(c); };
@@ -655,7 +666,7 @@
     ctx.textBaseline = 'alphabetic';
     const m = ctx.measureText('Hg');
     const asc = m.fontBoundingBoxAscent, desc = m.fontBoundingBoxDescent;
-    const w = Math.max(...lines.map((ln) => ctx.measureText(ln).width));
+    const w = lines.reduce((m, ln) => Math.max(m, ctx.measureText(ln).width), 0); // not Math.max(...): huge pastes overflow the stack
     touch(t.x - fs / 2, t.y - fs / 2, w + fs, lines.length * lh + fs);
     lines.forEach((ln, i) => ctx.fillText(ln, t.x, t.y + i * lh + (lh - (asc + desc)) / 2 + asc));
     ctx.restore();
@@ -1061,8 +1072,12 @@
 
   // ---------- canvas resize handles (Paint-style: right, bottom, corner; top-left stays put) ----------
   const ghost = $('#resizeGhost');
-  function showGhost(d) {
+  let ghostSize = '';
+  function showGhost(d) { // runs every frame of a handle drag: write only on change
     ghost.hidden = false;
+    const sz = d.w * S.zoom + 'px ' + d.h * S.zoom + 'px';
+    if (sz === ghostSize) return;
+    ghostSize = sz;
     ghost.style.width = d.w * S.zoom + 'px';
     ghost.style.height = d.h * S.zoom + 'px';
   }
