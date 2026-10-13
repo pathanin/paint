@@ -208,3 +208,131 @@ test('dragResize shift on corner keeps aspect, driven by the larger relative cha
   // shift is ignored on single edges
   assert.deepEqual(Core.dragResize(200, 100, 100, 0, 'e', 1, true, 16384), { w: 300, h: 100 });
 });
+
+test('History save point: clean only at the saved state', () => {
+  const h = new Core.History({ maxBytes: 1e9, maxCount: 10 });
+  assert.equal(h.isClean(), true); // fresh document
+  h.push({ id: 1 });
+  assert.equal(h.isClean(), false);
+  h.undo();
+  assert.equal(h.isClean(), true); // undone back to the start
+  h.redo();
+  h.markSaved();
+  assert.equal(h.isClean(), true);
+  h.push({ id: 2 });
+  assert.equal(h.isClean(), false);
+  h.undo();
+  assert.equal(h.isClean(), true); // back at the save
+  h.undo();
+  assert.equal(h.isClean(), false); // before the save
+  h.redo();
+  assert.equal(h.isClean(), true);
+});
+
+test('History save point becomes unreachable when its state is discarded', () => {
+  const h = new Core.History({ maxBytes: 1e9, maxCount: 10 });
+  h.push({ id: 1 });
+  h.markSaved();
+  h.undo();
+  h.push({ id: 2 }); // saved state was on the redo stack and is now gone
+  assert.equal(h.isClean(), false);
+  h.undo();
+  assert.equal(h.isClean(), false); // the base state was never saved
+  // a saved base state is lost once its entries are evicted
+  const e = new Core.History({ maxBytes: 1e9, maxCount: 2 });
+  [1, 2, 3].forEach((id) => e.push({ id }));
+  e.undo(); e.undo();
+  assert.equal(e.canUndo(), false);
+  assert.equal(e.isClean(), false); // the empty stack is no longer the original image
+  // clear() starts a new clean document
+  e.clear();
+  assert.equal(e.isClean(), true);
+});
+
+test('History save point survives eviction of the saved entry (it becomes the base state)', () => {
+  const h = new Core.History({ maxBytes: 1e9, maxCount: 2 });
+  h.push({ id: 1 });
+  h.markSaved(); // state after 1
+  h.push({ id: 2 });
+  h.push({ id: 3 }); // evicts 1: "after 1" is now the base state
+  assert.equal(h.isClean(), false);
+  h.undo(); h.undo();
+  assert.equal(h.isClean(), true);
+});
+
+test('History.push reports how many old entries were evicted', () => {
+  const h = new Core.History({ maxBytes: 100, maxCount: 3 });
+  assert.equal(h.push({ bytes: 40 }), 0);
+  assert.equal(h.push({ bytes: 40 }), 0);
+  assert.equal(h.push({ bytes: 40 }), 1); // 120 > 100
+  assert.equal(h.push({ bytes: 10 }), 0); // 90
+  assert.equal(h.push({ bytes: 1 }), 1); // count 4 > 3
+});
+
+test('sizeError: per-side range on both sides of the boundary', () => {
+  assert.equal(Core.sizeError(1, 1, 200, Infinity), null);
+  assert.equal(Core.sizeError(200, 200, 200, Infinity), null);
+  assert.deepEqual(Core.sizeError(201, 5, 200, Infinity), { field: 'w', reason: 'range' });
+  assert.deepEqual(Core.sizeError(5, 0, 200, Infinity), { field: 'h', reason: 'range' });
+  assert.deepEqual(Core.sizeError(NaN, 5, 200, Infinity), { field: 'w', reason: 'range' });
+});
+
+test('sizeError: total-pixel cap on both sides of the boundary', () => {
+  // 10000 x 10000 = 1e8 exactly fits a 1e8 cap; one more row does not
+  assert.equal(Core.sizeError(10000, 10000, 16384, 1e8), null);
+  assert.deepEqual(Core.sizeError(10000, 10001, 16384, 1e8), { field: null, reason: 'area' });
+});
+
+test('dragResize: area cap clamps each edge, keeps aspect on the corner, never rounds over', () => {
+  // 'e' at h=100, cap 10000 -> w <= 100
+  assert.deepEqual(Core.dragResize(50, 100, 500, 0, 'e', 1, false, 16384, 10000), { w: 100, h: 100 });
+  assert.deepEqual(Core.dragResize(100, 50, 0, 500, 's', 1, false, 16384, 10000), { w: 100, h: 100 });
+  // keepAspect corner: 100x50 x4 = 400x200 = 80000 > 20000 -> factor 2 -> 200x100
+  assert.deepEqual(Core.dragResize(100, 50, 300, 0, 'se', 1, true, 16384, 20000), { w: 200, h: 100 });
+  // free corner 300x300 = 90000 > 10000 -> scale by 1/3 -> 100x100
+  const r = Core.dragResize(100, 100, 200, 200, 'se', 1, false, 16384, 10000);
+  assert.ok(r.w * r.h <= 10000, `area ${r.w * r.h}`);
+  assert.deepEqual(r, { w: 100, h: 100 });
+  // cap 1001 at h=10: w would round to 101 (1010 px) -> must floor to 100
+  assert.deepEqual(Core.dragResize(50, 10, 60, 0, 'e', 1, false, 16384, 1005), { w: 100, h: 10 });
+  // shrinking a doc that sits at the cap still works; default cap = no area limit
+  assert.deepEqual(Core.dragResize(100, 100, -10, 0, 'e', 1, false, 16384, 10000), { w: 90, h: 100 });
+  assert.deepEqual(Core.dragResize(100, 100, 1000, 1000, 'se', 1, false, 16384), { w: 1100, h: 1100 });
+});
+
+test('saveName: keeps writable names, swaps only known image extensions, appends otherwise', () => {
+  assert.equal(Core.saveName('photo.jpg'), 'photo.jpg');
+  assert.equal(Core.saveName('x.JPG'), 'x.JPG');
+  assert.equal(Core.saveName('a.webp'), 'a.webp');
+  assert.equal(Core.saveName('a.gif'), 'a.png');
+  assert.equal(Core.saveName('scan.BMP'), 'scan.png');
+  assert.equal(Core.saveName('report v1.2'), 'report v1.2.png'); // a dot is not an extension
+  assert.equal(Core.saveName('my.photo'), 'my.photo.png');
+  assert.equal(Core.saveName('sketch'), 'sketch.png');
+});
+
+test('saveName: sanitises like a browser download and rejects empty names', () => {
+  assert.equal(Core.saveName('  a/b.png '), 'a_b.png');
+  assert.equal(Core.saveName('q?:*"<>|\\.png'), 'q________.png');
+  assert.equal(Core.saveName('.png'), 'untitled.png'); // just an extension: keep the type, name it
+  assert.equal(Core.saveName('.gif'), 'untitled.png');
+  assert.equal(Core.saveName('.JPG'), 'untitled.JPG');
+  assert.equal(Core.saveName('..hidden'), 'hidden.png');
+  assert.equal(Core.saveName('   '), null);
+  assert.equal(Core.saveName('...'), null);
+  assert.equal(Core.saveName(null), null);
+});
+
+test('stepSize: [ and ] are inverse around the 10 px boundary', () => {
+  // below 10 steps by 1, from 10 up by 2
+  assert.equal(Core.stepSize(9, 1), 10);
+  assert.equal(Core.stepSize(10, 1), 12);
+  assert.equal(Core.stepSize(12, -1), 10);
+  assert.equal(Core.stepSize(11, -1), 10); // not 9: don't skip 10
+  assert.equal(Core.stepSize(10, -1), 9);
+  assert.equal(Core.stepSize(2, -1), 1);
+  for (let s = 1; s < 60; s++) {
+    const up = Core.stepSize(s, 1);
+    if (s >= 10 && s % 2 === 0 || s < 10) assert.equal(Core.stepSize(up, -1), s, `down(up(${s}))`);
+  }
+});

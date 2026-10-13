@@ -2,6 +2,7 @@
   'use strict';
   const $ = (s) => document.querySelector(s);
   const img = $('#image'), ov = $('#overlay'), stage = $('#stage'), vp = $('#viewport'), textBox = $('#textInput');
+  const ring = $('#ring');
   const ctx = img.getContext('2d');
   const octx = ov.getContext('2d');
   // GPU-side copy of the canvas taken at the start of each op; undo regions are read from it at the end.
@@ -16,7 +17,7 @@
     font: 'system-ui, sans-serif', fontSize: 24,
     zoom: 1,
     fileHandle: null, fileName: 'untitled.png',
-    dirty: false, pristine: true, panKey: false,
+    pristine: true, panKey: false,
   };
   const hist = new Core.History({ maxBytes: 256 * 1024 * 1024, maxCount: 100 });
   const SHAPES = new Set(['line', 'rect', 'ellipse']);
@@ -25,10 +26,21 @@
     KeyI: 'picker', KeyT: 'text', KeyL: 'line', KeyR: 'rect', KeyO: 'ellipse',
   };
   const PALETTE = [
-    '#000000', '#7f7f7f', '#880015', '#ed1c24', '#ff7f27', '#fff200', '#22b14c', '#00a2e8', '#3f48cc', '#a349a4',
-    '#ffffff', '#c3c3c3', '#b97a57', '#ffaec9', '#ffc90e', '#efe4b0', '#b5e61d', '#99d9ea', '#7092be', '#c8bfe7',
+    ['#000000', 'Black'], ['#7f7f7f', 'Gray'], ['#880015', 'Dark red'], ['#ed1c24', 'Red'], ['#ff7f27', 'Orange'],
+    ['#fff200', 'Yellow'], ['#22b14c', 'Green'], ['#00a2e8', 'Turquoise'], ['#3f48cc', 'Indigo'], ['#a349a4', 'Purple'],
+    ['#ffffff', 'White'], ['#c3c3c3', 'Light gray'], ['#b97a57', 'Brown'], ['#ffaec9', 'Rose'], ['#ffc90e', 'Gold'],
+    ['#efe4b0', 'Light yellow'], ['#b5e61d', 'Lime'], ['#99d9ea', 'Light turquoise'], ['#7092be', 'Blue-gray'], ['#c8bfe7', 'Lavender'],
   ];
   const MAX_DIM = 16384;
+  const MAX_PIXELS = 100e6; // ~400 MB per canvas; history keeps several
+  const megapixels = (w, h) => +(w * h / 1e6).toFixed(1);
+  // User-facing reason a w x h document can't exist, or null.
+  function sizeProblem(w, h) {
+    const e = Core.sizeError(w, h, MAX_DIM, MAX_PIXELS);
+    if (!e) return null;
+    return e.reason === 'range' ? `sides must be between 1 and ${MAX_DIM} px`
+      : `${w} × ${h} px (${megapixels(w, h)} MP) is over the ${MAX_PIXELS / 1e6} MP limit`;
+  }
 
   let drag = null;   // in-progress pointer interaction
   let sel = null;    // {x, y, w, h, float: canvas|null}
@@ -54,11 +66,41 @@
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
   let msgTimer = 0;
-  function flash(msg) {
-    $('#stMsg').textContent = msg;
+  const toastX = document.createElement('button');
+  toastX.className = 'toast-x';
+  toastX.tabIndex = -1; // the toast is aria-hidden (live regions announce it); this is a pointer convenience
+  toastX.innerHTML = '<svg><use href="#i-x"/></svg>';
+  toastX.addEventListener('click', () => { clearTimeout(msgTimer); $('#toast').classList.remove('show'); });
+  // Errors stay while the pointer is over them, so they can be read to the end.
+  $('#toast').addEventListener('pointerenter', () => { if ($('#toast').classList.contains('error')) clearTimeout(msgTimer); });
+  $('#toast').addEventListener('pointerleave', () => {
+    if (!$('#toast').classList.contains('error') || !$('#toast').classList.contains('show')) return;
     clearTimeout(msgTimer);
-    msgTimer = setTimeout(() => { $('#stMsg').textContent = ''; }, 3000);
+    msgTimer = setTimeout(() => $('#toast').classList.remove('show'), 2500);
+  });
+  // Plain words for the errors people actually hit; anything else keeps the browser's own message.
+  const errText = (err, denied) => (err && (err.name === 'NotAllowedError' || err.name === 'SecurityError') ? denied
+    : err && err.name === 'InvalidStateError' ? 'the file is busy or was changed elsewhere'
+    : (err && err.message) || 'unknown error');
+  function flash(msg, isError) {
+    const t = $('#toast');
+    t.textContent = msg;
+    if (isError) t.appendChild(toastX);
+    // Screen readers: errors are assertive; clear first so a repeated message is announced again.
+    const live = $(isError ? '#srAlert' : '#srStatus');
+    live.textContent = '';
+    setTimeout(() => { live.textContent = msg; }, 50);
+    t.classList.toggle('error', !!isError);
+    t.classList.add('show');
+    clearTimeout(msgTimer);
+    msgTimer = setTimeout(() => t.classList.remove('show'), isError ? 5000 : 2200);
   }
+
+  // Shortcut labels are written Mac-style in the markup; show Ctrl/Shift elsewhere.
+  const MAC = /Mac|iPhone|iPad/.test(navigator.platform);
+  const keyLabel = (k) => (MAC ? k.replace(/Alt\+/g, '⌥')
+    : k === '⌘' ? 'Ctrl' : k === '⇧' ? 'Shift' : k === '⌫' ? 'Backspace'
+    : k.replace(/⌘/g, 'Ctrl+').replace(/⇧([- ])/g, 'Shift$1').replace(/⇧/g, 'Shift+').replace(/\+\+$/, '+Plus').replace(/\+−$/, '+Minus'));
 
   // ---------- document & history ----------
   function setDoc(source, w, h) {
@@ -101,17 +143,25 @@
     pushDocHist(before, next);
   }
   function pushDocHist(before, after) {
-    pushHist({ type: 'doc', before, after, bytes: (before.width * before.height + after.width * after.height) * 4 });
+    // Back-to-back whole-image ops (rotate, flip, resize...) share the canvas between them:
+    // the previous step's "after" is this step's "before", so photos keep many more undo steps.
+    const top = hist.top();
+    const shared = top && top.type === 'doc' && top.after.width === before.width && top.after.height === before.height;
+    if (shared) before = top.after;
+    const bytes = (after.width * after.height + (shared ? 0 : before.width * before.height)) * 4;
+    pushHist({ type: 'doc', before, after, bytes });
   }
   function pushHist(e) {
-    hist.push(e);
-    S.dirty = true; S.pristine = false;
+    if (hist.push(e) && !S.trimWarned) {
+      S.trimWarned = true;
+      flash('Oldest undo steps were dropped to save memory');
+    }
+    S.pristine = false;
     updateChrome();
   }
   function applyHist(e, which) {
     if (e.type === 'region') ctx.putImageData(e[which], e.x, e.y);
     else setDoc(e[which], e[which].width, e[which].height);
-    S.dirty = true;
     updateChrome();
     requestRender();
   }
@@ -119,6 +169,7 @@
     if (drag) return;
     commitText();
     commitSelection();
+    if (sel) { sel = null; requestRender(); } // the marquee would outline pixels that just changed
     const e = hist.undo();
     if (e) applyHist(e, 'before');
   }
@@ -126,6 +177,7 @@
     if (drag) return;
     commitText();
     commitSelection();
+    if (sel) { sel = null; requestRender(); }
     const e = hist.redo();
     if (e) applyHist(e, 'after');
   }
@@ -134,7 +186,7 @@
     commitText();
     setDoc(null, w, h);
     hist.clear();
-    Object.assign(S, { fileHandle: null, fileName: 'untitled.png', dirty: false, pristine: true });
+    Object.assign(S, { fileHandle: null, fileName: 'untitled.png', pristine: true, trimWarned: false });
     fitZoom(true);
     updateChrome();
   }
@@ -144,6 +196,7 @@
     stage.style.width = img.width * S.zoom + 'px';
     stage.style.height = img.height * S.zoom + 'px';
     stage.classList.toggle('pixelated', S.zoom * devicePixelRatio >= 1); // hard pixels, incl. 100% on Retina
+    stage.classList.toggle('tiny', img.width * S.zoom < 48 || img.height * S.zoom < 48); // corner handle only
     if (textAt) placeTextBox();
     updateStatus();
   }
@@ -161,9 +214,18 @@
     vp.scrollLeft += r2.left + ix * z - cx;
     vp.scrollTop += r2.top + iy * z - cy;
   }
+  // Buttons and keys step through familiar percentages (wheel/pinch stay continuous).
+  const ZOOMS = [0.05, 0.1, 0.25, 0.33, 0.5, 0.67, 1, 1.5, 2, 3, 4, 6, 8, 12, 16, 24, 32];
+  function zoomStep(dir) {
+    const z = dir > 0 ? ZOOMS.find((v) => v > S.zoom * 1.001) : [...ZOOMS].reverse().find((v) => v < S.zoom / 1.001);
+    if (z) setZoom(z);
+  }
   function fitZoom(capAt1) {
-    const z = Math.min((vp.clientWidth - 32) / img.width, (vp.clientHeight - 32) / img.height);
-    S.zoom = clamp(capAt1 ? Math.min(1, z) : z, 0.05, 32);
+    const pad = 2 * parseFloat(getComputedStyle(vp).paddingLeft);
+    const z = Math.min((vp.clientWidth - pad) / img.width, (vp.clientHeight - pad) / img.height);
+    // On open: never upscale, except icon-sized images, which get a whole-number zoom (crisp pixels).
+    const small = img.width <= 64 && img.height <= 64;
+    S.zoom = clamp(!capAt1 ? z : small ? clamp(Math.floor(z), 1, 8) : Math.min(1, z), 0.05, 32);
     layout();
   }
   function imgPt(e, r) {
@@ -210,15 +272,35 @@
   function updateStatus() {
     $('#stPos').textContent = cursor ? `${cursor.x}, ${cursor.y} px` : '—';
     const r = drag && drag.t === 'select' ? Core.normRect(drag.start, drag.end) : sel;
-    $('#stSel').textContent = r ? `▭ ${r.w} × ${r.h}` : '';
+    $('#stSelWrap').hidden = !r;
+    $('#stSel').textContent = r ? `${r.w} × ${r.h} px` : '';
+    const label = `Image, ${img.width} × ${img.height} px`;
+    if (img.getAttribute('aria-label') !== label) img.setAttribute('aria-label', label);
     $('#stSize').textContent = drag && drag.t === 'canvas'
-      ? `${img.width} × ${img.height} → ${drag.w} × ${drag.h}`
-      : `${img.width} × ${img.height}`;
-    $('#stZoom').textContent = Math.round(S.zoom * 100) + '%';
+      ? `${img.width} × ${img.height} → ${drag.w} × ${drag.h} px · Esc to cancel`
+      : `${img.width} × ${img.height} px`;
+    const pct = Math.round(S.zoom * 100) + '%';
+    $('#zoomBtn').textContent = pct;
+    $('[data-cmd="zoomIn"]').disabled = S.zoom >= ZOOMS[ZOOMS.length - 1] - 1e-9;
+    $('[data-cmd="zoomOut"]').disabled = S.zoom <= ZOOMS[0] + 1e-9;
+    $('#zoomBtn').setAttribute('aria-label', `Zoom ${pct}. Activate for actual size`);
+    // aria-disabled (not disabled) keeps Crop focusable, so keyboard users can reach the explanation.
+    const cb = $('#cropBtn');
+    cb.setAttribute('aria-disabled', !sel);
+    cb.dataset.hint = sel ? '' : 'Select an area first';
+    if (sel) cb.removeAttribute('aria-description'); else cb.setAttribute('aria-description', 'Select an area first');
   }
   function updateChrome() {
-    document.title = (S.dirty ? '● ' : '') + S.fileName + ' — Paint';
-    $('#undoBtn').disabled = !hist.canUndo();
+    const dirty = isDirty();
+    document.title = (dirty ? '● ' : '') + S.fileName + ' — Paint';
+    if ($('#docTitle').textContent !== S.fileName) $('#docTitle').textContent = S.fileName;
+    $('#docDirty').hidden = !dirty;
+    document.body.classList.toggle('dirty', dirty);
+    const sv = $('[data-cmd="save"]');
+    sv.setAttribute('aria-label', dirty ? 'Save (unsaved changes)' : 'Save');
+    sv.dataset.hint = dirty ? 'Unsaved changes' : '';
+    $('#undoBtn').disabled = !hist.canUndo() && !(sel && sel.float); // undo drops a floating paste/move
+    $('#stIntro').hidden = !S.pristine || !!textAt;
     $('#redoBtn').disabled = !hist.canRedo();
   }
 
@@ -229,19 +311,35 @@
     if (t === 'picker' && S.tool !== 'picker') S.prevTool = S.tool;
     S.tool = t;
     stage.dataset.tool = t;
-    document.querySelectorAll('[data-tool]').forEach((b) => b.classList.toggle('active', b.dataset.tool === t));
+    document.querySelectorAll('button[data-tool]').forEach((b) => {
+      const on = b.dataset.tool === t;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on);
+      b.tabIndex = on ? 0 : -1;
+      if (on) $('#toolName').textContent = b.dataset.tip;
+    });
     document.querySelectorAll('.opts [data-for]').forEach((l) => { l.hidden = !l.dataset.for.split(' ').includes(t); });
-    if (S.sizes[t] != null) { $('#size').value = S.sizes[t]; $('#sizeOut').textContent = S.sizes[t]; }
+    ring.hidden = true;
+    if (S.sizes[t] != null) { $('#size').value = S.sizes[t]; $('#sizeOut').textContent = S.sizes[t]; $('#size').setAttribute('aria-valuetext', S.sizes[t] + ' px'); }
   }
   function setSize(v) {
     if (S.sizes[S.tool] == null) return;
     S.sizes[S.tool] = clamp(v, 1, 100);
     $('#size').value = S.sizes[S.tool];
     $('#sizeOut').textContent = S.sizes[S.tool];
+    $('#size').setAttribute('aria-valuetext', S.sizes[S.tool] + ' px');
   }
   function setColor(which, hex) {
     S[which] = hex;
     $('#' + which).value = hex;
+    if (textAt && which === 'primary') { textAt.color = hex; placeTextBox(); }
+    document.querySelectorAll('#palette button').forEach((b) => {
+      b.classList.toggle('is1', b.dataset.color === S.primary);
+      b.classList.toggle('is2', b.dataset.color === S.secondary);
+      b.setAttribute('aria-pressed', b.dataset.color === S.primary);
+      b.dataset.tip = b.dataset.name + (b.dataset.color === S.secondary ? ' (color 2)' : '');
+      b.setAttribute('aria-label', b.dataset.tip);
+    });
   }
 
   function stampLine(a, b, color, size) {
@@ -278,6 +376,7 @@
   function pick(p, right) {
     if (p.x < 0 || p.y < 0 || p.x >= img.width || p.y >= img.height) return;
     const d = ctx.getImageData(p.x, p.y, 1, 1).data;
+    if (d[3] === 0) { flash('That pixel is transparent. No color picked.'); return; }
     setColor(right ? 'secondary' : 'primary', toHex(d[0], d[1], d[2]));
     setTool(S.prevTool);
   }
@@ -322,11 +421,15 @@
     textBox.hidden = false;
     placeTextBox();
     textBox.focus(); // the overlay's mousedown default is suppressed, so focus sticks immediately
+    $('#stHint').hidden = false;
+    $('#stIntro').hidden = true;
   }
   function commitText() {
     if (!textAt) return;
     const t = textAt; textAt = null;
     textBox.hidden = true;
+    $('#stHint').hidden = true;
+    $('#stIntro').hidden = !S.pristine;
     const lines = textBox.value.split('\n');
     textBox.value = '';
     if (!lines.join('').trim()) return;
@@ -335,10 +438,13 @@
     ctx.save();
     ctx.font = `${fs}px ${S.font}`;
     ctx.fillStyle = t.color;
-    ctx.textBaseline = 'top';
+    // Match the editor's CSS line box: half-leading above the font's ascent, then the baseline.
+    ctx.textBaseline = 'alphabetic';
+    const m = ctx.measureText('Hg');
+    const asc = m.fontBoundingBoxAscent, desc = m.fontBoundingBoxDescent;
     let w = 0;
     lines.forEach((ln, i) => {
-      ctx.fillText(ln, t.x, t.y + i * lh + (lh - fs) / 2);
+      ctx.fillText(ln, t.x, t.y + i * lh + (lh - (asc + desc)) / 2 + asc);
       w = Math.max(w, ctx.measureText(ln).width);
     });
     ctx.restore();
@@ -348,6 +454,8 @@
   function cancelText() {
     textAt = null;
     textBox.hidden = true;
+    $('#stHint').hidden = true;
+    $('#stIntro').hidden = !S.pristine;
     textBox.value = '';
   }
 
@@ -361,6 +469,7 @@
     ctx.fillRect(sel.x, sel.y, sel.w, sel.h);
     touch(sel.x, sel.y, sel.w, sel.h);
     sel.float = f;
+    updateChrome();
   }
   function commitSelection() {
     if (!sel || !sel.float) return;
@@ -431,15 +540,20 @@
     commitText();
     const c = selectionCanvas();
     const blob = new Promise((res) => c.toBlob(res, 'image/png'));
-    if (cut && sel) deleteSelection();
+    const didCut = cut && !!sel; // with nothing selected, ⌘X copies the whole image and keeps it
+    if (didCut) deleteSelection();
     try {
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-      flash(cut ? 'Cut' : 'Copied');
+      flash(didCut ? 'Cut' : sel ? 'Copied' : 'Copied the whole image');
     } catch (err) {
-      flash('Copy failed: ' + err.message);
+      flash('Copy failed: ' + errText(err, 'the browser blocked clipboard access'), true);
     }
   }
   function pasteImage(bmp) {
+    const tw = S.pristine ? bmp.width : Math.max(img.width, bmp.width);
+    const th = S.pristine ? bmp.height : Math.max(img.height, bmp.height);
+    const why = sizeProblem(tw, th);
+    if (why) { flash(`Can't paste: ${why}`, true); return; }
     commitText();
     dropSelection();
     if (S.pristine) { docOp(cloneCanvas(bmp)); fitZoom(true); return; }
@@ -455,6 +569,7 @@
       g.drawImage(img, 0, 0);
       setDoc(c, c.width, c.height);
     }
+    if (growFrom) flash(`Canvas enlarged to ${img.width} × ${img.height} to fit the paste`);
     // Drop it at the top-left of what's visible.
     const r = img.getBoundingClientRect(), v = vp.getBoundingClientRect();
     const x = clamp(Math.floor((v.left - r.left) / S.zoom), 0, img.width - bmp.width);
@@ -462,6 +577,7 @@
     setTool('select');
     beginOp();
     sel = { x, y, w: bmp.width, h: bmp.height, float: cloneCanvas(bmp), growFrom };
+    updateChrome();
     requestRender();
   }
 
@@ -495,8 +611,9 @@
     return out;
   }
   function resizeDoc(w, h, mode, anchor) {
-    if (w > MAX_DIM || h > MAX_DIM) { flash(`Max size is ${MAX_DIM}px`); return; }
-    if (w === img.width && h === img.height) return;
+    const why = sizeProblem(w, h);
+    if (why) { flash(`Can't resize: ${why}`, true); return; }
+    if (w === img.width && h === img.height) { flash('Size unchanged'); return; }
     commitText();
     dropSelection();
     if (mode === 'scale') { docOp(resample(img, w, h)); return; }
@@ -510,7 +627,9 @@
 
   // ---------- file I/O ----------
   const IMAGE_TYPES = [{ description: 'Images', accept: { 'image/*': ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'] } }];
-  const confirmDiscard = () => !S.dirty || confirm('Discard unsaved changes?');
+  // A floating selection or open text box isn't in history yet, but it is still unsaved work.
+  const isDirty = () => !hist.isClean() || !!(sel && sel.float) || !!(textAt && textBox.value.trim());
+  const confirmDiscard = () => !isDirty() || confirm(`Discard unsaved changes to ${S.fileName}?`);
 
   async function openFile() {
     if (!confirmDiscard()) return;
@@ -519,22 +638,37 @@
       const [h] = await window.showOpenFilePicker({ types: IMAGE_TYPES });
       await loadFile(await h.getFile(), h);
     } catch (err) {
-      if (err.name !== 'AbortError') flash(err.message);
+      if (err.name !== 'AbortError') flash("Can't open the file: " + errText(err, 'permission was denied'), true);
     }
   }
-  async function loadFile(file, handle) {
-    let bmp;
-    try { bmp = await createImageBitmap(file); }
-    catch { flash('Not an image: ' + file.name); return; }
+  const cantOpen = (file) => (file.type === 'image/svg+xml' || /\.svg$/i.test(file.name)
+    ? "Can't open SVG files. Use PNG, JPEG, WebP, GIF or BMP." : 'Not an image: ' + file.name);
+  function tooBigToOpen(file, bmp) {
+    const why = sizeProblem(bmp.width, bmp.height);
+    if (!why) return false;
+    bmp.close();
+    flash(`Can't open ${file.name}: ${why}`, true);
+    return true;
+  }
+  async function loadFile(file, handle, decoded) {
+    let bmp = decoded;
+    if (!bmp) {
+      try { bmp = await createImageBitmap(file); }
+      catch { flash(cantOpen(file), true); return; }
+    }
+    if (tooBigToOpen(file, bmp)) return;
     cancelText();
     setDoc(bmp, bmp.width, bmp.height);
     bmp.close();
     hist.clear();
-    Object.assign(S, { fileHandle: handle || null, fileName: file.name, dirty: false, pristine: false });
+    Object.assign(S, { fileHandle: handle || null, fileName: file.name, pristine: false, trimWarned: false });
     fitZoom(true);
     updateChrome();
   }
 
+  // Formats we can encode. Anything else (GIF, BMP, ...) is saved as a new PNG rather than overwritten.
+  const canWrite = (name) => /\.(png|jpe?g|webp)$/i.test(name);
+  const asPng = (name) => Core.saveName(name) || 'untitled.png'; // foo.gif -> foo.png
   function mimeFor(name) {
     const ext = name.split('.').pop().toLowerCase();
     return ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'webp' ? 'image/webp' : 'image/png';
@@ -550,25 +684,45 @@
     }
     return new Promise((res, rej) => src.toBlob((b) => (b ? res(b) : rej(new Error('encode failed'))), type, 0.92));
   }
+  let saving = false;
   async function save(as) {
+    if (saving) return; // one picker/write at a time
+    saving = true;
+    try { await saveNow(as); } finally { saving = false; }
+  }
+  async function saveNow(as) {
     commitText();
     commitSelection();
+    const savedAt = hist.top(); // edits made while the save is in flight stay unsaved
     let h = as ? null : S.fileHandle;
+    let name = S.fileName;
+    if (!canWrite(name)) {
+      if (h && !as) flash(`Can't write ${name.split('.').pop().toUpperCase()} files. Saving a PNG copy.`);
+      h = null;
+      name = asPng(name);
+    }
     try {
       if (h && (await h.queryPermission({ mode: 'readwrite' })) !== 'granted' &&
           (await h.requestPermission({ mode: 'readwrite' })) !== 'granted') h = null;
       if (!h) {
         if (!window.showSaveFilePicker) {
+          if (as) { // no save picker here: ask for the name, so Save As differs from Save
+            const typed = Core.saveName(prompt('Save as (PNG, JPEG or WebP; PNG if no extension)', name));
+            if (!typed) return;
+            name = typed;
+          }
           const a = document.createElement('a');
-          a.href = URL.createObjectURL(await encode(mimeFor(S.fileName)));
-          a.download = S.fileName;
+          a.href = URL.createObjectURL(await encode(mimeFor(name)));
+          a.download = name;
           a.click();
           setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-          S.dirty = false; updateChrome();
+          S.fileName = name;
+          hist.markSaved(savedAt); updateChrome();
+          flash('Downloaded ' + name);
           return;
         }
         h = await window.showSaveFilePicker({
-          suggestedName: S.fileName,
+          suggestedName: name,
           types: [
             { description: 'PNG', accept: { 'image/png': ['.png'] } },
             { description: 'JPEG', accept: { 'image/jpeg': ['.jpg', '.jpeg'] } },
@@ -580,37 +734,80 @@
       const w = await h.createWritable();
       await w.write(blob);
       await w.close();
-      Object.assign(S, { fileHandle: h, fileName: h.name, dirty: false });
+      hist.markSaved(savedAt);
+      Object.assign(S, { fileHandle: h, fileName: h.name });
       updateChrome();
       flash('Saved ' + h.name);
     } catch (err) {
-      if (err.name !== 'AbortError') flash('Save failed: ' + err.message);
+      if (err.name !== 'AbortError') flash('Save failed: ' + errText(err, 'permission was denied'), true);
     }
   }
 
   // ---------- dialogs ----------
+  // Dialog validation: message in an alert region, the bad field marked and focused.
+  function fieldError(note, field, msg) {
+    $(note).textContent = msg;
+    const f = $(field);
+    f.setAttribute('aria-invalid', 'true');
+    f.setAttribute('aria-describedby', note.slice(1));
+    f.focus();
+    f.select();
+  }
+  // The size field the user typed in last (an area error belongs to the one they just changed).
+  let lastSizeField = null;
+  document.addEventListener('input', (e) => { if (/^(newW|newH|rW|rH)$/.test(e.target.id)) lastSizeField = '#' + e.target.id; });
+  const lastEdited = (a, b) => (lastSizeField === a || lastSizeField === b ? lastSizeField : b);
+  function clearFieldErrors(note) {
+    $(note).textContent = '';
+    $(note).closest('form').querySelectorAll('[aria-invalid]').forEach((f) => f.removeAttribute('aria-invalid'));
+  }
   function openNewDialog() {
+    commitText(); // a text box left behind a modal would lose its focus and go dead
+    if (!confirmDiscard()) return;
+    clearFieldErrors('#newNote');
     $('#newW').value = img.width;
     $('#newH').value = img.height;
     $('#newDlg').showModal();
+    $('#newW').select();
   }
   // Apply on submit (synchronous), not 'close' (async): a fast follow-up action must see the result.
   $('#newDlg form').addEventListener('submit', (e) => {
     if (!e.submitter || e.submitter.value !== 'ok') return;
-    const w = +$('#newW').value, h = +$('#newH').value;
-    if (w >= 1 && h >= 1 && w <= MAX_DIM && h <= MAX_DIM && confirmDiscard()) newDoc(w, h);
+    const w = Math.round(+$('#newW').value), h = Math.round(+$('#newH').value);
+    const err = Core.sizeError(w, h, MAX_DIM, MAX_PIXELS);
+    if (err) {
+      e.preventDefault();
+      fieldError('#newNote', err.field ? '#new' + err.field.toUpperCase() : lastEdited('#newW', '#newH'),
+        err.reason === 'range' ? `Width and height must be between 1 and ${MAX_DIM} px.` : `Too large: ${sizeProblem(w, h)}.`);
+      return;
+    }
+    newDoc(w, h);
+    S.pristine = false; // the user chose this size: a paste goes onto it, not in place of it
   });
 
   const rForm = $('#resizeDlg form');
   function resizeMode() { return rForm.rmode.value; }
   function openResize(mode) {
+    commitText();
     rForm.rmode.value = mode === 'canvas' ? 'canvas' : 'scale';
     $('#rLock').checked = mode !== 'canvas'; // adding canvas space usually means growing one side
     $('#rUnit').value = 'px';
     $('#rW').value = img.width;
     $('#rH').value = img.height;
-    $('#rAnchor').disabled = resizeMode() !== 'canvas';
+    syncResizeMode();
+    syncUnitLabels();
     $('#resizeDlg').showModal();
+    $('#rW').select();
+  }
+  function syncResizeMode() {
+    const canvas = resizeMode() === 'canvas';
+    $('#rAnchor').disabled = !canvas;
+    $('#resizeTitle').textContent = canvas ? 'Canvas size' : 'Resize image';
+    $('#rNote').textContent = canvas ? 'Adds or trims space around the image.' : 'Stretches or shrinks the whole image.';
+    clearFieldErrors('#rErr');
+  }
+  function syncUnitLabels() {
+    document.querySelectorAll('.rUnitLbl').forEach((u) => { u.textContent = $('#rUnit').value === 'pct' ? '%' : 'px'; });
   }
   function syncResize(changed) {
     if (!$('#rLock').checked) return;
@@ -621,24 +818,35 @@
     const d = Core.fitDims(img.width, img.height, changed === 'w' ? { w: v, lockAspect: true } : { h: v, lockAspect: true });
     if (changed === 'w') $('#rH').value = d.h; else $('#rW').value = d.w;
   }
-  $('#rW').addEventListener('input', () => syncResize('w'));
-  $('#rH').addEventListener('input', () => syncResize('h'));
+  $('#rW').addEventListener('input', () => { syncResize('w'); syncResizeMode(); });
+  ['#newW', '#newH'].forEach((id) => $(id).addEventListener('input', () => clearFieldErrors('#newNote')));
+  $('#rH').addEventListener('input', () => { syncResize('h'); syncResizeMode(); });
   $('#rUnit').addEventListener('change', () => {
     const pct = $('#rUnit').value === 'pct';
     $('#rW').value = pct ? 100 : img.width;
     $('#rH').value = pct ? 100 : img.height;
+    syncUnitLabels();
   });
-  rForm.addEventListener('change', (e) => { if (e.target.name === 'rmode') $('#rAnchor').disabled = resizeMode() !== 'canvas'; });
+  rForm.addEventListener('change', (e) => { if (e.target.name === 'rmode') syncResizeMode(); });
   document.querySelectorAll('dialog [data-close]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));
   rForm.addEventListener('submit', (e) => {
     if (!e.submitter || e.submitter.value !== 'ok') return;
     let w = +$('#rW').value, h = +$('#rH').value;
-    if (!(w > 0 && h > 0)) return;
     if ($('#rUnit').value === 'pct') {
       w = Math.max(1, Math.round(img.width * w / 100));
       h = Math.max(1, Math.round(img.height * h / 100));
     }
-    resizeDoc(Math.round(w), Math.round(h), resizeMode(), rForm.anchor.value);
+    w = Math.round(w); h = Math.round(h);
+    const err = Core.sizeError(w, h, MAX_DIM, MAX_PIXELS);
+    if (err) {
+      e.preventDefault();
+      fieldError('#rErr', err.field ? '#r' + err.field.toUpperCase() : lastEdited('#rW', '#rH'),
+        err.reason === 'range'
+          ? `Width and height must be between 1 and ${MAX_DIM} px` + (w >= 1 && h >= 1 ? ` (this would be ${w} × ${h} px).` : '.')
+          : `Too large: ${sizeProblem(w, h)}.`);
+      return;
+    }
+    resizeDoc(w, h, resizeMode(), rForm.anchor.value);
   });
 
   // ---------- canvas resize handles (Paint-style: right, bottom, corner; top-left stays put) ----------
@@ -669,7 +877,7 @@
     });
     h.addEventListener('pointermove', (e) => {
       if (!drag || drag.t !== 'canvas') return;
-      const n = Core.dragResize(img.width, img.height, e.clientX - drag.sx, e.clientY - drag.sy, drag.edge, S.zoom, e.shiftKey, MAX_DIM);
+      const n = Core.dragResize(img.width, img.height, e.clientX - drag.sx, e.clientY - drag.sy, drag.edge, S.zoom, e.shiftKey, MAX_DIM, MAX_PIXELS);
       drag.w = n.w; drag.h = n.h;
       showGhost(drag);
       updateStatus();
@@ -685,7 +893,8 @@
       e.preventDefault();
       ov.setPointerCapture(e.pointerId);
       drag = { t: 'pan', sx: e.clientX, sy: e.clientY, sl: vp.scrollLeft, st: vp.scrollTop };
-      stage.classList.add('panning');
+      stage.classList.add('panning', 'dragging');
+      ring.hidden = true;
       return;
     }
     if (e.button !== 0 && e.button !== 2) return;
@@ -720,8 +929,8 @@
       case 'select': {
         const rp = { x: clamp(Math.round(p.x), 0, img.width), y: clamp(Math.round(p.y), 0, img.height) };
         if (sel && inside(p, sel)) {
-          if (!sel.float) liftSelection();
-          drag = { t: 'move', gx: p.x - sel.x, gy: p.y - sel.y };
+          // Lift on the first real movement, so a plain click inside the selection changes nothing.
+          drag = { t: 'move', gx: p.x - sel.x, gy: p.y - sel.y, ox: sel.x, oy: sel.y, lifted: false };
         } else {
           dropSelection();
           drag = { t: 'select', start: rp, end: rp };
@@ -736,6 +945,7 @@
     const r = img.getBoundingClientRect();
     const p = imgPt(e, r);
     cursor = { x: Math.floor(p.x), y: Math.floor(p.y) };
+    updateRing(p);
     if (!drag) {
       ov.style.cursor = S.tool === 'select' && sel && inside(p, sel) ? 'move' : '';
       updateStatus();
@@ -765,19 +975,55 @@
     } else if (d.t === 'select') {
       d.end = { x: clamp(Math.round(p.x), 0, img.width), y: clamp(Math.round(p.y), 0, img.height) };
     } else if (d.t === 'move') {
-      sel.x = Math.round(p.x - d.gx);
-      sel.y = Math.round(p.y - d.gy);
+      if (!sel) { drag = null; return; }
+      const nx = Math.round(p.x - d.gx), ny = Math.round(p.y - d.gy);
+      if (nx === sel.x && ny === sel.y) return;
+      if (!sel.float) { liftSelection(); d.lifted = true; }
+      sel.x = nx; sel.y = ny;
     }
     requestRender();
   });
+
+  // Outline of the brush footprint, so big sizes show what they'll cover.
+  const RING_TOOLS = new Set(['pencil', 'brush', 'eraser']);
+  function updateRing(p) {
+    const size = S.sizes[S.tool], px = size * S.zoom;
+    if (!RING_TOOLS.has(S.tool) || S.panKey || (drag && drag.t === 'pan') || px < 4) { ring.hidden = true; return; }
+    let x, y;
+    if (S.tool === 'brush') { x = p.x - size / 2; y = p.y - size / 2; }
+    else { const off = Math.floor(size / 2); x = Math.floor(p.x) - off; y = Math.floor(p.y) - off; }
+    ring.classList.toggle('round', S.tool === 'brush');
+    ring.style.width = ring.style.height = px + 'px';
+    ring.style.transform = `translate(${x * S.zoom}px, ${y * S.zoom}px)`;
+    ring.hidden = false;
+  }
+
+  // Esc mid-gesture: put everything back as it was before the pointer went down.
+  function cancelDrag() {
+    const d = drag;
+    if (d.t === 'canvas') { endCanvasDrag(false); return; }
+    if (d.t === 'pan' || d.t === 'pencil' || d.t === 'eraser' || d.t === 'brush') return; // strokes finish normally
+    drag = null;
+    if (d.t === 'move' && sel) {
+      if (d.lifted) { // undo the lift this drag made: restore the pixels, drop the float, no history entry
+        ctx.putImageData(bctx.getImageData(d.ox, d.oy, sel.w, sel.h), d.ox, d.oy);
+        sel.float = null;
+        op = null;
+      }
+      sel.x = d.ox; sel.y = d.oy;
+      updateChrome();
+    }
+    requestRender();
+  }
 
   function finishDrag() {
     const d = drag;
     if (!d) return;
     drag = null;
-    if (d.t === 'pan') stage.classList.remove('panning');
+    if (d.t === 'pan') { stage.classList.remove('dragging'); if (!S.panKey) stage.classList.remove('panning'); }
     else if (d.t === 'pencil' || d.t === 'eraser' || d.t === 'brush') endOp();
     else if (SHAPES.has(d.t)) {
+      if (d.t !== 'line' && d.start.x === d.end.x && d.start.y === d.end.y) { requestRender(); return; } // a click, not a shape
       beginOp();
       const b = drawShape(ctx, d);
       touch(b.x, b.y, b.w, b.h);
@@ -790,7 +1036,7 @@
   }
   ov.addEventListener('pointerup', finishDrag);
   ov.addEventListener('pointercancel', finishDrag);
-  ov.addEventListener('pointerleave', () => { if (!drag) { cursor = null; updateStatus(); } });
+  ov.addEventListener('pointerleave', () => { ring.hidden = true; if (!drag) { cursor = null; updateStatus(); } });
   ov.addEventListener('mousedown', (e) => e.preventDefault()); // keep focus where we put it (text box)
   vp.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -809,15 +1055,54 @@
   }
   textBox.addEventListener('keydown', (e) => {
     e.stopPropagation();
+    if (e.isComposing || e.keyCode === 229) return; // IME is using Enter/Esc to pick a candidate
     if (e.key === 'Escape') { e.preventDefault(); cancelText(); }
     else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commitText(); }
   });
-  textBox.addEventListener('blur', commitText);
+  textBox.addEventListener('blur', (e) => {
+    // Picking a font, size or color in the toolbars restyles the open text instead of committing it.
+    if (e.relatedTarget && e.relatedTarget.closest('.chrome')) return; // toolbar commands commit it themselves when needed
+    commitText();
+  });
 
+  // Shortcuts follow the characters on the user's layout (AZERTY, Dvorak, German "+"), so the keys
+  // match the labels. Non-Latin layouts fall back to the physical letter key; digits stay physical.
+  const PUNCT = { '[': 'BracketLeft', ']': 'BracketRight', '+': 'Equal', '=': 'Equal', '-': 'Minus', '_': 'Minus' };
+  function keyId(e) {
+    if (/^[a-z]$/i.test(e.key)) return 'Key' + e.key.toUpperCase();
+    if (PUNCT[e.key]) return PUNCT[e.key];
+    if (/^Digit\d$/.test(e.code)) return e.code;
+    if (e.key.length === 1 && e.code !== 'Space') return /^Key[A-Z]$/.test(e.code) && e.key.charCodeAt(0) > 127 ? e.code : '';
+    return e.code;
+  }
+  // Esc dismisses a visible error toast first (keyboard path for its ×). Capture phase, so the text box
+  // doesn't also cancel (and lose its text) on the same press. Not while a modal is open: the dialog sits
+  // above the toast and Esc belongs to it. Mid-drag Esc still cancels the drag.
   window.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || drag || modalOpen() || !$('#toast').classList.contains('error') || !$('#toast').classList.contains('show')) return;
+    if (!tip.hidden && tipByKey) return; // a keyboard-focus tooltip takes the first Esc (handled below)
+    clearTimeout(msgTimer); $('#toast').classList.remove('show');
+    e.preventDefault(); e.stopImmediatePropagation();
+  }, true);
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !tip.hidden) {
+      const fromKeyboard = tipByKey;
+      hideTip();
+      if (fromKeyboard) { e.preventDefault(); return; } // first Esc dismisses a focus tooltip (WCAG 1.4.13)
+    }
     if (document.querySelector('dialog[open]') || isTyping(e.target)) return;
-    const mod = e.metaKey || e.ctrlKey, k = e.code;
+    if (drag) { // mid-gesture, only Esc (cancel) applies; other keys would pull state out from under it
+      if (e.key === 'Escape') cancelDrag();
+      else if (e.key === 'Shift' && SHAPES.has(drag.t)) { drag.shift = true; requestRender(); }
+      if (e.code !== 'Space') e.preventDefault();
+      return;
+    }
+    // Space/Enter on a focused control activate it (keyboard users); they are not shortcuts there.
+    if ((e.code === 'Space' || e.key === 'Enter') && e.target.closest && e.target.closest('button, input, select')) return;
+    const mod = e.metaKey || e.ctrlKey;
+    const k = keyId(e);
     if (mod) {
+      if (e.repeat && !['KeyZ', 'KeyY', 'Equal', 'Minus'].includes(k)) { e.preventDefault(); return; }
       const act = {
         KeyZ: () => (e.shiftKey ? redo() : undo()),
         KeyY: redo,
@@ -827,9 +1112,8 @@
         KeyC: () => copySel(false),
         KeyX: () => (e.shiftKey ? crop() : copySel(true)),
         Digit0: () => fitZoom(false),
-        Digit1: () => setZoom(1),
-        Equal: () => setZoom(S.zoom * 1.25),
-        Minus: () => setZoom(S.zoom / 1.25),
+        Equal: () => zoomStep(1),
+        Minus: () => zoomStep(-1),
       }[k];
       if (act) { e.preventDefault(); act(); }
       return; // ⌘V falls through to the native paste event
@@ -840,22 +1124,22 @@
     }
     if (e.shiftKey && k === 'KeyR') { e.preventDefault(); openResize('scale'); return; }
     if (e.shiftKey && k === 'KeyC') { e.preventDefault(); openResize('canvas'); return; }
-    if (e.key === '?') { $('#helpDlg').showModal(); return; }
+    if (e.key === '?') { openHelp(); return; }
+    if (e.shiftKey && k === 'Digit0') { setZoom(1); return; }
+    if (e.shiftKey && k === 'Digit1') { fitZoom(false); return; }
     if (TOOL_KEYS[k] && !e.shiftKey) { setTool(TOOL_KEYS[k]); return; }
     const step = e.shiftKey ? 10 : 1;
+    const onCanvas = e.target === document.body || (e.target.closest && e.target.closest('#viewport'));
+    if (k.startsWith('Arrow') && !onCanvas) return; // arrows on a focused control belong to that control
     switch (k) {
-      case 'KeyX': { const p = S.primary; setColor('primary', S.secondary); setColor('secondary', p); break; }
-      case 'Delete': case 'Backspace': e.preventDefault(); deleteSelection(); break;
-      case 'Escape':
-        if (drag && drag.t === 'canvas') endCanvasDrag(false);
-        else if (drag && (SHAPES.has(drag.t) || drag.t === 'select')) { drag = null; requestRender(); }
-        else dropSelection();
-        break;
-      case 'BracketLeft': setSize(S.sizes[S.tool] - (S.sizes[S.tool] > 10 ? 2 : 1)); break;
-      case 'BracketRight': setSize(S.sizes[S.tool] + (S.sizes[S.tool] >= 10 ? 2 : 1)); break;
-      case 'Equal': setZoom(S.zoom * 1.25); break;
-      case 'Minus': setZoom(S.zoom / 1.25); break;
-      case 'Space': e.preventDefault(); S.panKey = true; stage.classList.add('panning'); break;
+      case 'KeyX': swapColors(); break;
+      case 'Delete': case 'Backspace': if (!onCanvas) return; e.preventDefault(); deleteSelection(); break;
+      case 'Escape': dropSelection(); break;
+      case 'BracketLeft': setSize(Core.stepSize(S.sizes[S.tool], -1)); break;
+      case 'BracketRight': setSize(Core.stepSize(S.sizes[S.tool], 1)); break;
+      case 'Equal': zoomStep(1); break;
+      case 'Minus': zoomStep(-1); break;
+      case 'Space': e.preventDefault(); S.panKey = true; ring.hidden = true; stage.classList.add('panning'); break;
       case 'ArrowLeft': if (sel) { e.preventDefault(); nudge(-step, 0); } break;
       case 'ArrowRight': if (sel) { e.preventDefault(); nudge(step, 0); } break;
       case 'ArrowUp': if (sel) { e.preventDefault(); nudge(0, -step); } break;
@@ -863,35 +1147,44 @@
     }
   });
   window.addEventListener('keyup', (e) => {
+    if (e.key === 'Shift' && drag && SHAPES.has(drag.t)) { drag.shift = false; requestRender(); }
     if (e.code === 'Space') { S.panKey = false; if (!drag || drag.t !== 'pan') stage.classList.remove('panning'); }
   });
 
   // ---------- paste / drop / unload ----------
+  const modalOpen = () => !!document.querySelector('dialog[open]');
   window.addEventListener('paste', async (e) => {
-    if (isTyping(e.target)) return;
+    if (isTyping(e.target) || modalOpen()) return;
     const item = [...(e.clipboardData ? e.clipboardData.items : [])].find((i) => i.type.startsWith('image/'));
-    if (!item) return;
+    if (!item) { flash('No image on the clipboard'); return; }
     e.preventDefault();
     try {
       const bmp = await createImageBitmap(item.getAsFile());
       pasteImage(bmp);
       bmp.close();
     } catch (err) {
-      flash('Paste failed: ' + err.message);
+      flash('Paste failed: ' + errText(err, 'the clipboard image couldn’t be read'), true);
     }
   });
   window.addEventListener('dragover', (e) => e.preventDefault());
   window.addEventListener('drop', async (e) => {
     e.preventDefault();
+    if (modalOpen()) return;
     const item = [...e.dataTransfer.items].find((i) => i.kind === 'file');
     if (!item) return;
     // Both must be requested synchronously, before the DataTransfer expires.
     const hp = item.getAsFileSystemHandle ? item.getAsFileSystemHandle() : null;
     const file = item.getAsFile();
-    if (!confirmDiscard()) return;
+    if (!file || (file.type && !file.type.startsWith('image/'))) { flash('Not an image: ' + (file ? file.name : 'file'), true); return; }
+    // Decode before asking to discard, so a file that isn't an image never prompts.
+    let bmp;
+    try { bmp = await createImageBitmap(file); }
+    catch { flash(cantOpen(file), true); return; }
+    if (tooBigToOpen(file, bmp)) return; // before asking to discard: nothing would replace it
+    if (!confirmDiscard()) { bmp.close(); return; }
     let handle = null;
     try { handle = hp ? await hp : null; } catch { handle = null; }
-    loadFile(file, handle && handle.kind === 'file' ? handle : null);
+    loadFile(file, handle && handle.kind === 'file' ? handle : null, bmp);
   });
   $('#fileInput').addEventListener('change', (e) => {
     const f = e.target.files[0];
@@ -899,60 +1192,265 @@
     e.target.value = '';
   });
   window.addEventListener('beforeunload', (e) => {
-    if (S.dirty) { e.preventDefault(); e.returnValue = ''; }
+    if (isDirty()) { e.preventDefault(); e.returnValue = ''; }
   });
   window.addEventListener('resize', () => updateStatus());
 
   // ---------- toolbar wiring ----------
+  function swapColors() { const p = S.primary; setColor('primary', S.secondary); setColor('secondary', p); }
   const CMDS = {
     new: openNewDialog, open: openFile, save: () => save(false), saveAs: () => save(true),
     undo, redo, crop, resize: () => openResize('scale'), canvasSize: () => openResize('canvas'),
     rotL: () => transformDoc('rotL'), rotR: () => transformDoc('rotR'),
     flipH: () => transformDoc('flipH'), flipV: () => transformDoc('flipV'),
-    zoomIn: () => setZoom(S.zoom * 1.25), zoomOut: () => setZoom(S.zoom / 1.25),
+    zoomIn: () => zoomStep(1), zoomOut: () => zoomStep(-1),
     fit: () => fitZoom(false), zoom100: () => setZoom(1),
-    help: () => $('#helpDlg').showModal(),
+    help: openHelp, swap: swapColors,
   };
-  $('#toolbar').addEventListener('click', (e) => {
-    const b = e.target.closest('button');
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('.chrome button');
     if (!b) return;
+    hideTip();
     if (b.dataset.cmd) CMDS[b.dataset.cmd]();
     else if (b.dataset.tool) setTool(b.dataset.tool);
-    b.blur(); // keep Space/Enter from re-triggering the button
+    // After a mouse click, hand focus back so single-key shortcuts (and Space-to-pan) work.
+    // Keyboard activation (detail 0) keeps focus on the button so Tab order isn't lost.
+    if (e.detail > 0) releaseFocus(b);
+    else if (b.disabled) focusNeighbor(b); // e.g. Undo at the start of history
   });
-  // After using a toolbar control, hand focus back so single-key shortcuts work.
-  $('#toolbar').addEventListener('change', (e) => { if (e.target.type !== 'number') e.target.blur(); });
+  function focusNeighbor(b) {
+    const all = [...b.closest('[role=toolbar]').querySelectorAll('button')];
+    const i = all.indexOf(b);
+    const next = all.slice(i + 1).concat(all.slice(0, i).reverse()).find((x) => !x.disabled && x.offsetParent !== null);
+    if (next) next.focus();
+  }
+  // Range, radio and select fire 'change' on every arrow key, so only hand focus back after mouse use.
+  let pointerUsed = false;
+  document.addEventListener('pointerdown', () => { pointerUsed = true; }, true);
+  document.addEventListener('keydown', () => { pointerUsed = false; }, true);
+  document.addEventListener('change', (e) => {
+    if (pointerUsed && e.target.closest('.chrome') && e.target.type !== 'number') releaseFocus(e.target);
+  });
+  function releaseFocus(el) {
+    el.blur();
+    if (textAt) textBox.focus(); // still typing: go back to the text
+  }
+  document.querySelectorAll('.chrome input[type=number]').forEach((i) => i.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && textAt) { i.blur(); commitText(); }
+    else if (e.key === 'Enter' || e.key === 'Escape') releaseFocus(i);
+  }));
 
   $('#size').addEventListener('input', (e) => setSize(+e.target.value));
   $('#tolerance').addEventListener('input', (e) => { S.tolerance = +e.target.value; $('#tolOut').textContent = S.tolerance; });
-  $('#fillMode').addEventListener('change', (e) => { S.fillMode = e.target.value; });
+  document.querySelectorAll('input[name=fillMode]').forEach((r) => r.addEventListener('change', () => { S.fillMode = r.value; }));
   $('#font').addEventListener('change', (e) => { S.font = e.target.value; if (textAt) placeTextBox(); });
   $('#fontSize').addEventListener('input', (e) => {
     const v = +e.target.value;
-    if (v >= 1) { S.fontSize = v; if (textAt) placeTextBox(); }
+    if (v >= 1) { S.fontSize = clamp(Math.round(v), 6, 400); if (textAt) placeTextBox(); }
   });
-  $('#primary').addEventListener('input', (e) => { S.primary = e.target.value; });
-  $('#secondary').addEventListener('input', (e) => { S.secondary = e.target.value; });
+  $('#fontSize').addEventListener('change', (e) => { e.target.value = S.fontSize; });
+  $('#primary').addEventListener('input', (e) => { setColor('primary', e.target.value); });
+  $('#secondary').addEventListener('input', (e) => { setColor('secondary', e.target.value); });
 
   const pal = $('#palette');
-  for (const c of PALETTE) {
+  for (const [c, name] of PALETTE) {
     const b = document.createElement('button');
-    b.style.background = c;
-    b.title = c;
+    b.style.setProperty('--c', c);
     b.dataset.color = c;
+    b.dataset.name = b.dataset.tip = name;
+    b.dataset.hint = 'Right-click or Shift-click for color 2';
+    b.setAttribute('aria-label', name);
     pal.appendChild(b);
   }
-  pal.addEventListener('click', (e) => { if (e.target.dataset.color) setColor('primary', e.target.dataset.color); });
+  pal.addEventListener('click', (e) => {
+    if (e.target.dataset.color) setColor(e.shiftKey ? 'secondary' : 'primary', e.target.dataset.color);
+  });
   pal.addEventListener('contextmenu', (e) => {
     if (!e.target.dataset.color) return;
     e.preventDefault();
     setColor('secondary', e.target.dataset.color);
   });
+  pal.addEventListener('keydown', (e) => {
+    if (e.target.dataset.color && e.shiftKey && (e.key === 'Enter' || e.code === 'Space')) {
+      e.preventDefault();
+      e.stopPropagation();
+      setColor('secondary', e.target.dataset.color);
+    }
+  });
+
+  // ---------- roving focus: one Tab stop per toolbar, arrow keys inside ----------
+  function rove(box, sel, keys) {
+    const items = () => [...box.querySelectorAll(sel)].filter((b) => !b.disabled && b.offsetParent !== null);
+    box.addEventListener('keydown', (e) => {
+      const list = items(), i = list.indexOf(document.activeElement);
+      if (i < 0) return;
+      const d = e.key === 'Home' ? -Infinity : e.key === 'End' ? Infinity : keys[e.key];
+      if (d == null) return;
+      e.preventDefault();
+      e.stopPropagation(); // arrows would otherwise nudge the selection
+      list[clamp(i + d, 0, list.length - 1)].focus();
+    });
+    box.addEventListener('focusin', (e) => {
+      if (!e.target.matches(sel)) return;
+      box.querySelectorAll(sel).forEach((b) => { b.tabIndex = b === e.target ? 0 : -1; });
+    });
+    const fix = () => {
+      const all = [...box.querySelectorAll(sel)];
+      const cur = all.find((b) => b.tabIndex === 0);
+      if (cur && !cur.disabled && cur.offsetParent !== null) return;
+      const next = items()[0];
+      all.forEach((b) => { b.tabIndex = b === next ? 0 : -1; });
+    };
+    fix();
+    return fix;
+  }
+  const fixTopbar = rove($('#topbar'), 'button', { ArrowLeft: -1, ArrowRight: 1 });
+  rove($('#rail'), 'button', { ArrowUp: -1, ArrowDown: 1 });
+  rove(pal, 'button', { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -10, ArrowDown: 10 });
+  new MutationObserver(fixTopbar).observe($('#topbar'), { subtree: true, attributeFilter: ['disabled'] });
+  window.addEventListener('resize', fixTopbar);
+
+  // ---------- tooltips ----------
+  const tip = $('#tip');
+  let tipTimer = 0, tipWarmUntil = 0, tipFor = null, tipByKey = false;
+  function showTip(el) {
+    tipFor = el;
+    tip.textContent = el.dataset.tip;
+    if (el.dataset.kbd) {
+      const k = document.createElement('kbd');
+      k.textContent = keyLabel(el.dataset.kbd);
+      tip.appendChild(k);
+    }
+    if (el.dataset.hint) {
+      const h = document.createElement('span');
+      h.className = 'hint';
+      h.textContent = keyLabel(el.dataset.hint);
+      tip.appendChild(h);
+    }
+    tip.hidden = false;
+    const r = el.getBoundingClientRect(), t = tip.getBoundingClientRect();
+    const side = el.closest('#rail');
+    // Palette: below the whole palette, so a tip never hides the other row of swatches.
+    const bottom = el.parentElement === pal ? pal.getBoundingClientRect().bottom : r.bottom;
+    let x = side ? r.right + 8 : r.left + r.width / 2 - t.width / 2;
+    let y = side ? r.top + r.height / 2 - t.height / 2 : bottom + 6;
+    x = clamp(x, 6, innerWidth - t.width - 6);
+    y = clamp(y, 6, innerHeight - t.height - 6);
+    tip.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+  }
+  function hideTip() {
+    clearTimeout(tipTimer);
+    if (!tip.hidden) tipWarmUntil = performance.now() + 400;
+    tip.hidden = true;
+    tipFor = null;
+  }
+  document.addEventListener('pointerover', (e) => {
+    const el = e.target.closest('.chrome [data-tip]');
+    if (el === tipFor) return;
+    hideTip();
+    if (!el || e.pointerType === 'touch' || drag) return;
+    tipTimer = setTimeout(() => { showTip(el); tipByKey = false; }, performance.now() < tipWarmUntil ? 0 : 450);
+  });
+  document.addEventListener('pointerdown', hideTip, true);
+  document.documentElement.addEventListener('mouseleave', hideTip);
+  document.addEventListener('focusin', (e) => {
+    const el = e.target.closest && e.target.closest('.chrome [data-tip]');
+    if (el && e.target.matches(':focus-visible')) { hideTip(); showTip(el); tipByKey = true; }
+  });
+  document.addEventListener('focusout', () => { if (tipFor) hideTip(); });
+  function resetTransientKeys() {
+    hideTip();
+    S.panKey = false;
+    if (!drag || drag.t !== 'pan') stage.classList.remove('panning');
+  }
+  window.addEventListener('blur', resetTransientKeys);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) resetTransientKeys(); });
+
+  // ---------- help ----------
+  const HELP_COL = { Tools: 0, View: 0, File: 0, Edit: 1, Drawing: 1, Image: 1 }; // ~20 rows per column
+  const HELP = [
+    ['Tools', [['Select', 'S'], ['Pencil', 'P'], ['Brush', 'B'], ['Eraser', 'E'], ['Fill', 'F'], ['Color picker', 'I'],
+      ['Text', 'T'], ['Line', 'L'], ['Rectangle', 'R'], ['Ellipse', 'O']]],
+    ['Edit', [['Undo', '⌘Z'], ['Redo', '⌘⇧Z', '⌘Y'], ['Select all', '⌘A'], ['Deselect / dismiss error', 'Esc'], ['Cancel shape, selection or move drag', 'Esc'], ['Clear selection to color 2', 'Delete', '⌫'],
+      ['Nudge selection (⇧ = 10px)', '←', '↑', '→', '↓'], ['Copy, cut, paste', '⌘C', '⌘X', '⌘V'], ['Crop to selection', '⌘⇧X']]],
+    ['Drawing', [['Draw with color 1 / color 2', '~Left / right click'], ['Swap colors', 'X'], ['Smaller / bigger size', '[', ']'],
+      ['Square, circle, 45° line', '⇧', '~drag'], ['Pick color 2 from a swatch', '~right-click / ⇧-click'],
+      ['Apply text', 'Enter'], ['New line in text', '⇧Enter'], ['Cancel text', 'Esc']]],
+    ['Image', [['Resize image', '⇧R'], ['Canvas size', '⇧C'], ['Canvas: keep aspect', '⇧', '~drag corner'], ['Cancel canvas drag', 'Esc']]],
+    ['File', [['New', 'Alt+N'], ['Open', '⌘O'], ['Save', '⌘S'], ['Save as', '⌘⇧S']]],
+    ['View', [['Zoom in / out', '+', '−', '⌘+', '⌘−'], ['Zoom at pointer', '⌘', '~scroll'], ['Fit to window', '⇧1', '⌘0'], ['Actual size', '⇧0'],
+      ['Pan', 'Space', '~drag / middle-drag'], ['This list', '?']]],
+  ];
+  function openHelp() {
+    commitText();
+    const body = $('#helpBody');
+    if (!body.firstChild) {
+      const cols = [document.createElement('div'), document.createElement('div')];
+      body.append(...cols);
+      HELP.forEach(([title, rows], i) => {
+        const sec = document.createElement('section');
+        const h = document.createElement('h3');
+        h.textContent = title;
+        sec.appendChild(h);
+        for (const [label, ...keys] of rows) {
+          const row = document.createElement('div');
+          row.className = 'row';
+          const l = document.createElement('span');
+          l.textContent = keyLabel(label);
+          const k = document.createElement('span');
+          k.className = 'keys';
+          for (const key of keys) {
+            const el = document.createElement(key[0] === '~' ? 'span' : 'kbd');
+            el.textContent = key[0] === '~' ? keyLabel(key.slice(1)) : keyLabel(key);
+            k.appendChild(el);
+          }
+          row.append(l, k);
+          sec.appendChild(row);
+        }
+        cols[HELP_COL[title]].appendChild(sec);
+      });
+    }
+    $('#helpDlg').showModal();
+  }
+
+  // ---------- drop zone ----------
+  let dragDepth = 0;
+  const hasFiles = (e) => e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+  window.addEventListener('dragenter', (e) => { if (hasFiles(e) && !modalOpen()) { dragDepth++; $('#dropZone').hidden = false; } });
+  window.addEventListener('dragleave', (e) => { if (hasFiles(e) && --dragDepth <= 0) { dragDepth = 0; $('#dropZone').hidden = true; } });
+  window.addEventListener('drop', () => { dragDepth = 0; $('#dropZone').hidden = true; }, true);
+
+  textBox.addEventListener('input', updateChrome);
+  // Anchor grid: Up/Down move between rows (radios alone would step through the DOM order).
+  $('.anchor').addEventListener('keydown', (e) => {
+    const d = { ArrowUp: -3, ArrowDown: 3 }[e.key];
+    if (!d) return;
+    const cells = [...document.querySelectorAll('input[name=anchor]')];
+    const i = cells.indexOf(document.activeElement) + d;
+    e.preventDefault();
+    if (i >= 0 && i < 9) { cells[i].checked = true; cells[i].focus(); }
+  });
 
   // ---------- boot ----------
+  document.querySelectorAll('[data-hint]').forEach((el) => { if (el.dataset.hint) el.setAttribute('aria-description', keyLabel(el.dataset.hint)); });
+  // Expose shortcuts to assistive tech (aria-keyshortcuts uses Control/Meta/Shift names).
+  document.querySelectorAll('[data-kbd]').forEach((el) => {
+    const k = el.dataset.kbd;
+    if (/\s/.test(k)) return;
+    el.setAttribute('aria-keyshortcuts', k.replace('⌘', MAC ? 'Meta+' : 'Control+').replace('⇧', 'Shift+').replace('−', 'Minus').replace(/^\+$/, 'Shift+Equal'));
+  });
+  // Fade the bottom of the shortcut list while more is hidden below.
+  const helpBody = $('#helpBody');
+  const helpFade = () => helpBody.classList.toggle('more', helpBody.scrollTop + helpBody.clientHeight < helpBody.scrollHeight - 2);
+  helpBody.addEventListener('scroll', helpFade);
+  $('#helpDlg').addEventListener('toggle', helpFade);
+  window.addEventListener('resize', helpFade);
+  setColor('primary', S.primary);
+  setColor('secondary', S.secondary);
+  $('#stIntro').textContent = `Draw, or drop or paste an image · ${keyLabel('⌘O')} opens a file`;
   newDoc(800, 600);
   setTool('pencil');
 
   // Handle for scripted smoke tests in the console.
-  window.__paint = { S, hist, img, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, setZoom, fitZoom };
+  window.__paint = { S, hist, img, flash, save, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, loadFile, setZoom, fitZoom, MAX_PIXELS };
 })();

@@ -128,7 +128,8 @@
 
   // New canvas size from dragging a resize handle by (dx, dy) screen px at `zoom`.
   // edge: 'e' (width), 's' (height), 'se' (both; keepAspect follows the larger relative change).
-  function dragResize(w, h, dx, dy, edge, zoom, keepAspect, max) {
+  // maxPixels (optional) caps width x height; the result never rounds over it.
+  function dragResize(w, h, dx, dy, edge, zoom, keepAspect, max, maxPixels = Infinity) {
     let nw = edge === 's' ? w : w + dx / zoom;
     let nh = edge === 'e' ? h : h + dy / zoom;
     if (edge === 'se' && keepAspect) {
@@ -136,7 +137,45 @@
       const f = Math.abs(fw - 1) >= Math.abs(fh - 1) ? fw : fh;
       nw = w * f; nh = h * f;
     }
-    return { w: Math.min(max, Math.max(1, Math.round(nw))), h: Math.min(max, Math.max(1, Math.round(nh))) };
+    nw = Math.min(max, Math.max(1, Math.round(nw)));
+    nh = Math.min(max, Math.max(1, Math.round(nh)));
+    if (nw * nh > maxPixels) {
+      if (edge === 'e') nw = Math.max(1, Math.floor(maxPixels / nh));
+      else if (edge === 's') nh = Math.max(1, Math.floor(maxPixels / nw));
+      else {
+        const f = Math.sqrt(maxPixels / (nw * nh));
+        nw = Math.max(1, Math.floor(nw * f)); nh = Math.max(1, Math.floor(nh * f));
+        while (nw * nh > maxPixels) { if (nw >= nh) nw--; else nh--; } // float error guard
+      }
+    }
+    return { w: nw, h: nh };
+  }
+
+  // Why a w x h document can't be created: null if it can. field = the offending side ('w'|'h'),
+  // or null when only the total-pixel cap is exceeded.
+  function sizeError(w, h, maxDim, maxPixels) {
+    if (!(w >= 1 && w <= maxDim)) return { field: 'w', reason: 'range' };
+    if (!(h >= 1 && h <= maxDim)) return { field: 'h', reason: 'range' };
+    if (w * h > maxPixels) return { field: null, reason: 'area' };
+    return null;
+  }
+
+  // A file name typed for a download: sanitised the way browsers do, ending in a format we can write.
+  // A dot alone isn't an extension ("report v1.2" -> "report v1.2.png"); known unwritable image types become .png.
+  // null when nothing usable is left.
+  function saveName(typed) {
+    if (typeof typed !== 'string') return null;
+    typed = typed.trim().replace(/^\.+(?=(png|jpe?g|webp|gif|bmp|tiff?|ico|svg|avif|heic|heif)$)/i, 'untitled.'); // ".png"
+    const n = typed.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/^\.+/, '').replace(/[. ]+$/, '');
+    if (!n) return null;
+    if (/\.(png|jpe?g|webp)$/i.test(n)) return n;
+    if (/\.(gif|bmp|tiff?|ico|svg|avif|heic|heif)$/i.test(n)) return n.replace(/\.[^.]*$/, '.png');
+    return n + '.png';
+  }
+
+  // Brush size for [ (dir -1) and ] (dir +1): steps of 1 below 10 px, 2 from there; the two are inverses.
+  function stepSize(s, dir) {
+    return dir > 0 ? s + (s >= 10 ? 2 : 1) : s - (s > 11 ? 2 : 1);
   }
 
   function rotateDims(w, h, deg) {
@@ -144,20 +183,33 @@
   }
 
   // Undo/redo stacks bounded by entry count and total bytes (both stacks). Newest entry always survives.
+  // The save point is the entry on top of the undo stack when the document was last saved
+  // (null = the base state). It becomes LOST once that state can no longer be reached.
+  const LOST = {};
   class History {
     constructor({ maxBytes = 256 * 1024 * 1024, maxCount = 100 } = {}) {
       this.maxBytes = maxBytes; this.maxCount = maxCount;
-      this.undoStack = []; this.redoStack = []; this.bytes = 0;
+      this.clear();
     }
+    top() { return this.undoStack.length ? this.undoStack[this.undoStack.length - 1] : null; }
     push(entry) {
-      for (const e of this.redoStack) this.bytes -= e.bytes || 0;
+      for (const e of this.redoStack) {
+        this.bytes -= e.bytes || 0;
+        if (e === this.saved) this.saved = LOST;
+      }
       this.redoStack = [];
       this.undoStack.push(entry);
       this.bytes += entry.bytes || 0;
+      let evicted = 0;
       while (this.undoStack.length > 1 &&
              (this.undoStack.length > this.maxCount || this.bytes > this.maxBytes)) {
-        this.bytes -= this.undoStack.shift().bytes || 0;
+        const gone = this.undoStack.shift();
+        this.bytes -= gone.bytes || 0;
+        if (this.saved === null) this.saved = LOST; // the base state is gone
+        else if (gone === this.saved) this.saved = null; // the saved state is the new base
+        evicted++;
       }
+      return evicted;
     }
     undo() {
       const e = this.undoStack.pop();
@@ -173,10 +225,12 @@
     }
     canUndo() { return this.undoStack.length > 0; }
     canRedo() { return this.redoStack.length > 0; }
-    clear() { this.undoStack = []; this.redoStack = []; this.bytes = 0; }
+    markSaved(entry = this.top()) { this.saved = entry; }
+    isClean() { return this.saved !== LOST && this.top() === this.saved; }
+    clear() { this.undoStack = []; this.redoStack = []; this.bytes = 0; this.saved = null; }
   }
 
-  const Core = { rgbaToU32, colorDistance, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, rotateDims, History };
+  const Core = { rgbaToU32, colorDistance, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, rotateDims, History };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core;
   else root.Core = Core;
 })(typeof window !== 'undefined' ? window : globalThis);
