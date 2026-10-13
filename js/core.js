@@ -178,6 +178,48 @@
     return dir > 0 ? s + (s >= 10 ? 2 : 1) : s - (s > 11 ? 2 : 1);
   }
 
+  // Split rect (grown outward to whole pixels, clipped to the W x H image) into its pieces on a
+  // T x T tile grid. key identifies the tile (row-major). Used for copy-on-write undo snapshots.
+  function tileParts(r, W, H, T) {
+    const x0 = Math.max(0, Math.floor(r.x)), y0 = Math.max(0, Math.floor(r.y));
+    const x1 = Math.min(W, Math.ceil(r.x + r.w)), y1 = Math.min(H, Math.ceil(r.y + r.h));
+    const out = [];
+    if (x1 <= x0 || y1 <= y0) return out;
+    const cols = Math.ceil(W / T);
+    for (let ty = Math.floor(y0 / T); ty * T < y1; ty++) {
+      for (let tx = Math.floor(x0 / T); tx * T < x1; tx++) {
+        const px = Math.max(x0, tx * T), py = Math.max(y0, ty * T);
+        out.push({ key: ty * cols + tx, tx, ty, x: px, y: py, w: Math.min(x1, (tx + 1) * T) - px, h: Math.min(y1, (ty + 1) * T) - py });
+      }
+    }
+    return out;
+  }
+
+  // Batch rects for readback: canvas readbacks have a large fixed cost each, so one read of a
+  // bigger box beats many small ones, up to a point. Greedily merges rects (taken top to bottom)
+  // while a group's bounding box stays within slack x the area of the rects in it.
+  // Returns [{x, y, w, h, items: [rect indices]}].
+  function groupRects(rects, slack) {
+    const order = rects.map((r, i) => i).sort((a, b) => rects[a].y - rects[b].y || rects[a].x - rects[b].x);
+    const groups = [];
+    let g = null;
+    for (const i of order) {
+      const r = rects[i];
+      if (g) {
+        const x0 = Math.min(g.x, r.x), y0 = Math.min(g.y, r.y);
+        const x1 = Math.max(g.x + g.w, r.x + r.w), y1 = Math.max(g.y + g.h, r.y + r.h);
+        if ((x1 - x0) * (y1 - y0) <= slack * (g.area + r.w * r.h)) {
+          Object.assign(g, { x: x0, y: y0, w: x1 - x0, h: y1 - y0, area: g.area + r.w * r.h });
+          g.items.push(i);
+          continue;
+        }
+      }
+      g = { x: r.x, y: r.y, w: r.w, h: r.h, area: r.w * r.h, items: [i] };
+      groups.push(g);
+    }
+    return groups.map(({ area, ...rest }) => rest);
+  }
+
   function rotateDims(w, h, deg) {
     return Math.abs(deg) % 180 === 90 ? { w: h, h: w } : { w, h };
   }
@@ -187,8 +229,11 @@
   // (null = the base state). It becomes LOST once that state can no longer be reached.
   const LOST = {};
   class History {
-    constructor({ maxBytes = 256 * 1024 * 1024, maxCount = 100 } = {}) {
-      this.maxBytes = maxBytes; this.maxCount = maxCount;
+    // onDrop(entry) runs for each entry that becomes unreachable (evicted, discarded redo, cleared),
+    // so the owner can free big buffers now instead of at the next GC.
+    constructor({ maxBytes = 256 * 1024 * 1024, maxCount = 100, onDrop = null } = {}) {
+      this.maxBytes = maxBytes; this.maxCount = maxCount; this.onDrop = onDrop;
+      this.undoStack = []; this.redoStack = [];
       this.clear();
     }
     top() { return this.undoStack.length ? this.undoStack[this.undoStack.length - 1] : null; }
@@ -196,6 +241,7 @@
       for (const e of this.redoStack) {
         this.bytes -= e.bytes || 0;
         if (e === this.saved) this.saved = LOST;
+        if (this.onDrop) this.onDrop(e);
       }
       this.redoStack = [];
       this.undoStack.push(entry);
@@ -207,6 +253,7 @@
         this.bytes -= gone.bytes || 0;
         if (this.saved === null) this.saved = LOST; // the base state is gone
         else if (gone === this.saved) this.saved = null; // the saved state is the new base
+        if (this.onDrop) this.onDrop(gone);
         evicted++;
       }
       return evicted;
@@ -227,10 +274,13 @@
     canRedo() { return this.redoStack.length > 0; }
     markSaved(entry = this.top()) { this.saved = entry; }
     isClean() { return this.saved !== LOST && this.top() === this.saved; }
-    clear() { this.undoStack = []; this.redoStack = []; this.bytes = 0; this.saved = null; }
+    clear() {
+      if (this.onDrop) for (const e of [...this.undoStack, ...this.redoStack]) this.onDrop(e);
+      this.undoStack = []; this.redoStack = []; this.bytes = 0; this.saved = null;
+    }
   }
 
-  const Core = { rgbaToU32, colorDistance, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, rotateDims, History };
+  const Core = { rgbaToU32, colorDistance, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, History };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core;
   else root.Core = Core;
 })(typeof window !== 'undefined' ? window : globalThis);

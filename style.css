@@ -210,6 +210,7 @@ button.labeled { padding: 0 9px 0 7px; }
 }
 #stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 #stage.pixelated canvas { image-rendering: pixelated; }
+#stage #preview { inset: auto; pointer-events: none; } /* placed and sized by placePreview() */
 #overlay { touch-action: none; cursor: crosshair; }
 #stage[data-tool=text] #overlay { cursor: text; }
 #stage.panning #overlay { cursor: grab; }

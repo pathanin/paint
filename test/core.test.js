@@ -336,3 +336,87 @@ test('stepSize: [ and ] are inverse around the 10 px boundary', () => {
     if (s >= 10 && s % 2 === 0 || s < 10) assert.equal(Core.stepSize(up, -1), s, `down(up(${s}))`);
   }
 });
+
+test('tileParts: splits a rect into per-tile pieces that exactly cover its in-image area', () => {
+  let s = 7; const rnd = (n) => ((s = Math.imul(s, 1103515245) + 12345 >>> 0) >>> 8) % n;
+  for (let iter = 0; iter < 300; iter++) {
+    const W = 1 + rnd(90), H = 1 + rnd(90), T = 1 + rnd(20);
+    const r = { x: rnd(120) - 15, y: rnd(120) - 15, w: rnd(60), h: rnd(60) };
+    const cover = new Uint8Array(W * H);
+    for (const p of Core.tileParts(r, W, H, T)) {
+      // the piece lies inside its tile, which lies inside the image
+      assert.ok(p.x >= p.tx * T && p.x + p.w <= Math.min(W, (p.tx + 1) * T), 'x within tile');
+      assert.ok(p.y >= p.ty * T && p.y + p.h <= Math.min(H, (p.ty + 1) * T), 'y within tile');
+      assert.equal(p.key, p.ty * Math.ceil(W / T) + p.tx);
+      assert.ok(p.w > 0 && p.h > 0);
+      for (let y = p.y; y < p.y + p.h; y++) for (let x = p.x; x < p.x + p.w; x++) cover[y * W + x]++;
+    }
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const want = x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h ? 1 : 0;
+      assert.equal(cover[y * W + x], want, `pixel ${x},${y} of ${JSON.stringify(r)} in ${W}x${H} T=${T}`);
+    }
+  }
+});
+
+test('tileParts: fractional rects grow outward to whole pixels', () => {
+  const parts = Core.tileParts({ x: 1.5, y: 2.2, w: 1, h: 0.1 }, 10, 10, 4);
+  assert.deepEqual(parts.map(({ x, y, w, h }) => ({ x, y, w, h })), [{ x: 1, y: 2, w: 2, h: 1 }]);
+});
+
+test('History onDrop: called once for every entry that becomes unreachable, never for live ones', () => {
+  const dropped = [];
+  const h = new Core.History({ maxCount: 3, onDrop: (e) => dropped.push(e.id) });
+  for (let id = 1; id <= 4; id++) h.push({ id, bytes: 1 }); // 1 evicted by count
+  assert.deepEqual(dropped, [1]);
+  h.undo(); h.undo(); // 4, 3 on the redo stack
+  h.push({ id: 5, bytes: 1 }); // redo stack discarded
+  assert.deepEqual(dropped, [1, 4, 3]);
+  h.undo(); h.redo(); // moving between stacks drops nothing
+  assert.deepEqual(dropped, [1, 4, 3]);
+  h.push({ id: 6, bytes: 1 }); h.push({ id: 7, bytes: 1 }); // [2, 5, 6, 7] -> evicts 2
+  assert.deepEqual(dropped, [1, 4, 3, 2]);
+  h.undo(); // 7 on redo
+  h.clear();
+  assert.deepEqual(dropped.sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7]);
+  assert.equal(h.canUndo() || h.canRedo(), false);
+});
+
+test('History onDrop: byte eviction drops the oldest first and keeps the newest', () => {
+  const dropped = [];
+  const h = new Core.History({ maxBytes: 10, onDrop: (e) => dropped.push(e.id) });
+  h.push({ id: 1, bytes: 4 }); h.push({ id: 2, bytes: 4 }); h.push({ id: 3, bytes: 4 });
+  assert.deepEqual(dropped, [1]);
+  h.push({ id: 4, bytes: 50 }); // over budget alone: everything older goes, it stays
+  assert.deepEqual(dropped, [1, 2, 3]);
+  assert.equal(h.top().id, 4);
+});
+
+test('groupRects: every rect lands in exactly one group whose box contains it', () => {
+  let s = 99; const rnd = (n) => ((s = Math.imul(s, 1103515245) + 12345 >>> 0) >>> 8) % n;
+  for (let iter = 0; iter < 200; iter++) {
+    const rects = Array.from({ length: 1 + rnd(40) }, () => ({ x: rnd(2000), y: rnd(2000), w: 1 + rnd(256), h: 1 + rnd(256) }));
+    const groups = Core.groupRects(rects, 2);
+    const seen = new Array(rects.length).fill(0);
+    for (const g of groups) {
+      let area = 0;
+      for (const i of g.items) {
+        const r = rects[i]; seen[i]++; area += r.w * r.h;
+        assert.ok(r.x >= g.x && r.y >= g.y && r.x + r.w <= g.x + g.w && r.y + r.h <= g.y + g.h, 'inside its group');
+      }
+      // a group of several rects never wastes more than the slack allows
+      if (g.items.length > 1) assert.ok(g.w * g.h <= 2 * area, `group box ${g.w}x${g.h} vs area ${area}`);
+    }
+    assert.ok(seen.every((n) => n === 1));
+  }
+});
+
+test('groupRects: a dense band merges into one group, far-apart rects stay apart', () => {
+  const band = Array.from({ length: 10 }, (_, i) => ({ x: i * 256, y: 512, w: 256, h: 256 }));
+  assert.equal(Core.groupRects(band, 2).length, 1);
+  // two touching diagonal tiles waste exactly 2x (merge); a third would waste 3x (doesn't)
+  const diagonal = Array.from({ length: 10 }, (_, i) => ({ x: i * 256, y: i * 256, w: 256, h: 256 }));
+  assert.equal(Core.groupRects(diagonal, 2).length, 5);
+  const spaced = Array.from({ length: 10 }, (_, i) => ({ x: i * 512, y: i * 512, w: 256, h: 256 }));
+  assert.equal(Core.groupRects(spaced, 2).length, 10);
+  assert.deepEqual(Core.groupRects([], 2), []);
+});
