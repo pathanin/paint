@@ -72,11 +72,15 @@ When smoke fails, read the **first** `FAIL` line, because later failures often c
 
 ## Optional libraries
 
-- The `LIBS` table in `js/app.js` lists each library with an exact version, an SRI hash and its dependencies. `lib(name)` injects a classic `<script crossorigin integrity>` on first use and resolves to the library's global. It rejects after `LIB_TIMEOUT` (4 s), and the rejection is cached until the window's `online` event, so an unreachable CDN costs one wait at most.
-- Every caller catches the rejection and falls back: `scaleImage()` falls back to `resample()`, `encodePng()` to `toBlob`, and `decodeFile()` to an error saying TIFF needs a connection. `__paint.used` records which path ran, and `libs.js` asserts it so that a silent fallback can't pass the online checks.
+- The `LIBS` table in `js/app.js` lists each library with an exact version, an SRI hash and its dependencies. `lib(name)` injects a classic `<script crossorigin integrity>` and resolves to the library's global. It rejects after `LIB_TIMEOUT` (4 s), and the rejection is cached until the window's `online` event, so an unreachable CDN costs one wait at most. When `navigator.onLine` is false it rejects at once, with no request.
+- When each library loads: pica when the Resize dialog opens; UTIF when a file the browser can't decode is a TIFF; UPNG at the first edit, but only if the save will be a PNG (`pushHist()`), so that Save doesn't wait on the CDN.
+- Every caller catches the rejection and falls back: `scaleImage()` falls back to `resample()`, `encodePng()` to `toBlob`, and `decodeFile()` to an error saying the TIFF reader couldn't be downloaded. `__paint.used` records which path ran, and `libs.js` asserts it so that a silent fallback can't pass the online checks.
 - To bump a version, change the path and recompute the hash: `curl -sL https://cdn.jsdelivr.net/npm/<pkg>@<ver>/<file> | openssl dgst -sha384 -binary | openssl base64 -A`.
 - Scaling is async. `scaleDoc()` drops its result if the document changed while it ran.
-- UPNG runs on the main thread, so it is capped at `UPNG_MAX_PIXELS` (one 4K screen). Both encoders run, and the smaller blob is kept.
+- The budgets come from measurements on an M4 (the numbers are in the code comments):
+  - pica is CPU-bound and gets superlinear on large downscales, so past `PICA_MAX_PIXELS` (50 MP, source plus result) the built-in GPU path runs.
+  - UPNG runs on the main thread. It runs only up to `UPNG_MAX_PIXELS` (one 4K screen) and when `upngMs()` estimates it within `UPNG_BUDGET_MS` (750 ms). The estimate uses the browser PNG's size as an entropy proxy.
+  - Both encoders run, and the smaller blob is kept.
 
 ## Constraints and conventions
 

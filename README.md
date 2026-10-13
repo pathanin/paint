@@ -35,13 +35,13 @@ Save format follows the file extension (PNG, JPEG, WebP); JPEG is flattened onto
 
 ### With and without a connection
 
-| Feature | Online (library from jsDelivr, loaded on first use) | Offline (built in) |
+| Feature | Online (library from jsDelivr, loaded when first needed) | Offline (built in) |
 |---|---|---|
-| Resize image | [pica](https://github.com/nodeca/pica), Lanczos-3: less moiré, sharper | Halving resampler |
+| Resize image | [pica](https://github.com/nodeca/pica), Lanczos-3: less moiré, sharper (up to 50 MP, before plus after) | Halving resampler |
 | Open TIFF | [UTIF](https://github.com/photopea/UTIF.js): first page, any compression it supports | Not available; the message says why |
-| Save PNG | [UPNG](https://github.com/photopea/UPNG.js), lossless: files are often 30–60% smaller (up to 3840 × 2160) | The browser's PNG encoder |
+| Save PNG | [UPNG](https://github.com/photopea/UPNG.js), lossless: about 40–60% smaller for screenshots and drawings, 13–16% for photos. Used up to 3840 × 2160, and only when its estimated time is under ¾ s | The browser's PNG encoder |
 
-Versions are pinned and checked with Subresource Integrity. If the CDN can't be reached, or doesn't answer within 4 s, the built-in path runs. Nothing is loaded at startup.
+Versions are pinned and checked with Subresource Integrity. If the browser is offline, the CDN can't be reached, or it doesn't answer within 4 s, the built-in path runs. Nothing is loaded at startup: pica loads when the Resize dialog opens, the PNG encoder at the first edit of a PNG, and the TIFF reader when a TIFF is opened.
 
 ## Layout
 
