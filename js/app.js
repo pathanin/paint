@@ -17,7 +17,7 @@
     tool: 'pencil', prevTool: 'pencil',
     primary: '#000000', secondary: '#ffffff',
     sizes: { pencil: 1, brush: 6, eraser: 12, line: 2, rect: 2, ellipse: 2 },
-    fillMode: 'outline', tolerance: 10,
+    fillMode: 'outline', tolerance: 10, smoothing: 2,
     font: 'system-ui, sans-serif', fontSize: 24,
     zoom: 1,
     fileHandle: null, fileName: 'untitled.png',
@@ -148,7 +148,7 @@
   // So no op copies the whole image, and a long diagonal stroke stores a thin band of tiles, not
   // its whole bounding box. Tiles are saved one of two ways:
   //  - strokes (beginOp(true)): each tile is copied into a small canvas of its own (GPU drawImage),
-  //    and read back once, in endOp();
+  //    and read back once, in endOp() (or mid-stroke, once more than 512 are live);
   //  - everything else touches its whole area once, up front: one getImageData of those tiles.
   // Two Chrome gotchas shape this (measured on a 10000 px canvas):
   //  - No readback (getImageData) of the document, or of anything drawn from it, while a stroke is in
@@ -180,12 +180,12 @@
     if (op.stroke) {
       // Bound the GPU memory a long scribble can pin: past 512 live tile canvases (128 MB), read
       // them back now. That one readback stalls a frame; the alternative is unbounded memory.
-      if (op.live + fresh.length > 512) { readTiles([...op.tiles.values()].filter((t) => t.c)); op.live = 0; }
       for (const t of fresh) {
+        if (op.live >= 512) { readTiles([...op.tiles.values()].filter((x) => x.c)); op.live = 0; }
+        op.live++;
         t.c = makeCanvas(t.w, t.h);
         t.c.getContext('2d').drawImage(img, t.ox, t.oy, t.w, t.h, 0, 0, t.w, t.h); // onto transparent: exact, alpha too
       }
-      op.live += fresh.length;
       return;
     }
     // One readback covering the new tiles, cut up per tile.
@@ -419,13 +419,16 @@
     const shape = drag && SHAPES.has(drag.t);
     const marquee = drag && drag.t === 'select';
     const mq = marquee ? Core.normRect(drag.start, drag.end) : null;
+    // Live end of a brush stroke: what release would add, so the ink always reaches the pointer.
+    const tail = drag && drag.t === 'brush' ? drag.stroke.tail(drag.ptr) : null;
     const key = JSON.stringify([
       S.zoom,
+      tail ? [tail, drag.color, drag.size] : 0,
       shape ? [drag.t, drag.start, drag.end, drag.shift, drag.color, drag.alt, S.sizes[drag.t], S.fillMode] : 0,
       mq || 0,
       sel ? [sel.x, sel.y, sel.w, sel.h, sel.float ? floatId(sel.float) : 0] : 0,
     ]);
-    if (shape || mq || sel) placePreview();
+    if (shape || mq || sel || (tail && tail.length)) placePreview();
     if (key !== ovKey) {
       ovKey = key;
       if (ovBox) octx.clearRect(ovBox.x, ovBox.y, ovBox.w, ovBox.h);
@@ -437,6 +440,7 @@
         const x1 = Math.max(box.x + box.w, b.x + b.w), y1 = Math.max(box.y + box.h, b.y + b.h);
         box.x = Math.min(box.x, b.x); box.y = Math.min(box.y, b.y); box.w = x1 - box.x; box.h = y1 - box.y;
       };
+      if (tail && tail.length) { brushPath(octx, tail, drag.color, drag.size); add(segsBox(tail, drag.size / 2 + 1)); }
       if (shape) add(drawShape(octx, drag));
       if (mq) { ants(mq); add(mq); }
       if (sel) {
@@ -547,22 +551,47 @@
     for (const [x, y] of Core.line(a.x, a.y, b.x, b.y)) ctx.rect(x - off, y - off, size, size);
     ctx.fill();
   }
-  function brushSeg(a, b, color, size) {
-    const h = size / 2 + 1;
-    touch(Math.min(a.x, b.x) - h, Math.min(a.y, b.y) - h, Math.abs(b.x - a.x) + 2 * h, Math.abs(b.y - a.y) + 2 * h);
-    ctx.fillStyle = ctx.strokeStyle = color;
-    ctx.lineWidth = size;
-    ctx.lineCap = ctx.lineJoin = 'round';
+  // Brush: Core.Stroke segments ({a, c, b}, c = quadratic control or null) as one path, so joins blend once.
+  // The same call draws committed segments on the image and the live tail on the preview.
+  function brushPath(c, segs, color, size) {
+    if (!segs.length) return;
+    if (c === ctx) for (const g of segs) { const b = segsBox([g], size / 2 + 1); touch(b.x, b.y, b.w, b.h); } // before drawing
+    c.save();
+    c.strokeStyle = color;
+    c.lineWidth = size;
+    c.lineCap = c.lineJoin = 'round';
+    c.beginPath();
+    c.moveTo(segs[0].a.x, segs[0].a.y);
+    for (const { c: q, b } of segs) { if (q) c.quadraticCurveTo(q.x, q.y, b.x, b.y); else c.lineTo(b.x, b.y); }
+    c.stroke();
+    c.restore();
+  }
+  // Bounding box of segments grown by h (a quadratic stays inside the hull of its points).
+  function segsBox(segs, h) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const g of segs) {
+      for (const q of g.c ? [g.a, g.b, g.c] : [g.a, g.b]) {
+        if (q.x < x0) x0 = q.x; if (q.y < y0) y0 = q.y; if (q.x > x1) x1 = q.x; if (q.y > y1) y1 = q.y;
+      }
+    }
+    return { x: x0 - h, y: y0 - h, w: x1 - x0 + 2 * h, h: y1 - y0 + 2 * h };
+  }
+  function brushDot(p, color, size) {
+    touch(p.x - size / 2 - 1, p.y - size / 2 - 1, size + 2, size + 2);
+    ctx.fillStyle = color;
     ctx.beginPath();
-    if (a.x === b.x && a.y === b.y) { ctx.arc(a.x, a.y, size / 2, 0, Math.PI * 2); ctx.fill(); }
-    else { ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
+    ctx.arc(p.x, p.y, size / 2, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   function doFill(p, color) {
     const W = img.width, H = img.height;
     if (p.x < 0 || p.y < 0 || p.x >= W || p.y >= H) return;
+    const c = hexToU32(color);
+    // Exact-match fill on a pixel that already has the colour changes nothing: skip the full readback.
+    if (Math.round(S.tolerance * 255 / 100) === 0 && new Uint32Array(ctx.getImageData(p.x, p.y, 1, 1).data.buffer)[0] === c) return;
     const data = ctx.getImageData(0, 0, W, H);
-    const u32 = new Uint32Array(data.data.buffer), c = hexToU32(color);
+    const u32 = new Uint32Array(data.data.buffer);
     const { mask, box } = Core.floodMask(u32, W, H, p.x, p.y, S.tolerance);
     // The undo entry: the box's pixels before, plus the region as a bit mask. "After" is those
     // pixels with the masked ones set to c, so neither undo nor redo has to read the canvas back.
@@ -1139,11 +1168,14 @@
         stampLine(ip, ip, c, S.sizes[t]);
         break;
       }
-      case 'brush':
+      case 'brush': {
+        // Smoothing radius is in screen px (2 per step), fixed for the stroke even if the zoom changes.
         beginOp(true);
-        drag = { t, last: p, color };
-        brushSeg(p, p, color, S.sizes.brush);
+        const size = S.sizes.brush;
+        drag = { t, color, size, ptr: p, stroke: new Core.Stroke(p, S.smoothing * 2 / S.zoom, 0.5 / S.zoom) };
+        brushDot(p, color, size);
         break;
+      }
       case 'fill': doFill(ip, color); break;
       case 'picker': pick(ip, right); break;
       case 'line': case 'rect': case 'ellipse':
@@ -1182,13 +1214,14 @@
       if (!evs.length) evs = [e];
       for (const ev of evs) {
         const q = imgPt(ev, r);
-        if (d.t === 'brush') { brushSeg(d.last, q, d.color, S.sizes.brush); d.last = q; }
+        if (d.t === 'brush') { d.segs = (d.segs || []).concat(d.stroke.add(q)); d.ptr = q; }
         else {
           const iq = { x: Math.floor(q.x), y: Math.floor(q.y) };
           stampLine(d.last, iq, d.color, S.sizes[d.t]);
           d.last = iq;
         }
       }
+      if (d.segs) { brushPath(ctx, d.segs, d.color, d.size); d.segs = null; }
     } else if (SHAPES.has(d.t)) {
       d.end = { x: Math.floor(p.x), y: Math.floor(p.y) };
       d.shift = e.shiftKey;
@@ -1239,12 +1272,18 @@
     requestRender();
   }
 
-  function finishDrag() {
+  function finishDrag(e) {
     const d = drag;
     if (!d) return;
     drag = null;
     if (d.t === 'pan') { stage.classList.remove('dragging'); if (!S.panKey) stage.classList.remove('panning'); }
-    else if (d.t === 'pencil' || d.t === 'eraser' || d.t === 'brush') endOp();
+    else if (d.t === 'brush') {
+      // The stroke ends exactly where the pointer lifted (pointercancel carries no reliable position).
+      const q = e && e.type === 'pointerup' ? imgPt(e) : d.ptr;
+      brushPath(ctx, d.stroke.finish(q), d.color, d.size);
+      endOp();
+    }
+    else if (d.t === 'pencil' || d.t === 'eraser') endOp();
     else if (SHAPES.has(d.t)) {
       if (d.t !== 'line' && d.start.x === d.end.x && d.start.y === d.end.y) { requestRender(); return; } // a click, not a shape
       beginOp();
@@ -1466,6 +1505,7 @@
 
   $('#size').addEventListener('input', (e) => setSize(+e.target.value));
   $('#tolerance').addEventListener('input', (e) => { S.tolerance = +e.target.value; $('#tolOut').textContent = S.tolerance; });
+  $('#smoothing').addEventListener('input', (e) => { S.smoothing = +e.target.value; $('#smoothOut').textContent = S.smoothing; });
   document.querySelectorAll('input[name=fillMode]').forEach((r) => r.addEventListener('change', () => { S.fillMode = r.value; }));
   $('#font').addEventListener('change', (e) => { S.font = e.target.value; if (textAt) placeTextBox(); });
   $('#fontSize').addEventListener('input', (e) => {

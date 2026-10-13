@@ -127,6 +127,11 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     ok(kept === 20, `20 wavy strokes on 4000x3000 all stay undoable, kept ${kept}`);
     await P(() => { for (let i = 0; i < 5; i++) window.__paint.undo(); }); await frame();
     ok(await hash() === big[2], '4000x3000: undo 5 strokes is pixel-exact');
+    // a fill that changes nothing adds no history entry
+    await P(() => { window.__paint.newDoc(200, 200); window.__paint.S.primary = '#ffffff'; window.__paint.S.tolerance = 0; window.__paint.setTool('fill'); });
+    { const n = await P(() => window.__paint.hist.undoStack.length); const [x, y] = await at(50, 50); await page.mouse.click(x, y); await frame();
+      ok(await P(() => window.__paint.hist.undoStack.length) === n, 'no-op fill adds no undo step'); }
+    await P(() => { window.__paint.S.primary = '#000000'; });
     // ---- 3. one scribble over more tiles than the live-tile cap (512) still undoes exactly ----
     await P(() => { window.__paint.newDoc(8000, 6000); window.__paint.fitZoom(false); window.__paint.S.sizes.brush = 100; });
     const before = await hash();

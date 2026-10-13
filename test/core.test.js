@@ -475,3 +475,114 @@ test('floodFill and floodMask agree with the original fill on random images', ()
     assert.deepEqual(m.box, { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs) + 1, h: Math.max(...ys) - Math.min(...ys) + 1 });
   }
 });
+
+// ---------- Stroke (smoothed brush path) ----------
+// Flatten segments ({a, c, b}; c null = straight) into a fine polyline, independently of Core.
+function flatten(segs) {
+  const out = [];
+  for (const { a, c, b } of segs) {
+    for (let i = 0; i <= 64; i++) {
+      const t = i / 64, u = 1 - t;
+      out.push(c ? { x: u * u * a.x + 2 * u * t * c.x + t * t * b.x, y: u * u * a.y + 2 * u * t * c.y + t * t * b.y }
+        : { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+    }
+  }
+  return out;
+}
+function distToPolyline(p, pl) {
+  let best = Infinity;
+  for (let i = 1; i < pl.length; i++) {
+    const a = pl[i - 1], b = pl[i], dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+    const t = l2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2)) : 0;
+    best = Math.min(best, Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy));
+  }
+  return best;
+}
+// Feed samples through a Stroke; return every segment it produced, the final tail included.
+function run(samples, radius, minStep) {
+  const s = new Core.Stroke(samples[0], radius, minStep);
+  const segs = [];
+  for (const q of samples.slice(1)) segs.push(...s.add(q));
+  segs.push(...s.finish(samples[samples.length - 1]));
+  return segs;
+}
+// A wobbly circle-ish path, ~1 px between samples.
+const wobble = Array.from({ length: 400 }, (_, i) => {
+  const t = i / 60;
+  return { x: 100 + 60 * Math.cos(t) + 3 * Math.sin(i * 1.7), y: 100 + 40 * Math.sin(t) + 3 * Math.cos(i * 2.3) };
+});
+
+test('Stroke starts at the pointerdown point and ends exactly at the release point', () => {
+  for (const r of [0, 4, 30]) {
+    const segs = run(wobble, r, 0.5);
+    assert.deepEqual(segs[0].a, wobble[0]);
+    assert.deepEqual(segs[segs.length - 1].b, wobble[wobble.length - 1]);
+  }
+});
+
+test('Stroke segments are continuous (each starts where the last ended)', () => {
+  const segs = run(wobble, 4, 0.5);
+  for (let i = 1; i < segs.length; i++) {
+    assert.ok(Math.hypot(segs[i].a.x - segs[i - 1].b.x, segs[i].a.y - segs[i - 1].b.y) < 1e-9, 'gap at ' + i);
+  }
+});
+
+test('Stroke with radius 0 passes within |second difference| / 8 of every sample', () => {
+  // A midpoint-chain curve passes (X[k-1] + 6 X[k] + X[k+1]) / 8 at its control point X[k].
+  const pl = flatten(run(wobble, 0, 0));
+  wobble.forEach((p, k) => {
+    const a = wobble[k - 1] || p, b = wobble[k + 1] || p;
+    const bound = Math.hypot(a.x - 2 * p.x + b.x, a.y - 2 * p.y + b.y) / 8;
+    assert.ok(distToPolyline(p, pl) <= bound + 1e-6, `sample ${k}: ${distToPolyline(p, pl)} > ${bound}`);
+  });
+  // and on a smooth curve that is well under a pixel
+  const circle = Array.from({ length: 300 }, (_, i) => ({ x: 50 + 40 * Math.cos(i / 40), y: 50 + 40 * Math.sin(i / 40) }));
+  const cl = flatten(run(circle, 0, 0));
+  assert.ok(Math.max(...circle.map((p) => distToPolyline(p, cl))) < 0.01);
+});
+
+test('Stroke with radius r stays within r (+ step) of every sample', () => {
+  for (const [r, step] of [[4, 0], [10, 0], [4, 1]]) {
+    const pl = flatten(run(wobble, r, step));
+    const worst = Math.max(...wobble.map((p) => distToPolyline(p, pl)));
+    assert.ok(worst <= r + step + 0.75, `r=${r} step=${step} worst ${worst}`);
+  }
+});
+
+test('Stroke smooths jitter: radius cuts the wobble the raw path has', () => {
+  // Straight line with ±2 px zig-zag: the smoothed path must stay much closer to the true line.
+  const zig = Array.from({ length: 200 }, (_, i) => ({ x: i, y: 50 + (i % 2 ? 2 : -2) }));
+  const dev = (r) => Math.max(...flatten(run(zig, r, 0.5)).filter((p) => p.x > 30 && p.x < 170).map((p) => Math.abs(p.y - 50)));
+  assert.ok(dev(0) > 0.9, 'raw keeps the zig-zag: ' + dev(0)); // |second difference| / 8 = 1
+  assert.ok(dev(4) < 0.5, 'r=4: ' + dev(4));
+  assert.ok(dev(8) < dev(4), 'r=8 smoother than r=4');
+});
+
+test('Stroke: a click with no movement yields no segments (the app draws a dot)', () => {
+  const s = new Core.Stroke({ x: 5, y: 5 }, 4, 0.5);
+  assert.deepEqual(s.add({ x: 5, y: 5 }), []);
+  assert.deepEqual(s.finish({ x: 5, y: 5 }), []);
+});
+
+test('Stroke: movement that never leaves the radius still draws start → release', () => {
+  const s = new Core.Stroke({ x: 5, y: 5 }, 10, 0.5);
+  assert.deepEqual(s.add({ x: 8, y: 5 }), []);
+  assert.deepEqual(s.add({ x: 11, y: 6 }), []);
+  assert.deepEqual(s.finish({ x: 11, y: 6 }), [{ a: { x: 5, y: 5 }, c: null, b: { x: 11, y: 6 } }]);
+});
+
+test('Stroke.tail previews exactly what finish would add, without consuming state', () => {
+  const s = new Core.Stroke(wobble[0], 4, 0.5);
+  for (const q of wobble.slice(1, 200)) s.add(q);
+  const t1 = s.tail(wobble[199]), t2 = s.tail(wobble[199]);
+  assert.deepEqual(t1, t2);
+  assert.deepEqual(s.finish(wobble[199]), t1);
+});
+
+test('Stroke lazy step moves the brush by distance − radius (lazy-brush rule)', () => {
+  const s = new Core.Stroke({ x: 0, y: 0 }, 30, 0);
+  s.add({ x: 20, y: 0 });
+  assert.deepEqual(s.brush, { x: 0, y: 0 });
+  s.add({ x: 40, y: 0 });
+  assert.deepEqual(s.brush, { x: 10, y: 0 });
+});
