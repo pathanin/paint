@@ -165,7 +165,8 @@
   // null when nothing usable is left.
   function saveName(typed) {
     if (typeof typed !== 'string') return null;
-    const n = typed.trim().replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/^\.+/, '').replace(/[. ]+$/, '');
+    typed = typed.trim().replace(/^\.+(?=(png|jpe?g|webp|gif|bmp|tiff?|ico|svg|avif|heic|heif)$)/i, 'untitled.'); // ".png"
+    const n = typed.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/^\.+/, '').replace(/[. ]+$/, '');
     if (!n) return null;
     if (/\.(png|jpe?g|webp)$/i.test(n)) return n;
     if (/\.(gif|bmp|tiff?|ico|svg|avif|heic|heif)$/i.test(n)) return n.replace(/\.[^.]*$/, '.png');

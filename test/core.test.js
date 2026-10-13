@@ -314,7 +314,9 @@ test('saveName: keeps writable names, swaps only known image extensions, appends
 test('saveName: sanitises like a browser download and rejects empty names', () => {
   assert.equal(Core.saveName('  a/b.png '), 'a_b.png');
   assert.equal(Core.saveName('q?:*"<>|\\.png'), 'q________.png');
-  assert.equal(Core.saveName('.png'), 'png.png'); // leading dots stripped (hidden-file names)
+  assert.equal(Core.saveName('.png'), 'untitled.png'); // just an extension: keep the type, name it
+  assert.equal(Core.saveName('.gif'), 'untitled.png');
+  assert.equal(Core.saveName('.JPG'), 'untitled.JPG');
   assert.equal(Core.saveName('..hidden'), 'hidden.png');
   assert.equal(Core.saveName('   '), null);
   assert.equal(Core.saveName('...'), null);

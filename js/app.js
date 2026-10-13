@@ -78,6 +78,10 @@
     clearTimeout(msgTimer);
     msgTimer = setTimeout(() => $('#toast').classList.remove('show'), 2500);
   });
+  // Plain words for the errors people actually hit; anything else keeps the browser's own message.
+  const errText = (err, denied) => (err && (err.name === 'NotAllowedError' || err.name === 'SecurityError') ? denied
+    : err && err.name === 'InvalidStateError' ? 'the file is busy or was changed elsewhere'
+    : (err && err.message) || 'unknown error');
   function flash(msg, isError) {
     const t = $('#toast');
     t.textContent = msg;
@@ -542,14 +546,14 @@
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
       flash(didCut ? 'Cut' : sel ? 'Copied' : 'Copied the whole image');
     } catch (err) {
-      flash('Copy failed: ' + err.message, true);
+      flash('Copy failed: ' + errText(err, 'the browser blocked clipboard access'), true);
     }
   }
   function pasteImage(bmp) {
     const tw = S.pristine ? bmp.width : Math.max(img.width, bmp.width);
     const th = S.pristine ? bmp.height : Math.max(img.height, bmp.height);
     const why = sizeProblem(tw, th);
-    if (why) { flash(`Can't paste: ${why}.`, true); return; }
+    if (why) { flash(`Can't paste: ${why}`, true); return; }
     commitText();
     dropSelection();
     if (S.pristine) { docOp(cloneCanvas(bmp)); fitZoom(true); return; }
@@ -608,7 +612,7 @@
   }
   function resizeDoc(w, h, mode, anchor) {
     const why = sizeProblem(w, h);
-    if (why) { flash(`Can't resize: ${why}.`, true); return; }
+    if (why) { flash(`Can't resize: ${why}`, true); return; }
     if (w === img.width && h === img.height) { flash('Size unchanged'); return; }
     commitText();
     dropSelection();
@@ -634,7 +638,7 @@
       const [h] = await window.showOpenFilePicker({ types: IMAGE_TYPES });
       await loadFile(await h.getFile(), h);
     } catch (err) {
-      if (err.name !== 'AbortError') flash(err.message, true);
+      if (err.name !== 'AbortError') flash("Can't open the file: " + errText(err, 'permission was denied'), true);
     }
   }
   const cantOpen = (file) => (file.type === 'image/svg+xml' || /\.svg$/i.test(file.name)
@@ -643,7 +647,7 @@
     const why = sizeProblem(bmp.width, bmp.height);
     if (!why) return false;
     bmp.close();
-    flash(`Can't open ${file.name}: ${why}.`, true);
+    flash(`Can't open ${file.name}: ${why}`, true);
     return true;
   }
   async function loadFile(file, handle, decoded) {
@@ -735,7 +739,7 @@
       updateChrome();
       flash('Saved ' + h.name);
     } catch (err) {
-      if (err.name !== 'AbortError') flash('Save failed: ' + err.message, true);
+      if (err.name !== 'AbortError') flash('Save failed: ' + errText(err, 'permission was denied'), true);
     }
   }
 
@@ -1158,7 +1162,7 @@
       pasteImage(bmp);
       bmp.close();
     } catch (err) {
-      flash('Paste failed: ' + err.message, true);
+      flash('Paste failed: ' + errText(err, 'the clipboard image couldn’t be read'), true);
     }
   });
   window.addEventListener('dragover', (e) => e.preventDefault());
@@ -1366,12 +1370,12 @@
   const HELP = [
     ['Tools', [['Select', 'S'], ['Pencil', 'P'], ['Brush', 'B'], ['Eraser', 'E'], ['Fill', 'F'], ['Color picker', 'I'],
       ['Text', 'T'], ['Line', 'L'], ['Rectangle', 'R'], ['Ellipse', 'O']]],
-    ['Edit', [['Undo', '⌘Z'], ['Redo', '⌘⇧Z', '⌘Y'], ['Select all', '⌘A'], ['Deselect / dismiss error', 'Esc'], ['Clear selection to color 2', 'Delete', '⌫'],
+    ['Edit', [['Undo', '⌘Z'], ['Redo', '⌘⇧Z', '⌘Y'], ['Select all', '⌘A'], ['Deselect / dismiss error', 'Esc'], ['Cancel shape, selection or move drag', 'Esc'], ['Clear selection to color 2', 'Delete', '⌫'],
       ['Nudge selection (⇧ = 10px)', '←', '↑', '→', '↓'], ['Copy, cut, paste', '⌘C', '⌘X', '⌘V'], ['Crop to selection', '⌘⇧X']]],
     ['Drawing', [['Draw with color 1 / color 2', '~Left / right click'], ['Swap colors', 'X'], ['Smaller / bigger size', '[', ']'],
       ['Square, circle, 45° line', '⇧', '~drag'], ['Pick color 2 from a swatch', '~right-click / ⇧-click'],
       ['Apply text', 'Enter'], ['New line in text', '⇧Enter'], ['Cancel text', 'Esc']]],
-    ['Image', [['Resize image', '⇧R'], ['Canvas size', '⇧C'], ['Canvas: keep aspect', '⇧', '~drag corner'], ['Cancel canvas drag', 'Esc'], ['Cancel shape, selection or move drag', 'Esc']]],
+    ['Image', [['Resize image', '⇧R'], ['Canvas size', '⇧C'], ['Canvas: keep aspect', '⇧', '~drag corner'], ['Cancel canvas drag', 'Esc']]],
     ['File', [['New', 'Alt+N'], ['Open', '⌘O'], ['Save', '⌘S'], ['Save as', '⌘⇧S']]],
     ['View', [['Zoom in / out', '+', '−', '⌘+', '⌘−'], ['Zoom at pointer', '⌘', '~scroll'], ['Fit to window', '⇧1', '⌘0'], ['Actual size', '⇧0'],
       ['Pan', 'Space', '~drag / middle-drag'], ['This list', '?']]],

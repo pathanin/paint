@@ -654,6 +654,8 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       ok(await dims() === before, 'paste that would grow past the cap is refused');
       ok(await P(() => !!window.__paint.sel && !window.__paint.sel.float), 'refused paste keeps the selection untouched');
       ok(/Can't paste/.test(await page.locator('#toast').textContent()), 'paste refusal toast');
+      ok(!/\.$/.test(await page.locator('#toast').textContent()), 'one-sentence toasts have no trailing period');
+      ok(await P(() => ![...document.querySelectorAll('[data-hint],[data-tip],[aria-label]')].some((e) => /\b(left|right) click/i.test((e.dataset.hint || '') + (e.dataset.tip || '') + e.getAttribute('aria-label')))), 'click verbs hyphenated (left-click/right-click)');
       await P(() => window.__paint.resizeDoc(12000, 12000, 'scale', 'mc'));
       ok(await dims() === before && /144 MP/.test(await page.locator('#toast').textContent()), 'resizeDoc refuses 144 MP');
       await P(() => document.querySelector('[data-cmd="new"]') && window.__paint.hist.markSaved());
