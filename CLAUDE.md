@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A small MS-Paint-style image editor written in plain HTML, CSS and JS. It has no build step. It must keep working when `index.html` is opened directly from `file://` in Chrome, and offline. That rules out ES modules, `fetch`, and external SVG sprite references; icons are inline `<symbol>`s in `index.html`.
 
-The only CDN code is optional: pica (resize), UTIF (open TIFF) and UPNG (smaller PNG saves), with pako for the last two. See "Optional libraries" below. Nothing loads at boot, and every feature that uses one has a built-in path.
+The only CDN code is optional: pica (resize), UTIF (open TIFF) and UPNG (smaller PNG saves), with pako for the last two. See "Optional libraries" below. They preload at idle after boot (cached by the browser after that), and every feature that uses one has a built-in path.
 
 ## Commands
 
@@ -73,8 +73,10 @@ When smoke fails, read the **first** `FAIL` line, because later failures often c
 
 ## Optional libraries
 
-- The `LIBS` table in `js/app.js` lists each library with an exact version, an SRI hash and its dependencies. `lib(name)` injects a classic `<script crossorigin integrity>` and resolves to the library's global. It rejects after `LIB_TIMEOUT` (4 s), and the rejection is cached until the window's `online` event, so an unreachable CDN costs one wait at most. When `navigator.onLine` is false it rejects at once, with no request.
-- When each library loads: pica when the Resize dialog opens; UTIF when a file the browser can't decode is a TIFF; UPNG at the first edit, but only if the save will be a PNG (`pushHist()`), so that Save doesn't wait on the CDN.
+- The `LIBS` table in `js/app.js` lists each library with an exact version, an SRI hash and its dependencies. `lib(name)` injects a classic `<script crossorigin integrity>` and resolves to the library's global. It rejects after `LIB_TIMEOUT` (4 s). The rejection is reused, so an unreachable CDN costs one wait at most. A later use falls back at once but starts a background retry (at most every `LIB_RETRY_MS`, 30 s); the `online` event clears failures, and a script that arrives after its timeout is picked up (`libReady()`).
+- Scripts are `async = true`. In-order execution (`async = false`) let one stalled library block the others; dependencies are awaited instead.
+- Boot calls `preloadLibs()` from `requestIdleCallback`. jsDelivr sends `immutable, max-age=31536000`, and Chrome serves those files from disk cache after a restart, even offline and from `file://`. Don't short-circuit on `navigator.onLine`: that skips the cache. `picaInst` is still created on first use, so the preload starts no workers.
+- `fallbackNote()` is the once-a-session notice. It fires only when `lib()` rejected (`used.resizeMissed`, `used.pngMissed`), not when a budget skipped the library. It says "Working offline" when `navigator.onLine` is false, and that the libraries couldn't be loaded otherwise.
 - Every caller catches the rejection and falls back: `scaleImage()` falls back to `resample()`, `encodePng()` to `toBlob`, and `decodeFile()` to an error saying the TIFF reader couldn't be downloaded. `__paint.used` records which path ran, and `libs.js` asserts it so that a silent fallback can't pass the online checks.
 - To bump a version, change the path and recompute the hash: `curl -sL https://cdn.jsdelivr.net/npm/<pkg>@<ver>/<file> | openssl dgst -sha384 -binary | openssl base64 -A`.
 - Scaling is async. `scaleDoc()` drops its result if the document changed while it ran.

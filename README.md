@@ -41,7 +41,7 @@ Save format follows the file extension (PNG, JPEG, WebP); JPEG is flattened onto
 | Open TIFF | [UTIF](https://github.com/photopea/UTIF.js): first page, any compression it supports | Not available; the message says why |
 | Save PNG | [UPNG](https://github.com/photopea/UPNG.js), lossless: about 40–60% smaller for screenshots and drawings, 13–16% for photos. Used up to 3840 × 2160, and only when its estimated time is under ¾ s | The browser's PNG encoder |
 
-Versions are pinned and checked with Subresource Integrity. If the browser is offline, the CDN can't be reached, or it doesn't answer within 4 s, the built-in path runs. Nothing is loaded at startup: pica loads when the Resize dialog opens, the PNG encoder at the first edit of a PNG, and the TIFF reader when a TIFF is opened.
+Versions are pinned and checked with Subresource Integrity. The libraries (about 190 KB) load in the background once the page is idle after it opens. The browser caches them for up to a year, so after one online visit they usually work offline too (best effort: the browser can clear its cache). If they can't load within 4 s, the built-in path runs. The first time that happens in a session, a message says so ("Working offline: resize and PNG saves use the built-in versions"), and a later use retries in the background.
 
 ## Layout
 

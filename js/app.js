@@ -125,10 +125,11 @@
 
   // ---------- optional libraries ----------
   // A few features use a library from a CDN when it can be reached: pica for resampling, UTIF to open
-  // TIFF, UPNG for smaller PNGs (both on pako). Each loads as a classic script on first use (that
-  // works from file://), pinned to an exact version with SRI. Nothing loads at boot. Every caller
-  // keeps a built-in path, so offline the app still works. A failed or timed-out load is remembered,
-  // so later uses don't wait again, until the browser says it's back online.
+  // TIFF, UPNG for smaller PNGs (both on pako). They load as classic scripts (that works from file://),
+  // pinned to an exact version with SRI, when the browser is idle after boot. jsDelivr marks versioned
+  // files immutable for a year, so after the first visit they come from the HTTP cache, offline too
+  // (best effort: the browser may evict them). Every caller keeps a built-in path. A failed load is
+  // remembered, so a use never waits on the network twice; a later use retries in the background.
   const CDN = 'https://cdn.jsdelivr.net/npm/';
   const LIBS = { // UTIF and UPNG read window.pako when they run, so it loads first
     pako: { global: 'pako', file: ['pako@1.0.11/dist/pako.min.js', 'sha384-4NCF4sE5VX/W8Juvr+V9At6hCk146OuwgRSD6r857Tlar3RMK6IkyQ7W0xnNCZnG'] },
@@ -136,10 +137,11 @@
     utif: { global: 'UTIF', deps: ['pako'], file: ['utif2@4.1.0/UTIF.js', 'sha384-3OkDLvanKP4HEK1kZmzFAw1sP4497oBXn/T0TdPKCWFbsKvPh5VZ1vQciyrv/EXb'] },
     upng: { global: 'UPNG', deps: ['pako'], file: ['upng-js@2.1.0/UPNG.js', 'sha384-5zRBkJ6IHy9ezWHX/cBuwC0SnrK23Cfx6G6kIjwR5no9khaSv2md2ZHMXphI3UCB'] },
   };
-  const LIB_TIMEOUT = 4000;
+  const LIB_TIMEOUT = 4000, LIB_RETRY_MS = 30000;
   const libLoads = {};
-  const libState = {}; // name -> 'loading' | 'ok' | 'failed' (for the test handle)
-  const used = {};     // feature -> which implementation ran last, e.g. used.resize = 'pica' | 'builtin'
+  const libState = {};  // name -> 'loading' | 'ok' | 'failed' (for the test handle)
+  const libFailedAt = {};
+  const used = {};      // feature -> which implementation ran last, e.g. used.resize = 'pica' | 'builtin'
   function loadScript([path, integrity]) {
     return new Promise((resolve, reject) => {
       const s = document.createElement('script');
@@ -150,15 +152,21 @@
       s.src = CDN + path;
       s.integrity = integrity;
       s.crossOrigin = 'anonymous';
-      s.async = false;
+      s.async = true; // not in insertion order: a stalled library mustn't hold back the others (deps are awaited)
       document.head.appendChild(s);
     });
   }
+  const libReady = (name) => !!window[LIBS[name].global] && (LIBS[name].deps || []).every(libReady);
   function lib(name) {
+    if (libState[name] === 'failed') {
+      // A script that timed out may still have arrived since: use it.
+      if (libReady(name)) { libState[name] = 'ok'; return (libLoads[name] = Promise.resolve(window[LIBS[name].global])); }
+      // This use falls back now; retry in the background (at most every LIB_RETRY_MS) for the next one.
+      const failed = libLoads[name];
+      if (Date.now() - libFailedAt[name] > LIB_RETRY_MS) retryLib(name);
+      return failed;
+    }
     if (libLoads[name]) return libLoads[name];
-    // Known offline: fall back at once, without a request that can only fail. Not cached, so the
-    // first use after reconnecting tries again.
-    if (navigator.onLine === false) return Promise.reject(new Error('offline'));
     const L = LIBS[name];
     libState[name] = 'loading';
     return (libLoads[name] = Promise.all((L.deps || []).map(lib))
@@ -168,12 +176,23 @@
         libState[name] = 'ok';
         return window[L.global];
       })
-      .catch((err) => { libState[name] = 'failed'; throw err; }));
+      .catch((err) => { libState[name] = 'failed'; libFailedAt[name] = Date.now(); throw err; }));
   }
-  const prefetch = (name) => { lib(name).catch(() => {}); };
-  window.addEventListener('online', () => {
-    for (const name in libState) if (libState[name] === 'failed') { delete libLoads[name]; delete libState[name]; }
-  });
+  function forgetFailure(name) {
+    for (const d of LIBS[name].deps || []) forgetFailure(d);
+    if (libState[name] === 'failed') { delete libLoads[name]; delete libState[name]; }
+  }
+  function retryLib(name) { forgetFailure(name); lib(name).catch(() => {}); }
+  window.addEventListener('online', () => { for (const name in LIBS) forgetFailure(name); });
+  // Said once a session, the first time a resize or PNG save falls back because a library couldn't
+  // be loaded (not when a budget skips it): the result is fine, just not the best one.
+  let fallbackNoted = false;
+  function fallbackNote(missed) {
+    if (!missed || fallbackNoted) return '';
+    fallbackNoted = true;
+    return navigator.onLine === false ? 'Working offline: resize and PNG saves use the built-in versions'
+      : 'Libraries couldn’t be loaded: resize and PNG saves use the built-in versions';
+  }
 
   // ---------- document & history ----------
   // Make canvas c the document, without copying it: it replaces #image in the page.
@@ -408,8 +427,6 @@
   }
   const pushDocHist = (before) => pushHist({ type: 'doc', canvas: before, bytes: before.width * before.height * 4 });
   function pushHist(e) {
-    // There's now something to save. If it will be a PNG, load the encoder before Save needs it.
-    if (!canWrite(S.fileName) || /\.png$/i.test(S.fileName)) prefetch('upng');
     if (hist.push(e) && !S.trimWarned) {
       S.trimWarned = true;
       flash('Oldest undo steps were dropped to save memory');
@@ -1031,10 +1048,11 @@
   const PICA_MAX_PIXELS = 50e6;
   let picaInst = null;
   async function scaleImage(src, w, h) {
+    used.resizeMissed = false; // true when the library couldn't be loaded (not when skipped by size)
     try {
       if (src.width * src.height + w * h > PICA_MAX_PIXELS) throw new Error('too large for pica');
-      const p = await lib('pica');
-      picaInst = picaInst || p();
+      const p = await lib('pica').catch((err) => { used.resizeMissed = true; throw err; });
+      picaInst = picaInst || p(); // created on first use, so loading at boot starts no workers
       const out = makeCanvas(w, h);
       await picaInst.resize(src, out, { filter: 'lanczos3' });
       used.resize = 'pica';
@@ -1075,7 +1093,9 @@
         return;
       }
       docOp(out);
-      if (shown) flash(`Resized to ${w} × ${h} px`);
+      const note = fallbackNote(used.resizeMissed);
+      if (note) flash(shown ? `Resized to ${w} × ${h} px. ${note}.` : note);
+      else if (shown) flash(`Resized to ${w} × ${h} px`);
     } finally {
       clearTimeout(slow);
       scaling = null;
@@ -1192,7 +1212,8 @@
   const UPNG_MAX_PIXELS = 3840 * 2160, UPNG_BUDGET_MS = 750;
   const upngMs = (pixels, nativeRatio) => pixels / 1e6 * (nativeRatio < 0.25 ? 100 : 300);
   async function encodePng() {
-    const UPNG = img.width * img.height <= UPNG_MAX_PIXELS ? await lib('upng').catch(() => null) : null;
+    const UPNG = img.width * img.height <= UPNG_MAX_PIXELS
+      ? await lib('upng').catch(() => { used.pngMissed = true; return null; }) : null;
     // Read the pixels in the same tick as toBlob() snapshots them, so both encoders see one image.
     const w = img.width, h = img.height, raw = UPNG && ctx.getImageData(0, 0, w, h).data.buffer;
     const native = await encode('image/png');
@@ -1207,7 +1228,12 @@
       return native;
     }
   }
-  const encodeFor = (name) => (mimeFor(name) === 'image/png' ? encodePng() : encode(mimeFor(name)));
+  function encodeFor(name) {
+    used.pngMissed = false; // true when UPNG couldn't be loaded (not when skipped by size or time)
+    return mimeFor(name) === 'image/png' ? encodePng() : encode(mimeFor(name));
+  }
+  // Two sentences keep their periods (task.md: toast copy).
+  const withNote = (msg) => { const n = fallbackNote(used.pngMissed); return n ? `${msg}. ${n}.` : msg; };
   let saving = false;
   async function save(as) {
     if (saving) return; // one picker/write at a time
@@ -1242,7 +1268,7 @@
           setTimeout(() => URL.revokeObjectURL(a.href), 10000);
           S.fileName = name;
           hist.markSaved(savedAt); updateChrome();
-          flash('Downloaded ' + name);
+          flash(withNote('Downloaded ' + name));
           return;
         }
         h = await window.showSaveFilePicker({
@@ -1261,7 +1287,7 @@
       hist.markSaved(savedAt);
       Object.assign(S, { fileHandle: h, fileName: h.name });
       updateChrome();
-      flash('Saved ' + h.name);
+      flash(withNote('Saved ' + h.name));
     } catch (err) {
       if (err.name !== 'AbortError') flash('Save failed: ' + errText(err, 'permission was denied'), true);
     }
@@ -1322,7 +1348,6 @@
     syncUnitLabels();
     $('#resizeDlg').showModal();
     $('#rW').select();
-    prefetch('pica'); // usually loaded by the time the size is typed
   }
   function syncResizeMode() {
     const canvas = resizeMode() === 'canvas';
@@ -1989,6 +2014,9 @@
   $('#stIntro').textContent = `Draw, or drop or paste an image · ${keyLabel('⌘O')} opens a file`;
   newDoc(800, 600);
   setTool('pencil');
+  // Load the optional libraries once the page is idle, so they're ready (and cached) before they're needed.
+  const preloadLibs = () => { for (const name of ['pica', 'upng', 'utif']) lib(name).catch(() => {}); };
+  if (window.requestIdleCallback) requestIdleCallback(preloadLibs, { timeout: 2000 }); else setTimeout(preloadLibs, 500);
 
   // Handle for scripted smoke tests in the console.
   window.__paint = { S, hist, libState, used, decodeFile, get img() { return img; }, newDoc, flash, save, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, loadFile, setZoom, fitZoom, MAX_PIXELS, flushToData, get op() { return op; }, get pendingParts() { return [...pendingParts].filter((p) => p.cv).length; } };
