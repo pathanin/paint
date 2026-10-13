@@ -25,6 +25,7 @@ NODE_PATH=/tmp/pw/node_modules node test/e2e/smoke.js file://$PWD/index.html
 NODE_PATH=/tmp/pw/node_modules node test/e2e/shots.js /tmp/pw/shot         # light/dark/dialog/narrow screenshots
 NODE_PATH=/tmp/pw/node_modules node test/e2e/history.js                    # pixel-exact undo/redo, undo depth
 NODE_PATH=/tmp/pw/node_modules node test/e2e/preview.js                    # previews on screen at several zooms
+NODE_PATH=/tmp/pw/node_modules node test/e2e/filledge.js                   # brush = one path; fill leaves no fringe at soft edges
 NODE_PATH=/tmp/pw/node_modules node test/e2e/libs.js                       # CDN libraries: online, offline, CDN hanging
 NODE_PATH=/tmp/pw/node_modules node test/e2e/bench.js --json /tmp/pw/a.json   # perf benchmark (3 runs, medians)
 node test/e2e/bench-compare.js /tmp/pw/before.json /tmp/pw/a.json           # deltas; exit 1 on a regression
@@ -57,7 +58,8 @@ When smoke fails, read the **first** `FAIL` line, because later failures often c
     - GPU context loss (`contextlost` on the document or a snapshot canvas) erases anything not yet read back: `gpuLost()` drops those entries, plus every entry only reachable through them (`History.dropLost()`), and abandons an open op on the GPU, with a flash.
     - Chrome makes each `drawImage` to or from a large canvas costly (1600 tile draws ~130–540 ms at 100 MP, one whole-image draw ~15 ms): snapshot and draw back per contiguous block (`Core.groupRects(…, 1)`), never per tile.
     - Never read back the document while a stroke is in progress; each readback stalls the next frame. `dropOp(true)` restores the tiles.
-  - `fill` entries store the before pixels plus a bit mask, so neither undo nor redo reads the canvas. Redo paints the mask's runs as one `Path2D` fill (exact for the opaque fill colour); masks with over 100k runs fall back to recomputing and putting the pixels.
+    - The brush (`brushCommit()`) draws each batch of segments by restoring its box from the op's tiles and stroking every segment that reaches it as one clipped path, so batches never ink an edge pixel twice. It `touch()`es the box first, so every tile it restores from exists.
+  - `fill` entries store the before pixels, a bit mask and the new values of the anti-aliased ring around the region (`Core.fillEdge`, `ek`/`ev`), so neither undo nor redo reads the canvas. Redo paints the mask's runs as one `Path2D` fill (exact for the opaque fill colour), then the ring pixels one path per colour; masks with over 100k runs, or a ring that isn't opaque, fall back to recomputing and putting the pixels.
   - `doc` entries hold the previous `#image` element itself (crop, resize, rotate, a paste that grows the canvas). `History`'s `onDrop` frees dropped canvases.
   - Unsaved state is `isDirty()` = `!hist.isClean()` OR a floating selection OR non-empty open text. Never keep a separate dirty flag.
 - **UI wiring** is mostly data-driven from attributes in `index.html`:

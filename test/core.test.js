@@ -91,6 +91,105 @@ test('floodFill out of bounds is a no-op', () => {
   assert.equal(Core.floodFill(u32, 2, 2, 5, 0, 1, 0), null);
 });
 
+// fillEdge: the region of floodMask, then the ring fillEdge returns written over it.
+function fillWithEdge(g, x, y, color, tol) {
+  const target = g.u32[y * g.w + x];
+  const region = Core.floodMask(g.u32, g.w, g.h, x, y, tol);
+  const e = Core.fillEdge(g.u32, g.w, g.h, region, target, color, tol);
+  assert.ok(region.mask.every((m) => m === 0 || m === 1)); // edge marks are cleared
+  assert.equal(new Set(region.edge).size, region.edge.length); // each edge pixel once
+  for (let i = 0; i < region.mask.length; i++) if (region.mask[i]) g.u32[i] = color;
+  e.idx.forEach((i, k) => { g.u32[i] = e.val[k]; });
+  return e;
+}
+const rgba = (v) => [v & 255, (v >>> 8) & 255, (v >>> 16) & 255, v >>> 24];
+
+test('fillEdge recolours an anti-aliased edge as if it had been drawn over the fill colour', () => {
+  const W = Core.rgbaToU32(255, 255, 255, 255), K = Core.rgbaToU32(0, 0, 0, 255), R = Core.rgbaToU32(255, 0, 0, 255);
+  const g40 = Core.rgbaToU32(102, 102, 102, 255); // 40% white over black ink
+  const g = grid(['..gKK', '..gKK', '..gKK'], { '.': W, g: g40, K });
+  const e = fillWithEdge(g, 0, 0, R, 10);
+  assert.equal(e.idx.length, 3);
+  for (let y = 0; y < 3; y++) {
+    assert.deepEqual(rgba(g.u32[y * 5 + 2]), [102, 0, 0, 255]); // 40% red over black
+    assert.equal(g.u32[y * 5 + 3], K);
+  }
+  assert.deepEqual(e.box, { x: 0, y: 0, w: 3, h: 3 }); // the region's box grown by the ring
+});
+
+test('fillEdge reaches edge pixels that touch the region only diagonally', () => {
+  const W = Core.rgbaToU32(255, 255, 255, 255), K = Core.rgbaToU32(0, 0, 0, 255), R = Core.rgbaToU32(255, 0, 0, 255);
+  const g50 = Core.rgbaToU32(128, 128, 128, 255);
+  // a 45-degree edge: g is half covered; the flood is 4-connected, the ring 8-connected
+  const g = grid(['..gK', '.gKK', 'gKKK', 'KKKK'], { '.': W, g: g50, K });
+  fillWithEdge(g, 0, 0, R, 10);
+  for (const [x, y] of [[2, 0], [1, 1], [0, 2]]) assert.deepEqual(rgba(g.u32[y * 4 + x]), [128, 0, 0, 255]);
+});
+
+test('fillEdge grows through soft pixels to ones that only touch soft pixels (a narrow wedge)', () => {
+  const W = Core.rgbaToU32(255, 255, 255, 255), K = Core.rgbaToU32(0, 0, 0, 255), R = Core.rgbaToU32(255, 0, 0, 255);
+  const s30 = Core.rgbaToU32(77, 77, 77, 255), s78 = Core.rgbaToU32(199, 199, 199, 255);
+  // w: 78% background, touching the region only through 30% pixels
+  const g = grid(['..sKK', '..swK', '..sKK'], { '.': W, s: s30, w: s78, K });
+  fillWithEdge(g, 0, 0, R, 10);
+  assert.deepEqual(rgba(g.u32[8]), [199, 0, 0, 255]);
+  assert.deepEqual(rgba(g.u32[2]), [77, 0, 0, 255]);
+});
+
+test('fillEdge does not grow onto soft pixels that touch another region', () => {
+  const W = Core.rgbaToU32(255, 255, 255, 255), K = Core.rgbaToU32(0, 0, 0, 255), R = Core.rgbaToU32(255, 0, 0, 255);
+  const s30 = Core.rgbaToU32(77, 77, 77, 255), s78 = Core.rgbaToU32(199, 199, 199, 255);
+  // the w pixels belong to the soft edge of the region on the right, which isn't filled
+  const g = grid(['.sw..', '.sK..', '.sw..'], { '.': W, s: s30, w: s78, K });
+  fillWithEdge(g, 0, 0, R, 10);
+  assert.equal(g.u32[2], s78);
+  assert.equal(g.u32[12], s78);
+  assert.equal(g.u32[3], W);
+});
+
+test('fillEdge leaves hard-edged art byte-identical', () => {
+  const W = Core.rgbaToU32(255, 255, 255, 255), K = Core.rgbaToU32(0, 0, 0, 255), R = Core.rgbaToU32(255, 0, 0, 255), B = Core.rgbaToU32(0, 0, 255, 255);
+  const map = { '.': W, r: R, '#': K }, rev = { [W]: '.', [R]: 'r', [K]: '#', [B]: 'b' };
+  // two-colour pixel art and a 1 px diagonal pencil line on white
+  const g = grid(['.......', '.r#..#.', '.#r.#..', '...#...', '.......'], map);
+  const e = fillWithEdge(g, 0, 0, B, 10);
+  assert.equal(e.idx.length, 0);
+  assert.deepEqual(toRows(g.u32, g.w, g.h, rev), ['bbbbbbb', 'br#bb#b', 'b#rb#bb', 'bbb#bbb', 'bbbbbbb']);
+});
+
+test('fillEdge does not leak into a separate region that touches diagonally', () => {
+  const W = Core.rgbaToU32(255, 255, 255, 255), K = Core.rgbaToU32(0, 0, 0, 255), R = Core.rgbaToU32(255, 0, 0, 255);
+  const g = grid(['.#.', '#..', '...'], { '.': W, '#': K });
+  const e = fillWithEdge(g, 0, 0, R, 0);
+  assert.equal(e.idx.length, 0);
+  assert.equal(g.u32[4], W); // (1, 1): the other region, diagonal to the filled pixel
+});
+
+test('fillEdge leaves a thin line with no fully inked pixel as it is', () => {
+  const W = Core.rgbaToU32(255, 255, 255, 255), R = Core.rgbaToU32(255, 0, 0, 255);
+  const g50 = Core.rgbaToU32(128, 128, 128, 255);
+  const g = grid(['..g..', '..g..'], { '.': W, g: g50 });
+  const e = fillWithEdge(g, 0, 0, R, 10);
+  assert.equal(e.idx.length, 0); // nothing darker nearby: the ink colour is unknown
+});
+
+test('fillEdge over a transparent background composites the ink onto the fill colour', () => {
+  const T = 0, K = Core.rgbaToU32(0, 0, 0, 255), R = Core.rgbaToU32(255, 0, 0, 255);
+  const half = Core.rgbaToU32(0, 0, 0, 128); // canvas reads transparent as 0,0,0,0
+  const g = grid(['.hK', '.hK'], { '.': T, h: half, K });
+  fillWithEdge(g, 0, 0, R, 10);
+  assert.deepEqual(rgba(g.u32[1]), [127, 0, 0, 255]);
+});
+
+test('fillEdge clamps its box to the image', () => {
+  const W = Core.rgbaToU32(255, 255, 255, 255), K = Core.rgbaToU32(0, 0, 0, 255), R = Core.rgbaToU32(255, 0, 0, 255);
+  const g40 = Core.rgbaToU32(102, 102, 102, 255);
+  const g = grid(['gg..', 'gg..'], { '.': W, g: g40 });
+  g.u32[0] = K; g.u32[4] = K;
+  const e = fillWithEdge(g, 3, 0, R, 10);
+  assert.deepEqual(e.box, { x: 1, y: 0, w: 3, h: 2 });
+});
+
 test('line produces contiguous Bresenham points', () => {
   assert.deepEqual(Core.line(0, 0, 3, 0), [[0, 0], [1, 0], [2, 0], [3, 0]]);
   assert.deepEqual(Core.line(0, 0, 2, 2), [[0, 0], [1, 1], [2, 2]]);

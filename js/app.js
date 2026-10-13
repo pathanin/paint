@@ -700,20 +700,59 @@
     for (const [x, y] of Core.line(a.x, a.y, b.x, b.y)) ctx.rect(x - off, y - off, size, size);
     ctx.fill();
   }
-  // Brush: Core.Stroke segments ({a, c, b}, c = quadratic control or null) as one path, so joins blend once.
-  // The same call draws committed segments on the image and the live tail on the preview.
+  // Brush: Core.Stroke segments ({a, c, b}, c = quadratic control or null) as one path, so joins blend
+  // once; a segment that doesn't start where the last one ended starts a new subpath (same shape:
+  // round caps meet like a round join). Draws the live tail on the preview; brushCommit() the image.
   function brushPath(c, segs, color, size) {
     if (!segs.length) return;
-    if (c === ctx) for (const g of segs) { const b = segsBox([g], size / 2 + 1); touch(b.x, b.y, b.w, b.h); } // before drawing
     c.save();
     c.strokeStyle = color;
     c.lineWidth = size;
     c.lineCap = c.lineJoin = 'round';
     c.beginPath();
-    c.moveTo(segs[0].a.x, segs[0].a.y);
-    for (const { c: q, b } of segs) { if (q) c.quadraticCurveTo(q.x, q.y, b.x, b.y); else c.lineTo(b.x, b.y); }
+    let end = null;
+    for (const { a, c: q, b } of segs) {
+      if (!end || end.x !== a.x || end.y !== a.y) c.moveTo(a.x, a.y);
+      if (q) c.quadraticCurveTo(q.x, q.y, b.x, b.y); else c.lineTo(b.x, b.y);
+      end = b;
+    }
     c.stroke();
     c.restore();
+  }
+  // Add segments to the brush stroke d and draw them into the image. Stroking each batch over the
+  // last would ink the soft edge pixels where batches overlap twice: darker bumps along the edge,
+  // and a fringe the fill can't match. So the batch's box is put back as it was before the stroke
+  // (from the op's tiles) and every segment of the stroke that reaches it is stroked again as one
+  // path, clipped to the box: the image always matches the stroke so far drawn as one path.
+  function brushCommit(d, segs) {
+    if (!segs.length) return;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const g of segs) {
+      g.box = segsBox([g], d.size / 2 + 1);
+      d.all.push(g);
+      x0 = Math.min(x0, g.box.x); y0 = Math.min(y0, g.box.y);
+      x1 = Math.max(x1, g.box.x + g.box.w); y1 = Math.max(y1, g.box.y + g.box.h);
+    }
+    x0 = Math.max(0, Math.floor(x0)); y0 = Math.max(0, Math.floor(y0));
+    x1 = Math.min(img.width, Math.ceil(x1)); y1 = Math.min(img.height, Math.ceil(y1));
+    if (x1 <= x0 || y1 <= y0) return;
+    const r = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+    touch(r.x, r.y, r.w, r.h); // before drawing
+    if (!op) { brushPath(ctx, segs, d.color, d.size); return; } // the op was abandoned (GPU context lost)
+    for (const p of Core.tileParts(r, img.width, img.height, TILE)) {
+      const t = op.tiles.get(p.key);
+      if (t.cv) {
+        ctx.clearRect(p.x, p.y, p.w, p.h);
+        ctx.drawImage(t.cv, t.cx + p.x - t.x, t.cy + p.y - t.y, p.w, p.h, p.x, p.y, p.w, p.h);
+      } else ctx.putImageData(t.data, t.x, t.y, p.x - t.x, p.y - t.y, p.w, p.h);
+    }
+    const hit = d.all.filter(({ box: b }) => b.x < x1 && b.x + b.w > x0 && b.y < y1 && b.y + b.h > y0);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(r.x, r.y, r.w, r.h);
+    ctx.clip();
+    brushPath(ctx, hit, d.color, d.size);
+    ctx.restore();
   }
   // Bounding box of segments grown by h (a quadratic stays inside the hull of its points).
   function segsBox(segs, h) {
@@ -725,13 +764,6 @@
     }
     return { x: x0 - h, y: y0 - h, w: x1 - x0 + 2 * h, h: y1 - y0 + 2 * h };
   }
-  function brushDot(p, color, size) {
-    touch(p.x - size / 2 - 1, p.y - size / 2 - 1, size + 2, size + 2);
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, size / 2, 0, Math.PI * 2);
-    ctx.fill();
-  }
 
   function doFill(p, color) {
     const W = img.width, H = img.height;
@@ -741,9 +773,12 @@
     if (Math.round(S.tolerance * 255 / 100) === 0 && new Uint32Array(ctx.getImageData(p.x, p.y, 1, 1).data.buffer)[0] === c) return;
     const data = ctx.getImageData(0, 0, W, H);
     const u32 = new Uint32Array(data.data.buffer);
-    const { mask, box } = Core.floodMask(u32, W, H, p.x, p.y, S.tolerance);
-    // The undo entry: the box's pixels before, plus the region as a bit mask. "After" is those
-    // pixels with the masked ones set to c, so neither undo nor redo has to read the canvas back.
+    const region = Core.floodMask(u32, W, H, p.x, p.y, S.tolerance), mask = region.mask;
+    // The soft (anti-aliased) edge around the region is recoloured too, so no light fringe is left.
+    const edge = Core.fillEdge(u32, W, H, region, u32[p.y * W + p.x], c, S.tolerance), box = edge.box;
+    // The undo entry: the box's pixels before, the region as a bit mask and the edge pixels' new
+    // values. "After" is those pixels with the masked ones set to c and the edge ones to theirs, so
+    // neither undo nor redo has to read the canvas back.
     const before = new ImageData(box.w, box.h);
     blit(data, box.x, box.y, before, 0, 0, box.w, box.h);
     const bits = new Uint8Array(Math.ceil(box.w * box.h / 8));
@@ -755,19 +790,29 @@
         if (u32[i] !== c) { u32[i] = c; changed = true; }
       }
     }
-    if (!changed) return;
+    const ek = new Uint32Array(edge.idx.length);
+    edge.idx.forEach((i, k) => { u32[i] = edge.val[k]; ek[k] = ((i / W | 0) - box.y) * box.w + i % W - box.x; });
+    if (!changed && !ek.length) return;
     ctx.putImageData(data, 0, 0, box.x, box.y, box.w, box.h);
-    pushHist({ type: 'fill', x: box.x, y: box.y, before, bits, color: c, undone: false, bytes: before.data.length + bits.length });
+    pushHist({ type: 'fill', x: box.x, y: box.y, before, bits, color: c, ek, ev: edge.val, undone: false, bytes: before.data.length + bits.length + ek.length * 8 });
   }
   // Undo/redo of a fill entry: put back the pixels before, or recompute the filled ones.
   function applyFill(e) {
     // Redo: the box holds exactly the before pixels, so painting the mask's runs in the (opaque) fill
-    // colour gives the after state. One path fill of whole-pixel rects is exact and costs no upload.
-    if (e.undone && (e.color >>> 24) === 255) {
+    // colour, then each edge pixel in its (opaque) colour, gives the after state. Path fills of
+    // whole-pixel rects are exact and cost no upload.
+    const rgb = (v) => `rgb(${v & 255}, ${(v >>> 8) & 255}, ${(v >>> 16) & 255})`;
+    if (e.undone && (e.color >>> 24) === 255 && e.ek.length <= 100000 && e.ev.every((v) => (v >>> 24) === 255)) {
       const path = fillRuns(e.bits, e.before.width, e.before.height, e.x, e.y);
       if (path) {
-        ctx.fillStyle = `rgb(${e.color & 255}, ${(e.color >>> 8) & 255}, ${(e.color >>> 16) & 255})`;
+        ctx.fillStyle = rgb(e.color);
         ctx.fill(path);
+        const byColor = new Map(), w = e.before.width;
+        e.ek.forEach((k, j) => {
+          if (!byColor.has(e.ev[j])) byColor.set(e.ev[j], new Path2D());
+          byColor.get(e.ev[j]).rect(e.x + k % w, e.y + (k / w | 0), 1, 1);
+        });
+        for (const [v, px] of byColor) { ctx.fillStyle = rgb(v); ctx.fill(px); }
         e.undone = false;
         return;
       }
@@ -777,6 +822,7 @@
       im = new ImageData(new Uint8ClampedArray(e.before.data), e.before.width, e.before.height);
       const u32 = new Uint32Array(im.data.buffer);
       for (let k = 0; k < u32.length; k++) if (e.bits[k >> 3] & (1 << (k & 7))) u32[k] = e.color;
+      e.ek.forEach((k, j) => { u32[k] = e.ev[j]; });
     }
     ctx.putImageData(im, e.x, e.y);
     e.undone = !e.undone;
@@ -1472,8 +1518,8 @@
         // Smoothing radius is in screen px (2 per step), fixed for the stroke even if the zoom changes.
         beginOp(true);
         const size = S.sizes.brush;
-        drag = { t, color, size, ptr: p, stroke: new Core.Stroke(p, S.smoothing * 2 / S.zoom, 0.5 / S.zoom) };
-        brushDot(p, color, size);
+        drag = { t, color, size, ptr: p, all: [], stroke: new Core.Stroke(p, S.smoothing * 2 / S.zoom, 0.5 / S.zoom) };
+        brushCommit(drag, [{ a: p, c: null, b: { x: p.x + 1e-3, y: p.y } }]); // the dot under the pointer (a 0-length line draws nothing)
         break;
       }
       case 'fill': doFill(ip, color); break;
@@ -1521,7 +1567,7 @@
           d.last = iq;
         }
       }
-      if (d.segs) { brushPath(ctx, d.segs, d.color, d.size); d.segs = null; }
+      if (d.segs) { brushCommit(d, d.segs); d.segs = null; }
     } else if (SHAPES.has(d.t)) {
       d.end = { x: Math.floor(p.x), y: Math.floor(p.y) };
       d.shift = e.shiftKey;
@@ -1580,7 +1626,7 @@
     else if (d.t === 'brush') {
       // The stroke ends exactly where the pointer lifted (pointercancel carries no reliable position).
       const q = e && e.type === 'pointerup' ? imgPt(e) : d.ptr;
-      brushPath(ctx, d.stroke.finish(q), d.color, d.size);
+      brushCommit(d, d.stroke.finish(q));
       endOp();
     }
     else if (d.t === 'pencil' || d.t === 'eraser') endOp();
