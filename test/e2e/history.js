@@ -114,6 +114,49 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await P(() => window.__paint.undo()); ok(await P(() => !window.__paint.hist.isClean()), 'dirty after undo past save');
     await P(() => window.__paint.redo()); ok(await P(() => window.__paint.hist.isClean()), 'clean again after redo to save point');
 
+    // ---- 1b. entries held on the GPU (undo/redo snapshot) vs read back at idle, mixed ----
+    // swapParts() snapshots onto GPU canvases and reads them back about a second later; every mix of
+    // the two states must stay pixel-exact, on multi-tile edits over semi-transparent noise.
+    await P(() => {
+      const p = window.__paint;
+      p.newDoc(1000, 700);
+      const c = document.querySelector('#image'), g = c.getContext('2d');
+      const im = g.createImageData(c.width, c.height);
+      let s = 777; const rnd = () => ((s = Math.imul(s, 1103515245) + 12345 >>> 0) >>> 16) & 255;
+      for (let i = 0; i < im.data.length; i += 4) { im.data[i] = rnd(); im.data[i + 1] = rnd(); im.data[i + 2] = rnd(); im.data[i + 3] = (i / 4) % 5 === 0 ? 0 : rnd(); }
+      g.putImageData(im, 0, 0);
+      p.hist.clear(); p.fitZoom(false); p.S.fillMode = 'both'; p.S.primary = 'rgba(0,0,0,1)';
+    });
+    await frame();
+    const g1 = [await hash()];
+    await drag('rect', [[30, 40], [900, 650]]); g1.push(await hash());
+    await drag('ellipse', [[100, 100], [700, 500]]); g1.push(await hash());
+    await drag('select', [[300, 200], [800, 600]]); await page.keyboard.press('Delete'); await frame(); g1.push(await hash());
+    const flush = () => P(() => window.__paint.flushToData());
+    const pending = () => P(() => window.__paint.pendingParts);
+    ok(await pending() > 0, 'fresh edits are held on the GPU until idle');
+    await flush();
+    ok(await pending() === 0, 'flushToData reads everything back');
+    const seq = [['undo', 2, false], ['undo', 1, true], ['redo', 2, false], ['undo', 1, false], ['undo', 0, true], ['redo', 1, true], ['redo', 2, false], ['redo', 3, false], ['undo', 2, true], ['redo', 3, true]];
+    for (const [f, want, fl] of seq) {
+      await P((f) => window.__paint[f](), f); await frame();
+      if (fl) await flush();
+      ok(await hash() === g1[want], `GPU/CPU mix: ${f} to state ${want}${fl ? ' then read back' : ''} is pixel-exact`);
+    }
+    // the idle readback itself (no flush): wait for it, then undo
+    await page.waitForTimeout(2500);
+    ok(await pending() === 0, 'idle readback drains the GPU-held parts');
+    await P(() => window.__paint.undo()); await frame();
+    ok(await hash() === g1[2], 'undo after the idle readback is pixel-exact');
+    // entries dropped while their readback is pending: freed, and nothing left to read
+    await P(() => window.__paint.undo()); await frame();
+    ok(await pending() > 0, 'undo leaves a pending readback');
+    await P(() => window.__paint.newDoc(100, 100));
+    ok(await pending() === 0, 'clearing history drops pending readbacks');
+    await flush();
+    await page.waitForTimeout(1500);
+    ok(!errs.length, `no errors from pending readbacks of dropped entries: ${errs.join('; ')}`);
+
     // ---- 2. undo depth on a 4000 x 3000 photo ----
     await P(() => { window.__paint.newDoc(4000, 3000); window.__paint.fitZoom(false); });
     await P(() => { window.__paint.S.sizes.brush = 20; });

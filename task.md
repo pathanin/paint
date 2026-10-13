@@ -42,17 +42,18 @@ Hover cost per move is near Chrome's per-frame floor. The app is fully idle when
 
 ### Left to do (pick up here)
 
-1. **Whole-image undo/redo at 100 MP is slower:** 1.3 s vs 0.83 s for 10 steps.
-   - Region entries hold one copy of the pixels, so `swapParts()` reads the canvas back.
-   - Idea: snapshot into GPU tile canvases, put the stored pixels, and convert the snapshot to ImageData at idle via `readTiles()`.
-2. **Committing a rect/ellipse/line at 100 MP is about 37% slower,** because `touch()` reads the shape's tiles back up front. Try GPU tile snapshots, as strokes use.
-3. **Marching ants are invisible at ≥ 800% zoom** (a bug older than this branch). `#preview` is 1 backing px per image px when zoomed in, so the 1/zoom px dashes collapse.
-   - Draw the ants at screen resolution, but keep shape and float previews pixelated.
-4. **Not verified:**
+Done on branch `perf-leftovers` (2026-10-14):
+- **Region undo/redo** no longer reads the document back. It snapshots on the GPU, writes the stored pixels, and reads the snapshot back at idle, a second after the last change. At 100 MP a whole-image step takes ~57 ms, against 285 ms on master and ~90 ms pre-perf.
+- **Shape (and every non-stroke) commits** snapshot on the GPU too. A whole-doc filled rect commits in ~58 ms plus ~300 ms of chunked idle readback; pre-perf took 512 ms.
+- **Fill redo** paints the mask's runs as one path fill instead of recomputing and putting 400 MB. Bench `10000 undo+redo x5` is 893 ms, against 909 pre-perf over 5 runs and 1313–1469 on master.
+- **Marching ants** are an `#ants` element at screen resolution. `preview.js` checks them at 800% and 1600%.
+- **`bench.js`** now flushes the idle readback at the end of each scenario, so the cost lands on the edit that caused it. "undo all" rows therefore include reading back every undone entry, which the app does in idle chunks.
+
+1. **Not verified:**
    - the DPR-change path (`matchMedia` watcher), since CDP emulation doesn't fire `change`;
    - headed GPU runs of very large scribbles;
    - Firefox and Safari performance.
-5. **Benchmark noise:** `task` varies about ±15% between runs. Small-document rows flagged by `bench-compare` were within that noise. Brush rows compare against code without smoothing. For sub-millisecond questions use a Chrome trace.
+2. **Benchmark noise:** `task` varies about ±15% between runs. Small-document rows flagged by `bench-compare` were within that noise. Brush rows compare against code without smoothing. For sub-millisecond questions use a Chrome trace.
 
 Measured gotchas behind the design (Chrome, M4, 10000² canvas):
 - Any readback of the document mid-stroke (`getImageData`, or of a canvas drawn from it) costs ~10 ms a frame.

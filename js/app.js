@@ -2,14 +2,15 @@
   'use strict';
   const $ = (s) => document.querySelector(s);
   const ov = $('#overlay'), stage = $('#stage'), vp = $('#viewport'), textBox = $('#textInput');
-  const ring = $('#ring');
+  const ring = $('#ring'), antsEl = $('#ants');
   // The document canvas. Whole-image ops (crop, rotate, resize...) swap in a new element rather than
   // copying pixels, and undo swaps it back, so these are reassigned by adoptImage().
   let img = $('#image');
   let ctx = img.getContext('2d');
-  // #overlay is only the pointer target (never drawn, so it has no backing store). Shape previews,
-  // marching ants and floating selections are drawn on #preview, which covers just the visible part
-  // of the image. A document-sized overlay costs 400 MB at 100 MP, and twice that once shown.
+  // #overlay is only the pointer target (never drawn, so it has no backing store). Shape previews
+  // and floating selections are drawn on #preview, which covers just the visible part of the image
+  // (marching ants are the #ants element, at screen resolution). A document-sized overlay costs
+  // 400 MB at 100 MP, and twice that once shown.
   const pv = $('#preview');
   const octx = pv.getContext('2d');
 
@@ -24,7 +25,10 @@
     pristine: true, panKey: false,
   };
   // Dropped doc entries hold whole canvases: free them now (width 0) rather than at some later GC.
-  const hist = new Core.History({ maxBytes: 256 * 1024 * 1024, maxCount: 100, onDrop: (e) => { if (e.type === 'doc') e.canvas.width = 0; } });
+  const hist = new Core.History({ maxBytes: 256 * 1024 * 1024, maxCount: 100, onDrop: (e) => {
+    if (e.type === 'doc') e.canvas.width = 0;
+    else if (e.type === 'region') e.parts.forEach(release);
+  } });
   const SHAPES = new Set(['line', 'rect', 'ellipse']);
   const TOOL_KEYS = {
     KeyS: 'select', KeyP: 'pencil', KeyB: 'brush', KeyE: 'eraser', KeyF: 'fill',
@@ -198,20 +202,60 @@
   // Undo is copy-on-write. Every edit calls touch(rect) *before* drawing into rect; the first touch
   // of each TILE x TILE tile saves its pixels. endOp() keeps only the touched part of each tile.
   // So no op copies the whole image, and a long diagonal stroke stores a thin band of tiles, not
-  // its whole bounding box. Tiles are saved one of two ways:
-  //  - strokes (beginOp(true)): each tile is copied into a small canvas of its own (GPU drawImage),
-  //    and read back once, in endOp() (or mid-stroke, once more than 512 are live);
-  //  - everything else touches its whole area once, up front: one getImageData of those tiles.
+  // its whole bounding box. Tiles are saved on the GPU (drawImage, no readback):
+  //  - strokes (beginOp(true)): each tile into a small canvas of its own, as the stroke reaches it
+  //    (past 512 live tile canvases, 128 MB, they are read back mid-stroke to bound GPU memory);
+  //  - everything else: one canvas per contiguous block of each touch()'s tiles (snapshot()).
+  // The stored pixels stay on the GPU until an idle callback reads them back (toData()); undo/redo
+  // before that draws them straight back.
   // Two Chrome gotchas shape this (measured on a 10000 px canvas):
   //  - No readback (getImageData) of the document, or of anything drawn from it, while a stroke is in
   //    progress: each one costs ~10 ms per frame, as the next frame then copies the whole canvas.
   //  - No reusing snapshot canvases after they were read back: Chrome may move a canvas that was
-  //    read to the CPU, and then drawing the document into it is a readback too. So tiles are fresh
-  //    per op, and freed (width 0) as soon as endOp() has read them.
+  //    read to the CPU, and then drawing the document into it is a readback too. So snapshot
+  //    canvases are fresh, and freed (width 0) once nothing refers to them.
+  // A tile or part {w, h} holds its pixels either as data (ImageData, w x h) or as cv/cx/cy: the
+  // block at (cx, cy) in canvas cv, which counts its users in cv.refs.
   const TILE = 256;
   function beginOp(stroke) {
     dropOp();
     op = { tiles: new Map(), stroke: !!stroke, live: 0 };
+  }
+  function release(t) {
+    if (t.cv && --t.cv.refs === 0) t.cv.width = 0;
+    t.cv = null;
+  }
+  // Snapshot the document's pixels under each item {x, y, w, h} without a readback; sets each item's
+  // cv/cx/cy. Chrome makes each drawImage to or from a large canvas costly (1600 tile draws ~130 ms
+  // at 100 MP, one whole-image draw ~15 ms), so items that tile a rectangle share one canvas.
+  function snapshot(items) {
+    for (const g of Core.groupRects(items, 1)) {
+      const cv = makeCanvas(g.w, g.h);
+      cv.getContext('2d').drawImage(img, g.x, g.y, g.w, g.h, 0, 0, g.w, g.h); // onto transparent: exact, alpha too
+      cv.refs = g.items.length;
+      for (const i of g.items) { const t = items[i]; t.cv = cv; t.cx = t.x - g.x; t.cy = t.y - g.y; }
+    }
+  }
+  // Group items by the canvas holding them: [[cv, items]].
+  function byCanvas(items) {
+    const m = new Map();
+    for (const t of items) { if (!m.has(t.cv)) m.set(t.cv, []); m.get(t.cv).push(t); }
+    return [...m];
+  }
+  // Write the GPU-held block of each item (or the part (sx, sy, w, h) of it given by rect(t)) back to
+  // the document: one draw per canvas when its items tile a rectangle at matching offsets.
+  function drawBack(items, rect) {
+    for (const [cv, ts] of byCanvas(items)) {
+      const rs = ts.map((t) => rect(t));
+      const x0 = Math.min(...rs.map((r) => r.x)), y0 = Math.min(...rs.map((r) => r.y));
+      const x1 = Math.max(...rs.map((r) => r.x + r.w)), y1 = Math.max(...rs.map((r) => r.y + r.h));
+      const area = rs.reduce((n, r) => n + r.w * r.h, 0), dx = rs[0].sx - rs[0].x, dy = rs[0].sy - rs[0].y;
+      const one = area === (x1 - x0) * (y1 - y0) && rs.every((r) => r.sx - r.x === dx && r.sy - r.y === dy);
+      for (const r of one ? [{ x: x0, y: y0, w: x1 - x0, h: y1 - y0, sx: x0 + dx, sy: y0 + dy }] : rs) {
+        ctx.clearRect(r.x, r.y, r.w, r.h);
+        ctx.drawImage(cv, r.sx, r.sy, r.w, r.h, r.x, r.y, r.w, r.h);
+      }
+    }
   }
   function touch(x, y, w, h) {
     if (!op) return;
@@ -224,55 +268,53 @@
         continue;
       }
       const ox = p.tx * TILE, oy = p.ty * TILE;
-      const t2 = { c: null, data: null, ox, oy, w: Math.min(TILE, img.width - ox), h: Math.min(TILE, img.height - oy), x0: p.x, y0: p.y, x1: p.x + p.w, y1: p.y + p.h };
+      const t2 = { cv: null, cx: 0, cy: 0, data: null, x: ox, y: oy, w: Math.min(TILE, img.width - ox), h: Math.min(TILE, img.height - oy), x0: p.x, y0: p.y, x1: p.x + p.w, y1: p.y + p.h };
       op.tiles.set(p.key, t2);
       fresh.push(t2);
     }
     if (!fresh.length) return;
-    if (op.stroke) {
-      // Bound the GPU memory a long scribble can pin: past 512 live tile canvases (128 MB), read
-      // them back now. That one readback stalls a frame; the alternative is unbounded memory.
-      for (const t of fresh) {
-        if (op.live >= 512) { readTiles([...op.tiles.values()].filter((x) => x.c)); op.live = 0; }
-        op.live++;
-        t.c = makeCanvas(t.w, t.h);
-        t.c.getContext('2d').drawImage(img, t.ox, t.oy, t.w, t.h, 0, 0, t.w, t.h); // onto transparent: exact, alpha too
-      }
-      return;
-    }
-    // One readback covering the new tiles, cut up per tile.
-    const X0 = Math.min(...fresh.map((t) => t.ox)), Y0 = Math.min(...fresh.map((t) => t.oy));
-    const X1 = Math.max(...fresh.map((t) => t.ox + t.w)), Y1 = Math.max(...fresh.map((t) => t.oy + t.h));
-    const all = ctx.getImageData(X0, Y0, X1 - X0, Y1 - Y0);
+    if (!op.stroke) { snapshot(fresh); return; }
     for (const t of fresh) {
-      t.data = new ImageData(t.w, t.h);
-      blit(all, t.ox - X0, t.oy - Y0, t.data, 0, 0, t.w, t.h);
+      if (op.live >= 512) { toData([...op.tiles.values()].filter((x) => x.cv)); op.live = 0; }
+      op.live++;
+      snapshot([t]);
     }
   }
   function endOp() {
     const o = op; op = null;
     if (!o || !o.tiles.size) return;
-    const tiles = [...o.tiles.values()];
-    if (o.stroke) readTiles(tiles.filter((t) => t.c));
     const parts = [];
     let bytes = 0;
-    for (const t of tiles) {
-      const w = t.x1 - t.x0, h = t.y1 - t.y0;
-      let data = t.data;
-      if (w !== t.w || h !== t.h) { data = new ImageData(w, h); blit(t.data, t.x0 - t.ox, t.y0 - t.oy, data, 0, 0, w, h); }
-      parts.push({ x: t.x0, y: t.y0, data });
-      bytes += w * h * 4;
+    for (const t of o.tiles.values()) {
+      const w = t.x1 - t.x0, h = t.y1 - t.y0, dx = t.x0 - t.x, dy = t.y0 - t.y;
+      const part = { x: t.x0, y: t.y0, w, h, cv: t.cv, cx: t.cx + dx, cy: t.cy + dy, data: t.data };
+      if (t.data && (w !== t.w || h !== t.h)) { part.data = new ImageData(w, h); blit(t.data, dx, dy, part.data, 0, 0, w, h); }
+      parts.push(part);
+      bytes += w * h * 4; // a part on the GPU may sit in a larger tile until toData() crops it
     }
     pushHist({ type: 'region', parts, bytes });
+    queueToData(parts);
   }
-  // Stroke tiles -> t.data. Each readback has a large fixed cost, so the tiles are first drawn into
-  // atlases of up to 16 x 16 tiles, and each atlas is read back once.
-  function readTiles(tiles) {
-    for (let i = 0; i < tiles.length; i += 256) {
-      const batch = tiles.slice(i, i + 256);
+  // Items on the GPU -> data (w x h ImageData each). Each readback has a large fixed cost, so a
+  // canvas holding many items is read once over their bounding box, and canvases holding one item
+  // each (stroke tiles) are first drawn into atlases of up to 16 x 16 tiles, each read once.
+  function toData(items) {
+    const singles = [];
+    for (const [cv, ts] of byCanvas(items)) {
+      if (cv.refs === 1) { singles.push(...ts); continue; }
+      const x0 = Math.min(...ts.map((t) => t.cx)), y0 = Math.min(...ts.map((t) => t.cy));
+      const all = cv.getContext('2d').getImageData(x0, y0, Math.max(...ts.map((t) => t.cx + t.w)) - x0, Math.max(...ts.map((t) => t.cy + t.h)) - y0);
+      for (const t of ts) {
+        t.data = new ImageData(t.w, t.h);
+        blit(all, t.cx - x0, t.cy - y0, t.data, 0, 0, t.w, t.h);
+        release(t);
+      }
+    }
+    for (let i = 0; i < singles.length; i += 256) {
+      const batch = singles.slice(i, i + 256);
       const cols = Math.ceil(Math.sqrt(batch.length)), rows = Math.ceil(batch.length / cols);
       const atlas = makeCanvas(cols * TILE, rows * TILE), g = atlas.getContext('2d');
-      batch.forEach((t, j) => { g.drawImage(t.c, (j % cols) * TILE, Math.floor(j / cols) * TILE); t.c.width = 0; t.c = null; });
+      batch.forEach((t, j) => { g.drawImage(t.cv, t.cx, t.cy, t.w, t.h, (j % cols) * TILE, Math.floor(j / cols) * TILE, t.w, t.h); release(t); });
       const all = g.getImageData(0, 0, atlas.width, atlas.height);
       atlas.width = 0;
       batch.forEach((t, j) => {
@@ -281,39 +323,57 @@
       });
     }
   }
+  // Read history parts back to the CPU when the app is idle, up to 256 parts (~64 MB) per callback,
+  // never while a gesture or op is in progress (see the gotchas above). It starts a second after the
+  // last history change, so a run of undo/redo doesn't pay a readback per step.
+  const pendingParts = new Set();
+  let toDataGen = 0;
+  const onIdle = window.requestIdleCallback || ((f) => setTimeout(f, 0));
+  function queueToData(parts) {
+    for (const p of parts) if (p.cv) pendingParts.add(p);
+    if (!pendingParts.size) return;
+    const gen = ++toDataGen;
+    setTimeout(() => onIdle(() => idleToData(gen)), 1000);
+  }
+  function idleToData(gen) {
+    if (gen !== toDataGen) return;
+    if (drag || op) { queueToData([]); return; }
+    const batch = [];
+    for (const p of pendingParts) {
+      pendingParts.delete(p);
+      if (p.cv) batch.push(p);
+      if (batch.length === 256) break;
+    }
+    toData(batch);
+    if (pendingParts.size) onIdle(() => idleToData(gen));
+  }
+  function flushToData() { const all = [...pendingParts].filter((p) => p.cv); pendingParts.clear(); toData(all); }
   // Abandon the current op. With restore, first put back every pixel it changed.
   function dropOp(restore) {
     const o = op; op = null;
     if (!o) return;
-    for (const t of o.tiles.values()) {
-      const w = t.x1 - t.x0, h = t.y1 - t.y0;
-      if (restore && t.c) { ctx.clearRect(t.x0, t.y0, w, h); ctx.drawImage(t.c, t.x0 - t.ox, t.y0 - t.oy, w, h, t.x0, t.y0, w, h); }
-      else if (restore) ctx.putImageData(t.data, t.ox, t.oy, t.x0 - t.ox, t.y0 - t.oy, w, h);
-      if (t.c) t.c.width = 0;
+    const tiles = [...o.tiles.values()];
+    if (restore) {
+      drawBack(tiles.filter((t) => t.cv), (t) => ({ x: t.x0, y: t.y0, w: t.x1 - t.x0, h: t.y1 - t.y0, sx: t.cx + t.x0 - t.x, sy: t.cy + t.y0 - t.y }));
+      for (const t of tiles) if (t.data) ctx.putImageData(t.data, t.x, t.y, t.x0 - t.x, t.y0 - t.y, t.x1 - t.x0, t.y1 - t.y0);
     }
+    tiles.forEach(release);
   }
   // Copy a w x h block between ImageData buffers (u32 rows).
   function blit(src, sx, sy, dst, dx, dy, w, h) {
     const s32 = new Uint32Array(src.data.buffer), d32 = new Uint32Array(dst.data.buffer);
     for (let r = 0; r < h; r++) d32.set(s32.subarray((sy + r) * src.width + sx, (sy + r) * src.width + sx + w), (dy + r) * dst.width + dx);
   }
-  // Swap a region entry's pixels with the canvas. Readbacks have a large fixed cost (one 400 MB read
-  // ~70 ms; the same as 40 bands ~340 ms), so nearby parts share one readback and one put
-  // (pixels between them are written back unchanged).
+  // Swap a region entry's pixels with the canvas, with no readback: snapshot what's there now into
+  // fresh canvases (GPU), then write the stored pixels, then read the snapshot back at idle.
+  // One copy of the pixels at a time, so the entry's bytes don't change.
   function swapParts(parts) {
-    const rects = parts.map((p) => ({ x: p.x, y: p.y, w: p.data.width, h: p.data.height }));
-    for (const g of Core.groupRects(rects, 2)) {
-      const ps = g.items.map((i) => parts[i]);
-      const x0 = g.x, y0 = g.y;
-      const band = ctx.getImageData(x0, y0, g.w, g.h);
-      for (const p of ps) {
-        const cur = new ImageData(p.data.width, p.data.height);
-        blit(band, p.x - x0, p.y - y0, cur, 0, 0, cur.width, cur.height);
-        blit(p.data, 0, 0, band, p.x - x0, p.y - y0, cur.width, cur.height);
-        p.data = cur;
-      }
-      ctx.putImageData(band, x0, y0);
-    }
+    const old = parts.map((p) => ({ x: p.x, y: p.y, w: p.w, h: p.h, cv: p.cv, cx: p.cx, cy: p.cy, data: p.data }));
+    snapshot(parts);
+    drawBack(old.filter((o) => o.cv), (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, sx: o.cx, sy: o.cy }));
+    for (const o of old) { if (o.data) ctx.putImageData(o.data, o.x, o.y); release(o); }
+    for (const p of parts) p.data = null;
+    queueToData(parts);
   }
   // Replace the whole document (crop/resize/rotate/...) as one undo step. The entry keeps the old
   // canvas element itself; undo and redo swap it with the live one. No pixels are copied.
@@ -480,9 +540,10 @@
       tail ? [tail, drag.color, drag.size] : 0,
       shape ? [drag.t, drag.start, drag.end, drag.shift, drag.color, drag.alt, S.sizes[drag.t], S.fillMode] : 0,
       mq || 0,
-      sel ? [sel.x, sel.y, sel.w, sel.h, sel.float ? floatId(sel.float) : 0] : 0,
+      sel && sel.float ? [sel.x, sel.y, sel.w, sel.h, floatId(sel.float)] : 0,
     ]);
-    if (shape || mq || sel || (tail && tail.length)) placePreview();
+    placeAnts(mq || sel);
+    if (shape || (sel && sel.float) || (tail && tail.length)) placePreview();
     if (key !== ovKey) {
       ovKey = key;
       if (ovBox) octx.clearRect(ovBox.x, ovBox.y, ovBox.w, ovBox.h);
@@ -496,27 +557,22 @@
       };
       if (tail && tail.length) { brushPath(octx, tail, drag.color, drag.size); add(segsBox(tail, drag.size / 2 + 1)); }
       if (shape) add(drawShape(octx, drag));
-      if (mq) { ants(mq); add(mq); }
-      if (sel) {
-        if (sel.float) octx.drawImage(sel.float, sel.x, sel.y);
-        ants(sel);
-        add(sel);
-      }
+      if (sel && sel.float) { octx.drawImage(sel.float, sel.x, sel.y); add(sel); }
       ovBox = box;
     }
     updateStatus();
   }
-  function ants(r) {
-    const lw = 1 / S.zoom;
-    octx.save();
-    octx.lineWidth = lw;
-    octx.setLineDash([4 * lw, 4 * lw]);
-    octx.strokeStyle = '#000';
-    octx.strokeRect(r.x + lw / 2, r.y + lw / 2, r.w - lw, r.h - lw);
-    octx.lineDashOffset = 4 * lw;
-    octx.strokeStyle = '#fff';
-    octx.strokeRect(r.x + lw / 2, r.y + lw / 2, r.w - lw, r.h - lw);
-    octx.restore();
+  // Marching ants around image rect r (or none), snapped to device px so they stay crisp.
+  let antsKey = '';
+  function placeAnts(r) {
+    const z = S.zoom, d = devicePixelRatio, px = (v) => Math.round(v * z * d) / d;
+    const key = r ? [px(r.x), px(r.y), px(r.x + r.w) - px(r.x), px(r.y + r.h) - px(r.y)].join() : '';
+    if (key === antsKey) return;
+    antsKey = key;
+    antsEl.hidden = !r;
+    if (!r) return;
+    const [x, y, w, h] = key.split(',');
+    Object.assign(antsEl.style, { left: x + 'px', top: y + 'px', width: Math.max(1, w) + 'px', height: Math.max(1, h) + 'px' });
   }
 
   let cursor = null;  // integer image px under the pointer, for the status bar
@@ -666,6 +722,17 @@
   }
   // Undo/redo of a fill entry: put back the pixels before, or recompute the filled ones.
   function applyFill(e) {
+    // Redo: the box holds exactly the before pixels, so painting the mask's runs in the (opaque) fill
+    // colour gives the after state. One path fill of whole-pixel rects is exact and costs no upload.
+    if (e.undone && (e.color >>> 24) === 255) {
+      const path = fillRuns(e.bits, e.before.width, e.before.height, e.x, e.y);
+      if (path) {
+        ctx.fillStyle = `rgb(${e.color & 255}, ${(e.color >>> 8) & 255}, ${(e.color >>> 16) & 255})`;
+        ctx.fill(path);
+        e.undone = false;
+        return;
+      }
+    }
     let im = e.before;
     if (e.undone) {
       im = new ImageData(new Uint8ClampedArray(e.before.data), e.before.width, e.before.height);
@@ -674,6 +741,39 @@
     }
     ctx.putImageData(im, e.x, e.y);
     e.undone = !e.undone;
+  }
+  // The set bits of a w x h row-major mask as a Path2D of rects at (ox, oy): one per run of set bits
+  // in a row, merged down while the next row has the same run. Null past 100k rects (noise-like
+  // masks), where putting the pixels is cheaper.
+  function fillRuns(bits, w, h, ox, oy) {
+    const path = new Path2D();
+    let open = new Map(), n = 0; // run start x -> {x, y, w} still growing downwards
+    const flush = (r) => { path.rect(ox + r.x, oy + r.y, r.w, r.h); n++; };
+    for (let y = 0; y < h; y++) {
+      const next = new Map(), row = y * w, end = row + w;
+      const run = (x0, x1) => {
+        const r = open.get(x0);
+        if (r && r.w === x1 - x0) { r.h++; open.delete(x0); next.set(x0, r); }
+        else next.set(x0, { x: x0, y, w: x1 - x0, h: 1 });
+      };
+      let start = -1;
+      for (let k = row; k < end;) {
+        if ((k & 7) === 0 && k + 8 <= end) { // whole bytes: skip or extend 8 at a time
+          const b = bits[k >> 3];
+          if (b === 0) { if (start >= 0) { run(start - row, k - row); start = -1; } k += 8; continue; }
+          if (b === 255) { if (start < 0) start = k; k += 8; continue; }
+        }
+        if (bits[k >> 3] & (1 << (k & 7))) { if (start < 0) start = k; }
+        else if (start >= 0) { run(start - row, k - row); start = -1; }
+        k++;
+      }
+      if (start >= 0) run(start - row, end - row);
+      for (const r of open.values()) flush(r);
+      if (n > 100000) return null;
+      open = next;
+    }
+    for (const r of open.values()) flush(r);
+    return path;
   }
 
   function pick(p, right) {
@@ -1869,5 +1969,5 @@
   setTool('pencil');
 
   // Handle for scripted smoke tests in the console.
-  window.__paint = { S, hist, libState, used, decodeFile, get img() { return img; }, newDoc, flash, save, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, loadFile, setZoom, fitZoom, MAX_PIXELS };
+  window.__paint = { S, hist, libState, used, decodeFile, get img() { return img; }, newDoc, flash, save, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, loadFile, setZoom, fitZoom, MAX_PIXELS, flushToData, get pendingParts() { return [...pendingParts].filter((p) => p.cv).length; } };
 })();
