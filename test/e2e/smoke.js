@@ -211,6 +211,13 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       await P(() => { window.prompt = () => 'photo.jpg'; });
       await page.keyboard.press('Meta+Shift+KeyS'); await page.waitForTimeout(150);
       ok(await P(() => window.__paint.S.fileName) === 'photo.jpg', 'Save As keeps a writable extension');
+      // round 12: a dot isn't an extension; names are sanitised so title and download agree; prompt says what's accepted
+      for (const [typed, want] of [['report v1.2', 'report v1.2.png'], ['a/b.png', 'a_b.png']]) {
+        await P((t) => { window.prompt = (m) => { window.__promptMsg = m; return t; }; }, typed);
+        await page.keyboard.press('Meta+Shift+KeyS'); await page.waitForTimeout(150);
+        ok(await P(() => window.__paint.S.fileName) === want, `Save As "${typed}" -> ${want}, got ` + await P(() => window.__paint.S.fileName));
+      }
+      ok(/PNG/.test(await P(() => window.__promptMsg)) && /JPEG/.test(await P(() => window.__promptMsg)), 'Save As prompt names the formats: ' + await P(() => window.__promptMsg));
       await P(() => { window.prompt = window.__realPrompt; });
     }
     // resize dialog title follows mode
@@ -413,7 +420,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     // help complete and fits at 1280x800
     await page.keyboard.press('Shift+Slash'); await page.waitForTimeout(150);
     const ht = await page.locator('#helpBody').textContent();
-    ok(/⌘\+/.test(ht) && /Cancel shape or selection drag/.test(ht), 'help lists ⌘+ and Esc cancel for drags');
+    ok(/⌘\+/.test(ht) && /Cancel shape, selection or move drag/.test(ht), 'help lists ⌘+ and Esc cancel for drags');
     ok(await P(() => { const b = document.querySelector('#helpBody'); return b.scrollHeight <= b.clientHeight + 1; }), 'help fits at 1280x800 without scrolling');
     await page.keyboard.press('Escape'); await page.waitForTimeout(150);
     // 600px wide: nothing clipped
@@ -729,6 +736,18 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     ok(await P(() => !document.querySelector('#toast').classList.contains('show') && !document.querySelector('#textInput').hidden), 'Esc in the text box dismisses the toast, text stays open');
     await page.keyboard.press('Escape'); await page.waitForTimeout(100);
     ok(await P(() => document.querySelector('#textInput').hidden), 'next Esc cancels the text');
+    // round 12: Delete/Backspace on a focused toolbar control don't clear the selection
+    await P(() => { window.__paint.setTool('select'); window.__paint.selectAll(); });
+    await page.focus('#palette button'); ok(await P(() => document.activeElement.matches('#palette button')), 'swatch focused for the Delete check');
+    await page.keyboard.press('Backspace'); await page.keyboard.press('Delete'); await page.waitForTimeout(50);
+    ok(await P(() => !!window.__paint.sel), 'Backspace/Delete on a focused swatch keep the selection');
+    await P(() => document.activeElement.blur()); await page.keyboard.press('Delete'); await page.waitForTimeout(50); // as after a pointer click
+    ok(await P(() => !window.__paint.sel), 'Delete with focus released still clears the selection');
+    await P(() => document.querySelector('#viewport').focus()); await page.keyboard.press('Escape');
+    // round 12: [ from 11 px lands on 10, not 9
+    await page.keyboard.press('KeyB'); await P(() => { document.querySelector('#size').value = 11; document.querySelector('#size').dispatchEvent(new Event('input', { bubbles: true })); document.activeElement.blur(); });
+    await page.keyboard.press('BracketLeft');
+    ok(await P(() => window.__paint.S.sizes.brush) === 10, '[ from 11 gives 10, got ' + await P(() => window.__paint.S.sizes.brush));
     // round 10: the swap button's box never covers the visible part of the Color 2 well
     for (const w of [1280, 820, 600]) {
       await page.setViewportSize({ width: w, height: 700 }); await page.waitForTimeout(100);

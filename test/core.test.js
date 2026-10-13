@@ -299,3 +299,38 @@ test('dragResize: area cap clamps each edge, keeps aspect on the corner, never r
   assert.deepEqual(Core.dragResize(100, 100, -10, 0, 'e', 1, false, 16384, 10000), { w: 90, h: 100 });
   assert.deepEqual(Core.dragResize(100, 100, 1000, 1000, 'se', 1, false, 16384), { w: 1100, h: 1100 });
 });
+
+test('saveName: keeps writable names, swaps only known image extensions, appends otherwise', () => {
+  assert.equal(Core.saveName('photo.jpg'), 'photo.jpg');
+  assert.equal(Core.saveName('x.JPG'), 'x.JPG');
+  assert.equal(Core.saveName('a.webp'), 'a.webp');
+  assert.equal(Core.saveName('a.gif'), 'a.png');
+  assert.equal(Core.saveName('scan.BMP'), 'scan.png');
+  assert.equal(Core.saveName('report v1.2'), 'report v1.2.png'); // a dot is not an extension
+  assert.equal(Core.saveName('my.photo'), 'my.photo.png');
+  assert.equal(Core.saveName('sketch'), 'sketch.png');
+});
+
+test('saveName: sanitises like a browser download and rejects empty names', () => {
+  assert.equal(Core.saveName('  a/b.png '), 'a_b.png');
+  assert.equal(Core.saveName('q?:*"<>|\\.png'), 'q________.png');
+  assert.equal(Core.saveName('.png'), 'png.png'); // leading dots stripped (hidden-file names)
+  assert.equal(Core.saveName('..hidden'), 'hidden.png');
+  assert.equal(Core.saveName('   '), null);
+  assert.equal(Core.saveName('...'), null);
+  assert.equal(Core.saveName(null), null);
+});
+
+test('stepSize: [ and ] are inverse around the 10 px boundary', () => {
+  // below 10 steps by 1, from 10 up by 2
+  assert.equal(Core.stepSize(9, 1), 10);
+  assert.equal(Core.stepSize(10, 1), 12);
+  assert.equal(Core.stepSize(12, -1), 10);
+  assert.equal(Core.stepSize(11, -1), 10); // not 9: don't skip 10
+  assert.equal(Core.stepSize(10, -1), 9);
+  assert.equal(Core.stepSize(2, -1), 1);
+  for (let s = 1; s < 60; s++) {
+    const up = Core.stepSize(s, 1);
+    if (s >= 10 && s % 2 === 0 || s < 10) assert.equal(Core.stepSize(up, -1), s, `down(up(${s}))`);
+  }
+});

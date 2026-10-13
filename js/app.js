@@ -664,7 +664,7 @@
 
   // Formats we can encode. Anything else (GIF, BMP, ...) is saved as a new PNG rather than overwritten.
   const canWrite = (name) => /\.(png|jpe?g|webp)$/i.test(name);
-  const asPng = (name) => name.replace(/\.[^.]*$/, '') + '.png';
+  const asPng = (name) => Core.saveName(name) || 'untitled.png'; // foo.gif -> foo.png
   function mimeFor(name) {
     const ext = name.split('.').pop().toLowerCase();
     return ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'webp' ? 'image/webp' : 'image/png';
@@ -703,10 +703,9 @@
       if (!h) {
         if (!window.showSaveFilePicker) {
           if (as) { // no save picker here: ask for the name, so Save As differs from Save
-            const typed = prompt('Save as', name);
-            if (typed === null || !typed.trim()) return;
-            name = typed.trim();
-            if (!canWrite(name)) name = /\.[^.]*$/.test(name) ? asPng(name) : name + '.png';
+            const typed = Core.saveName(prompt('Save as (PNG, JPEG or WebP; PNG if no extension)', name));
+            if (!typed) return;
+            name = typed;
           }
           const a = document.createElement('a');
           a.href = URL.createObjectURL(await encode(mimeFor(name)));
@@ -1129,10 +1128,10 @@
     if (k.startsWith('Arrow') && !onCanvas) return; // arrows on a focused control belong to that control
     switch (k) {
       case 'KeyX': swapColors(); break;
-      case 'Delete': case 'Backspace': e.preventDefault(); deleteSelection(); break;
+      case 'Delete': case 'Backspace': if (!onCanvas) return; e.preventDefault(); deleteSelection(); break;
       case 'Escape': dropSelection(); break;
-      case 'BracketLeft': setSize(S.sizes[S.tool] - (S.sizes[S.tool] > 10 ? 2 : 1)); break;
-      case 'BracketRight': setSize(S.sizes[S.tool] + (S.sizes[S.tool] >= 10 ? 2 : 1)); break;
+      case 'BracketLeft': setSize(Core.stepSize(S.sizes[S.tool], -1)); break;
+      case 'BracketRight': setSize(Core.stepSize(S.sizes[S.tool], 1)); break;
       case 'Equal': zoomStep(1); break;
       case 'Minus': zoomStep(-1); break;
       case 'Space': e.preventDefault(); S.panKey = true; ring.hidden = true; stage.classList.add('panning'); break;
@@ -1372,7 +1371,7 @@
     ['Drawing', [['Draw with color 1 / color 2', '~Left / right click'], ['Swap colors', 'X'], ['Smaller / bigger size', '[', ']'],
       ['Square, circle, 45° line', '⇧', '~drag'], ['Pick color 2 from a swatch', '~right-click / ⇧-click'],
       ['Apply text', 'Enter'], ['New line in text', '⇧Enter'], ['Cancel text', 'Esc']]],
-    ['Image', [['Resize image', '⇧R'], ['Canvas size', '⇧C'], ['Canvas: keep aspect', '⇧', '~drag corner'], ['Cancel canvas drag', 'Esc'], ['Cancel shape or selection drag', 'Esc']]],
+    ['Image', [['Resize image', '⇧R'], ['Canvas size', '⇧C'], ['Canvas: keep aspect', '⇧', '~drag corner'], ['Cancel canvas drag', 'Esc'], ['Cancel shape, selection or move drag', 'Esc']]],
     ['File', [['New', 'Alt+N'], ['Open', '⌘O'], ['Save', '⌘S'], ['Save as', '⌘⇧S']]],
     ['View', [['Zoom in / out', '+', '−', '⌘+', '⌘−'], ['Zoom at pointer', '⌘', '~scroll'], ['Fit to window', '⇧1', '⌘0'], ['Actual size', '⇧0'],
       ['Pan', 'Space', '~drag / middle-drag'], ['This list', '?']]],

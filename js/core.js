@@ -160,6 +160,23 @@
     return null;
   }
 
+  // A file name typed for a download: sanitised the way browsers do, ending in a format we can write.
+  // A dot alone isn't an extension ("report v1.2" -> "report v1.2.png"); known unwritable image types become .png.
+  // null when nothing usable is left.
+  function saveName(typed) {
+    if (typeof typed !== 'string') return null;
+    const n = typed.trim().replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/^\.+/, '').replace(/[. ]+$/, '');
+    if (!n) return null;
+    if (/\.(png|jpe?g|webp)$/i.test(n)) return n;
+    if (/\.(gif|bmp|tiff?|ico|svg|avif|heic|heif)$/i.test(n)) return n.replace(/\.[^.]*$/, '.png');
+    return n + '.png';
+  }
+
+  // Brush size for [ (dir -1) and ] (dir +1): steps of 1 below 10 px, 2 from there; the two are inverses.
+  function stepSize(s, dir) {
+    return dir > 0 ? s + (s >= 10 ? 2 : 1) : s - (s > 11 ? 2 : 1);
+  }
+
   function rotateDims(w, h, deg) {
     return Math.abs(deg) % 180 === 90 ? { w: h, h: w } : { w, h };
   }
@@ -212,7 +229,7 @@
     clear() { this.undoStack = []; this.redoStack = []; this.bytes = 0; this.saved = null; }
   }
 
-  const Core = { rgbaToU32, colorDistance, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, rotateDims, History };
+  const Core = { rgbaToU32, colorDistance, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, rotateDims, History };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core;
   else root.Core = Core;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -36,6 +36,6 @@ Save format follows the file extension (PNG, JPEG, WebP); JPEG is flattened onto
 - `js/core.js` — pure helpers (flood fill, Bresenham, rect/resize math, bounded undo history)
 - `js/app.js` — UI, tools, file I/O
 - `test/core.test.js` — `node --test test/*.test.js`
-- `test/e2e/smoke.js` — browser smoke test (210 checks). Dev-only: needs Playwright somewhere on `NODE_PATH` and Google Chrome.
+- `test/e2e/smoke.js` — browser smoke test (about 270 checks). Dev-only: needs Playwright somewhere on `NODE_PATH` and Google Chrome.
   Serve the folder (`python3 -m http.server 8765`), then `NODE_PATH=/path/to/node_modules node test/e2e/smoke.js [url]`
   (url defaults to `http://localhost:8765/`; `file:///…/index.html` works too). `test/e2e/shots.js PREFIX` saves screenshots.
