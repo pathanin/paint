@@ -42,16 +42,18 @@ When smoke fails, read the **first** `FAIL` line, because later failures often c
 - **Rendering:**
   - `#image` is the document canvas. Whole-image ops swap in a new element (`adoptImage()`), so `img` and `ctx` are reassigned; never cache them.
   - `#overlay` is only the pointer target. It is never drawn on, so it has no backing store.
-  - `#preview` draws marching ants, shape previews and floating selections. It covers only the visible part of the image plus a margin (`placePreview()`), at no more than screen resolution.
+  - `#preview` draws shape previews and floating selections. It covers only the visible part of the image plus a margin (`placePreview()`), at no more than screen resolution (image px when zoomed in, so they look pixelated).
+  - `#ants` is the marching-ants element (CSS gradients, 1 CSS px, on its own layer), placed by `placeAnts()` in device px, so it stays crisp at every zoom.
   - `#ring` is a DOM brush-footprint cursor.
   - `render()` is rAF-throttled through `requestRender()`. It redraws the preview only when its inputs change (`ovKey`) and clears only the last drawn box (`ovBox`).
   - Pointer handlers only record state. All DOM writes happen in `render()`, through the write-if-changed setters (`setText`, `setAttr`, `setProp`). A DOM write inside `pointermove` forces a layout in Chrome's hit test.
 - **Undo** is copy-on-write and keeps one buffer per entry, which is swapped with the canvas on undo and redo. There are three entry types.
   - `region` entries come from `beginOp()`, then `touch(rect)` called **before** each draw into `rect`, then `endOp()`. Only the touched part of each 256² tile is stored.
-    - Strokes (`beginOp(true)`) snapshot tiles into small GPU canvases and read them back once, at `endOp()`. A stroke that has more than 512 live tiles reads them back early, which bounds GPU memory.
-    - Other ops read their tiles once, up front.
+    - Tiles are snapshotted on the GPU (`drawImage`, no readback): strokes (`beginOp(true)`) one small canvas per tile as the stroke reaches it; other ops one canvas per contiguous block of each `touch()`. A stroke with more than 512 live tiles reads them back early, which bounds GPU memory.
+    - Undo/redo (`swapParts()`) snapshots the current pixels the same way, then writes the stored ones. Nothing reads the document back; parts held on the GPU are read back to `ImageData` at idle, a second after the last history change, ~64 MB per callback (`queueToData()`; `__paint.flushToData()` forces it). One copy per entry at all times.
+    - Chrome makes each `drawImage` to or from a large canvas costly (1600 tile draws ~130–540 ms at 100 MP, one whole-image draw ~15 ms): snapshot and draw back per contiguous block (`Core.groupRects(…, 1)`), never per tile.
     - Never read back the document while a stroke is in progress; each readback stalls the next frame. `dropOp(true)` restores the tiles.
-  - `fill` entries store the before pixels plus a bit mask, so neither undo nor redo reads the canvas.
+  - `fill` entries store the before pixels plus a bit mask, so neither undo nor redo reads the canvas. Redo paints the mask's runs as one `Path2D` fill (exact for the opaque fill colour); masks with over 100k runs fall back to recomputing and putting the pixels.
   - `doc` entries hold the previous `#image` element itself (crop, resize, rotate, a paste that grows the canvas). `History`'s `onDrop` frees dropped canvases.
   - Unsaved state is `isDirty()` = `!hist.isClean()` OR a floating selection OR non-empty open text. Never keep a separate dirty flag.
 - **UI wiring** is mostly data-driven from attributes in `index.html`:
