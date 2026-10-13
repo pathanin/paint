@@ -157,6 +157,69 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.waitForTimeout(1500);
     ok(!errs.length, `no errors from pending readbacks of dropped entries: ${errs.join('; ')}`);
 
+    // ---- 1c. undo data must not sit on the GPU indefinitely, and a lost GPU context drops it honestly ----
+    const noise = () => P(() => {
+      const p = window.__paint;
+      p.newDoc(1000, 700);
+      const c = document.querySelector('#image'), g = c.getContext('2d');
+      const im = g.createImageData(c.width, c.height);
+      let s = 4242; const rnd = () => ((s = Math.imul(s, 1103515245) + 12345 >>> 0) >>> 16) & 255;
+      for (let i = 0; i < im.data.length; i += 4) { im.data[i] = rnd(); im.data[i + 1] = rnd(); im.data[i + 2] = rnd(); im.data[i + 3] = (i / 4) % 5 === 0 ? 0 : rnd(); }
+      g.putImageData(im, 0, 0);
+      p.hist.clear(); p.fitZoom(false); p.S.fillMode = 'both'; p.S.primary = 'rgba(0,0,0,1)';
+    });
+    await noise(); await frame();
+    const f0 = await hash();
+    await drag('select', [[100, 100], [600, 500]]);
+    await drag('select', [[300, 300], [450, 380]]); // lift and move: the op stays open under the float
+    ok(await P(() => !!(window.__paint.op && window.__paint.sel && window.__paint.sel.float)), 'moved selection floats with its op open');
+    ok(await pending() > 0, 'the open op\'s tiles are queued for readback');
+    await page.waitForTimeout(2500);
+    ok(await pending() === 0, 'idle readback drains an open op\'s tiles while the float stays up');
+    await drag('select', [[950, 650], [960, 660]]); // commits the float
+    const f1 = await hash();
+    ok(f1 !== f0, 'the move changed the pixels');
+    await P(() => window.__paint.undo()); await frame();
+    ok(await hash() === f0, 'undo of a move read back while floating is pixel-exact');
+    await P(() => window.__paint.redo()); await frame();
+    ok(await hash() === f1, 'redo of a move read back while floating is pixel-exact');
+
+    // committed before its queued readback ran: the tiles' canvases now belong to the entry
+    await drag('select', [[520, 20], [560, 60]]); // inside one tile: a single-tile canvas
+    await drag('select', [[530, 30], [580, 90]]);
+    await drag('select', [[950, 650], [960, 660]]);
+    const f2 = await hash();
+    await flush();
+    await P(() => window.__paint.undo()); await frame();
+    ok(await hash() === f1, 'undo of a move committed before its readback is pixel-exact');
+    await P(() => window.__paint.redo()); await frame();
+    ok(await hash() === f2, 'redo of a move committed before its readback is pixel-exact');
+
+    // context loss: B (on the GPU) is lost, so B and the older A go; C (a fill: CPU data) survives
+    await noise(); await frame();
+    await drag('rect', [[30, 40], [500, 400]]); await flush(); // A: read back
+    await drag('ellipse', [[200, 100], [900, 650]]); // B: on the GPU
+    const lb = await hash();
+    await P(() => { window.__paint.S.primary = 'rgba(200,30,30,1)'; });
+    await drag('fill', [[350, 250]]); // C, inside A and B
+    ok(await pending() > 0, 'B is still on the GPU');
+    await P(() => document.querySelector('#image').dispatchEvent(new Event('contextlost')));
+    await frame();
+    ok(await P(() => window.__paint.hist.undoStack.length) === 1, 'context loss drops the lost step and those behind it');
+    ok(await P(() => document.body.innerText.includes('undo steps were lost')), 'context loss is reported');
+    ok(await pending() === 0, 'nothing left to read back after context loss');
+    await P(() => window.__paint.undo()); await frame();
+    ok(await hash() === lb, 'the surviving step still undoes pixel-exactly');
+    ok(await P(() => !window.__paint.hist.canUndo()), 'nothing to undo past the lost step');
+    // context loss with a float up and its op on the GPU: both are abandoned, no errors
+    await drag('select', [[100, 100], [300, 300]]);
+    await drag('select', [[150, 150], [400, 420]]);
+    await P(() => document.querySelector('#image').dispatchEvent(new Event('contextlost')));
+    await frame();
+    ok(await P(() => !window.__paint.op && !window.__paint.sel), 'context loss abandons a float whose op was on the GPU');
+    await page.waitForTimeout(1500);
+    ok(!errs.length, `no errors after context loss: ${errs.join('; ')}`);
+
     // ---- 2. undo depth on a 4000 x 3000 photo ----
     await P(() => { window.__paint.newDoc(4000, 3000); window.__paint.fitZoom(false); });
     await P(() => { window.__paint.S.sizes.brush = 20; });
