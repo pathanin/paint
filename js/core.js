@@ -72,6 +72,67 @@
     return { mask, box: { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 } };
   }
 
+  // The anti-aliased ring around a flood region (mask, box from floodMask, seeded on colour target),
+  // for a fill with color. Without it, the soft edge pixels of brush strokes, ellipses and text stay
+  // a blend with the old colour: a light fringe. Each pixel outside the mask that touches it (8-way)
+  // is taken as a blend a*target + (1-a)*ink, where ink is the colour farthest from target in its
+  // 5x5 neighbourhood outside the mask; it becomes a*color + (1-a)*ink, i.e. as if drawn over color.
+  // Pixels that aren't on that line (hard-edged art, another colour) or are within tolerance of
+  // target (another region, touching diagonally) are left alone. Doesn't touch u32. Returns
+  // {idx, val, box}: the pixels that change (indices into u32) and their new values, and box grown
+  // to cover them. Straight RGBA lerp: exact for opaque pixels and for ink over transparency.
+  function fillEdge(u32, w, h, mask, box, target, color, tolerance) {
+    const thr = Math.round((tolerance || 0) * 255 / 100);
+    const T = [target & 255, (target >>> 8) & 255, (target >>> 16) & 255, target >>> 24];
+    const F = [color & 255, (color >>> 8) & 255, (color >>> 16) & 255, color >>> 24];
+    const ch = (v, c) => (v >>> (c * 8)) & 255;
+    const dist2 = (v) => { let s = 0; for (let c = 0; c < 4; c++) { const d = ch(v, c) - T[c]; s += d * d; } return s; };
+    const idx = [], val = [];
+    const x0 = Math.max(0, box.x - 1), y0 = Math.max(0, box.y - 1);
+    const x1 = Math.min(w - 1, box.x + box.w), y1 = Math.min(h - 1, box.y + box.h);
+    let bx0 = box.x, by0 = box.y, bx1 = box.x + box.w - 1, by1 = box.y + box.h - 1;
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const i = y * w + x;
+        if (mask[i]) continue;
+        let edge = false;
+        for (let yy = Math.max(0, y - 1); yy <= Math.min(h - 1, y + 1) && !edge; yy++) {
+          for (let xx = Math.max(0, x - 1); xx <= Math.min(w - 1, x + 1); xx++) if (mask[yy * w + xx]) { edge = true; break; }
+        }
+        if (!edge) continue;
+        const p = u32[i];
+        let near = true;
+        for (let c = 0; c < 4; c++) if (Math.abs(ch(p, c) - T[c]) > thr) { near = false; break; }
+        if (near) continue;
+        let ink = p, far = dist2(p);
+        for (let yy = Math.max(0, y - 2); yy <= Math.min(h - 1, y + 2); yy++) {
+          for (let xx = Math.max(0, x - 2); xx <= Math.min(w - 1, x + 2); xx++) {
+            const j = yy * w + xx;
+            if (mask[j]) continue;
+            const d = dist2(u32[j]);
+            if (d > far) { far = d; ink = u32[j]; }
+          }
+        }
+        // a = (p - ink).(target - ink) / |target - ink|^2, then p must lie on that line.
+        let dot = 0;
+        for (let c = 0; c < 4; c++) dot += (ch(p, c) - ch(ink, c)) * (T[c] - ch(ink, c));
+        const a = Math.min(1, dot / far);
+        if (!(a > 0.004)) continue; // under 1/255: nothing to change
+        let on = true, out = 0;
+        for (let c = 0; c < 4 && on; c++) {
+          const v = ch(p, c);
+          if (Math.abs(v - (ch(ink, c) + a * (T[c] - ch(ink, c)))) > 12) on = false;
+          out |= Math.max(0, Math.min(255, Math.round(v + a * (F[c] - T[c])))) << (c * 8);
+        }
+        out >>>= 0;
+        if (!on || out === p) continue;
+        idx.push(i); val.push(out);
+        if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y;
+      }
+    }
+    return { idx: Uint32Array.from(idx), val: Uint32Array.from(val), box: { x: bx0, y: by0, w: bx1 - bx0 + 1, h: by1 - by0 + 1 } };
+  }
+
   // Flood fill in place: mutates u32; returns the changed bbox {x,y,w,h}, or null if no pixel changed.
   function floodFill(u32, w, h, x, y, color, tolerance) {
     if (x < 0 || y < 0 || x >= w || y >= h) return null;
@@ -362,7 +423,7 @@
     }
   }
 
-  const Core = { rgbaToU32, colorDistance, floodMask, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History };
+  const Core = { rgbaToU32, colorDistance, floodMask, fillEdge, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core;
   else root.Core = Core;
 })(typeof window !== 'undefined' ? window : globalThis);

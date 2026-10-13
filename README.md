@@ -29,7 +29,7 @@ A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, ann
 | Space+drag, middle drag | Pan |
 | ? | Shortcut help |
 
-The brush smooths strokes: it trails the pointer by a short lazy radius (Smoothing, 2 px per step; 0 turns it off), draws quadratic curves rather than straight segments, and always ends exactly where you release. Pencil and eraser stay pixel-exact.
+The brush smooths strokes: it trails the pointer by a short lazy radius (Smoothing, 2 px per step; 0 turns it off), draws quadratic curves rather than straight segments, and always ends exactly where you release. Pencil and eraser stay pixel-exact. Fill also recolours the soft edge of brush strokes, ellipses and text next to the area it fills, so no light fringe is left around them.
 
 Save format follows the file extension (PNG, JPEG, WebP); JPEG is flattened onto white. Files opened in other formats (GIF, BMP) are saved as a PNG copy, never overwritten.
 
