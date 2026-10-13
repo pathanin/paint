@@ -20,47 +20,70 @@
     return m;
   }
 
-  // 4-connected scanline fill. tolerance is 0..100 (% of 255).
-  // Mutates u32; returns changed bbox {x,y,w,h} or null.
-  function floodFill(u32, w, h, x, y, color, tolerance) {
+  // 4-connected scanline flood region from (x, y). tolerance is 0..100 (% of 255, max channel diff).
+  // Doesn't touch u32. Returns {mask, box}: mask[i] = 1 for every pixel in the region (w*h bytes),
+  // box = its bounding box. null when (x, y) is outside the image.
+  // Typed-array stack of pixel indices; no per-span allocation.
+  function floodMask(u32, w, h, x, y, tolerance) {
     if (x < 0 || y < 0 || x >= w || y >= h) return null;
     const target = u32[y * w + x];
     const thr = Math.round((tolerance || 0) * 255 / 100);
-    if (thr === 0 && target === color) return null;
-    const match = thr === 0
-      ? (i) => u32[i] === target
-      : (i) => colorDistance(u32[i], target) <= thr;
-    const seen = new Uint8Array(w * h);
-    const stack = [x, y];
-    let minX = x, maxX = x, minY = y, maxY = y, changed = false;
-    while (stack.length) {
-      const sy = stack.pop(), sx = stack.pop();
-      const row = sy * w;
-      if (seen[row + sx] || !match(row + sx)) continue;
-      let l = sx, r = sx;
-      while (l > 0 && !seen[row + l - 1] && match(row + l - 1)) l--;
-      while (r < w - 1 && !seen[row + r + 1] && match(row + r + 1)) r++;
-      for (let i = l; i <= r; i++) {
-        if (u32[row + i] !== color) changed = true;
-        u32[row + i] = color;
-        seen[row + i] = 1;
-      }
-      if (l < minX) minX = l;
-      if (r > maxX) maxX = r;
+    const t0 = target & 255, t1 = (target >>> 8) & 255, t2 = (target >>> 16) & 255, t3 = target >>> 24;
+    const near = (v) => {
+      if (v === target) return true;
+      if (thr === 0) return false;
+      let d = (v & 255) - t0; if (d > thr || -d > thr) return false;
+      d = ((v >>> 8) & 255) - t1; if (d > thr || -d > thr) return false;
+      d = ((v >>> 16) & 255) - t2; if (d > thr || -d > thr) return false;
+      d = (v >>> 24) - t3; return d <= thr && -d <= thr;
+    };
+    const mask = new Uint8Array(w * h);
+    let stack = new Int32Array(1024), sp = 0;
+    const push = (i) => {
+      if (sp === stack.length) { const n = new Int32Array(sp * 2); n.set(stack); stack = n; }
+      stack[sp++] = i;
+    };
+    push(y * w + x);
+    let minX = x, maxX = x, minY = y, maxY = y;
+    while (sp) {
+      const i = stack[--sp];
+      if (mask[i]) continue;
+      const sy = (i / w) | 0, row = sy * w;
+      let l = i, r = i;
+      while (l > row && !mask[l - 1] && near(u32[l - 1])) l--;
+      while (r < row + w - 1 && !mask[r + 1] && near(u32[r + 1])) r++;
+      mask.fill(1, l, r + 1);
+      if (l - row < minX) minX = l - row;
+      if (r - row > maxX) maxX = r - row;
       if (sy < minY) minY = sy;
       if (sy > maxY) maxY = sy;
-      for (const ny of [sy - 1, sy + 1]) {
+      for (let k = 0; k < 2; k++) {
+        const ny = k ? sy + 1 : sy - 1;
         if (ny < 0 || ny >= h) continue;
-        const nrow = ny * w;
+        const off = (ny - sy) * w;
         let inRun = false;
-        for (let i = l; i <= r; i++) {
-          const ok = !seen[nrow + i] && match(nrow + i);
-          if (ok && !inRun) stack.push(i, ny);
+        for (let j = l; j <= r; j++) {
+          const ok = !mask[j + off] && near(u32[j + off]);
+          if (ok && !inRun) push(j + off);
           inRun = ok;
         }
       }
     }
-    return changed ? { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 } : null;
+    return { mask, box: { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 } };
+  }
+
+  // Flood fill in place: mutates u32; returns the changed bbox {x,y,w,h}, or null if no pixel changed.
+  function floodFill(u32, w, h, x, y, color, tolerance) {
+    if (x < 0 || y < 0 || x >= w || y >= h) return null;
+    if (Math.round((tolerance || 0) * 255 / 100) === 0 && u32[y * w + x] === color) return null;
+    const { mask, box } = floodMask(u32, w, h, x, y, tolerance);
+    let changed = false;
+    for (let yy = box.y; yy < box.y + box.h; yy++) {
+      for (let i = yy * w + box.x, e = i + box.w; i < e; i++) {
+        if (mask[i] && u32[i] !== color) { u32[i] = color; changed = true; }
+      }
+    }
+    return changed ? box : null;
   }
 
   // Bresenham integer line, inclusive of both ends.
@@ -280,7 +303,7 @@
     }
   }
 
-  const Core = { rgbaToU32, colorDistance, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, History };
+  const Core = { rgbaToU32, colorDistance, floodMask, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, History };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core;
   else root.Core = Core;
 })(typeof window !== 'undefined' ? window : globalThis);

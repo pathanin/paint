@@ -166,7 +166,21 @@ async function once() {
       });
       await run(`${tag} undo+redo x5`, async () => { for (let i = 0; i < 5; i++) { await P(() => window.__paint.undo()); await settle(); await P(() => window.__paint.redo()); await settle(); } });
       await run(`${tag} rotate x2`, async () => { await P(() => window.__paint.transformDoc('rotR')); await settle(); await P(() => window.__paint.transformDoc('rotL')); });
-      await P(() => window.__paint.setTool('pencil'));
+      await P(() => { window.__paint.setTool('select'); window.__paint.selectAll(); });
+      await run(`${tag} pinch zoom 60 (with selection)`, async () => {
+        const b = await area(); await page.mouse.move(b.x + b.w / 2, b.y + b.h / 2);
+        await page.keyboard.down('Control');
+        for (let i = 0; i < 60; i++) await page.mouse.wheel(0, i < 30 ? -40 : 40);
+        await page.keyboard.up('Control');
+      });
+      await P(() => window.__paint.setZoom(1));
+      await run(`${tag} space-pan 100 (with selection)`, async () => {
+        const b = await area(); await page.mouse.move(b.x + b.w / 2, b.y + b.h / 2);
+        await page.keyboard.down('Space'); await page.mouse.down();
+        for (let i = 0; i < 100; i++) await page.mouse.move(b.x + b.w / 2 - i * 3, b.y + b.h / 2 - i * 2);
+        await page.mouse.up(); await page.keyboard.up('Space');
+      });
+      await P(() => { window.__paint.fitZoom(false); window.__paint.setTool('pencil'); });
       for (let i = 0; i < 10; i++) await stroke(20);
       await mem(`mem: ${tag} after edits`);
       await run(`${tag} undo all`, async () => { while (await P(() => window.__paint.hist.canUndo())) { await P(() => window.__paint.undo()); } });

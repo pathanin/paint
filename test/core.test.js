@@ -420,3 +420,58 @@ test('groupRects: a dense band merges into one group, far-apart rects stay apart
   assert.equal(Core.groupRects(spaced, 2).length, 10);
   assert.deepEqual(Core.groupRects([], 2), []);
 });
+
+// The pre-optimisation flood fill, kept verbatim as an oracle.
+function oracleFill(u32, w, h, x, y, color, tolerance) {
+  if (x < 0 || y < 0 || x >= w || y >= h) return null;
+  const target = u32[y * w + x];
+  const thr = Math.round((tolerance || 0) * 255 / 100);
+  if (thr === 0 && target === color) return null;
+  const match = thr === 0 ? (i) => u32[i] === target : (i) => Core.colorDistance(u32[i], target) <= thr;
+  const seen = new Uint8Array(w * h);
+  const stack = [x, y];
+  let minX = x, maxX = x, minY = y, maxY = y, changed = false;
+  while (stack.length) {
+    const sy = stack.pop(), sx = stack.pop();
+    const row = sy * w;
+    if (seen[row + sx] || !match(row + sx)) continue;
+    let l = sx, r = sx;
+    while (l > 0 && !seen[row + l - 1] && match(row + l - 1)) l--;
+    while (r < w - 1 && !seen[row + r + 1] && match(row + r + 1)) r++;
+    for (let i = l; i <= r; i++) { if (u32[row + i] !== color) changed = true; u32[row + i] = color; seen[row + i] = 1; }
+    if (l < minX) minX = l; if (r > maxX) maxX = r; if (sy < minY) minY = sy; if (sy > maxY) maxY = sy;
+    for (const ny of [sy - 1, sy + 1]) {
+      if (ny < 0 || ny >= h) continue;
+      const nrow = ny * w; let inRun = false;
+      for (let i = l; i <= r; i++) { const ok = !seen[nrow + i] && match(nrow + i); if (ok && !inRun) stack.push(i, ny); inRun = ok; }
+    }
+  }
+  return changed ? { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 } : null;
+}
+
+test('floodFill and floodMask agree with the original fill on random images', () => {
+  let s = 4242; const rnd = (n) => ((s = Math.imul(s, 1103515245) + 12345 >>> 0) >>> 8) % n;
+  for (let iter = 0; iter < 400; iter++) {
+    const w = 1 + rnd(40), h = 1 + rnd(40);
+    const pal = Array.from({ length: 1 + rnd(4) }, () => Core.rgbaToU32(rnd(256), rnd(256), rnd(256), rnd(2) ? 255 : rnd(256)));
+    const img = new Uint32Array(w * h).map(() => pal[rnd(pal.length)]);
+    const x = rnd(w + 2) - 1, y = rnd(h + 2) - 1, tol = [0, 0, 5, 30, 60, 100][rnd(6)];
+    const color = rnd(3) ? pal[rnd(pal.length)] : Core.rgbaToU32(rnd(256), rnd(256), rnd(256), 255);
+    const a = img.slice(), b = img.slice();
+    const ra = oracleFill(a, w, h, x, y, color, tol);
+    const rb = Core.floodFill(b, w, h, x, y, color, tol);
+    assert.deepEqual(rb, ra, `box, iter ${iter}`);
+    assert.deepEqual(b, a, `pixels, iter ${iter}`);
+    // the mask marks exactly the region the fill reached (independent of the fill colour)
+    const m = Core.floodMask(img, w, h, x, y, tol);
+    if (x < 0 || y < 0 || x >= w || y >= h) { assert.equal(m, null); continue; }
+    const probe = img.slice(); const marker = 0x01020304 === img[y * w + x] ? 0x05060708 : 0x01020304;
+    const want = new Uint8Array(w * h);
+    if (!pal.includes(marker) && oracleFill(probe, w, h, x, y, marker, tol)) for (let i = 0; i < w * h; i++) want[i] = probe[i] === marker && img[i] !== marker ? 1 : 0;
+    else continue; // marker collides with a palette colour: skip the mask check for this case
+    assert.deepEqual(m.mask, want, `mask, iter ${iter}`);
+    const xs = [], ys = [];
+    want.forEach((v, i) => { if (v) { xs.push(i % w); ys.push((i / w) | 0); } });
+    assert.deepEqual(m.box, { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs) + 1, h: Math.max(...ys) - Math.min(...ys) + 1 });
+  }
+});

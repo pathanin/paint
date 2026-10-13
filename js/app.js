@@ -281,6 +281,7 @@
   // the redo stack); applying it swaps them with what's on the canvas, so one copy serves both ways.
   function applyHist(e) {
     if (e.type === 'region') swapParts(e.parts);
+    else if (e.type === 'fill') applyFill(e);
     else {
       const other = e.canvas;
       e.canvas = img;
@@ -550,12 +551,35 @@
     const W = img.width, H = img.height;
     if (p.x < 0 || p.y < 0 || p.x >= W || p.y >= H) return;
     const data = ctx.getImageData(0, 0, W, H);
-    const box = Core.floodFill(new Uint32Array(data.data.buffer), W, H, p.x, p.y, hexToU32(color), S.tolerance);
-    if (!box) return;
-    beginOp();
-    touch(box.x, box.y, box.w, box.h);
+    const u32 = new Uint32Array(data.data.buffer), c = hexToU32(color);
+    const { mask, box } = Core.floodMask(u32, W, H, p.x, p.y, S.tolerance);
+    // The undo entry: the box's pixels before, plus the region as a bit mask. "After" is those
+    // pixels with the masked ones set to c, so neither undo nor redo has to read the canvas back.
+    const before = new ImageData(box.w, box.h);
+    blit(data, box.x, box.y, before, 0, 0, box.w, box.h);
+    const bits = new Uint8Array(Math.ceil(box.w * box.h / 8));
+    let changed = false;
+    for (let y = 0, k = 0; y < box.h; y++) {
+      for (let i = (box.y + y) * W + box.x, e = i + box.w; i < e; i++, k++) {
+        if (!mask[i]) continue;
+        bits[k >> 3] |= 1 << (k & 7);
+        if (u32[i] !== c) { u32[i] = c; changed = true; }
+      }
+    }
+    if (!changed) return;
     ctx.putImageData(data, 0, 0, box.x, box.y, box.w, box.h);
-    endOp();
+    pushHist({ type: 'fill', x: box.x, y: box.y, before, bits, color: c, undone: false, bytes: before.data.length + bits.length });
+  }
+  // Undo/redo of a fill entry: put back the pixels before, or recompute the filled ones.
+  function applyFill(e) {
+    let im = e.before;
+    if (e.undone) {
+      im = new ImageData(new Uint8ClampedArray(e.before.data), e.before.width, e.before.height);
+      const u32 = new Uint32Array(im.data.buffer);
+      for (let k = 0; k < u32.length; k++) if (e.bits[k >> 3] & (1 << (k & 7))) u32[k] = e.color;
+    }
+    ctx.putImageData(im, e.x, e.y);
+    e.undone = !e.undone;
   }
 
   function pick(p, right) {
