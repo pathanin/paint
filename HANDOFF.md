@@ -23,9 +23,9 @@ The design decisions behind the current UI, the evidence behind them, and what's
    - A VoiceOver pass over dialogs, toasts and the canvas label.
 2. **Phone widths (<600px)** are out of scope, since the app is desktop-first. The top bar and options bar scroll sideways there rather than reflowing.
 
-## Performance work (branch `perf`, 2026-10-13)
+## Performance work (2026-10-13, merged to `master` at 8e53662)
 
-Three rounds, each reviewed by a fresh agent, then `master` (smooth brush) merged in at 6161d22. Design and gotchas are in `CLAUDE.md` (Rendering, Undo) and the code comments. Measure with `test/e2e/bench.js` and `bench-compare.js`; pixel-exactness is guarded by `test/e2e/history.js`, previews by `test/e2e/preview.js`.
+Three rounds, each reviewed by a fresh agent, with the smooth brush merged in along the way (6161d22). The `perf` branch is merged and deleted; continue on a new branch off `master`. Design and gotchas are in `CLAUDE.md` (Rendering, Undo) and the code comments. Measure with `test/e2e/bench.js` and `bench-compare.js`; pixel-exactness is guarded by `test/e2e/history.js`, previews by `test/e2e/preview.js`.
 
 The table compares medians of 3 headless Chrome runs on an M4, against the pre-perf code (1d72654):
 
