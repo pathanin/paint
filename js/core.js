@@ -182,6 +182,50 @@
     return Math.abs(deg) % 180 === 90 ? { w: h, h: w } : { w, h };
   }
 
+  // Smoothed freehand path for the brush. Two ideas combined:
+  // - lazy-brush stabiliser: the brush stays put while the pointer is within `radius`, then is pulled
+  //   along by (distance - radius). Position-based, so it doesn't depend on the event rate or drift when idle.
+  // - midpoint quadratic chain (as tldraw renders freehand): curves run through the midpoints of
+  //   consecutive points, with the points as control points, so there are no polyline corners.
+  // add() returns segments that will never change (commit them); tail() is the rest of the path if the
+  // stroke ended at q now, and finish() returns the same. The path starts at the pointerdown point and
+  // ends exactly at the release point; in between it stays within radius (+ minStep) of every sample.
+  // Segments are { a, c, b }: a quadratic from a to b with control c, or a straight line when c is null.
+  const mid = (p, q) => ({ x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 });
+  class Stroke {
+    constructor(p, radius = 0, minStep = 0) {
+      this.radius = radius; this.minStep = minStep;
+      this.pts = [{ x: p.x, y: p.y }];
+      this.brush = { x: p.x, y: p.y };
+    }
+    // Segment k of the chain over points X: ends at the midpoint of X[k-1] and X[k].
+    static seg(X, k) {
+      return { a: k === 2 ? X[0] : mid(X[k - 2], X[k - 1]), c: X[k - 1], b: mid(X[k - 1], X[k]) };
+    }
+    add(q) {
+      const b = this.brush, dx = q.x - b.x, dy = q.y - b.y, d = Math.hypot(dx, dy);
+      if (d <= this.radius) return [];
+      const k = (d - this.radius) / d;
+      b.x += dx * k; b.y += dy * k;
+      const last = this.pts[this.pts.length - 1];
+      const step = Math.hypot(b.x - last.x, b.y - last.y);
+      if (!step || step < this.minStep) return [];
+      this.pts.push({ x: b.x, y: b.y });
+      return this.pts.length >= 3 ? [Stroke.seg(this.pts, this.pts.length - 1)] : [];
+    }
+    tail(q) {
+      const P = this.pts, last = P[P.length - 1];
+      const X = q.x === last.x && q.y === last.y ? P : P.concat({ x: q.x, y: q.y });
+      const m = X.length - 1;
+      if (m === 0) return [];
+      const out = [];
+      for (let k = Math.max(2, P.length); k <= m; k++) out.push(Stroke.seg(X, k));
+      out.push({ a: m >= 2 ? mid(X[m - 1], X[m]) : X[0], c: null, b: X[m] });
+      return out;
+    }
+    finish(q) { return this.tail(q); }
+  }
+
   // Undo/redo stacks bounded by entry count and total bytes (both stacks). Newest entry always survives.
   // The save point is the entry on top of the undo stack when the document was last saved
   // (null = the base state). It becomes LOST once that state can no longer be reached.
@@ -230,7 +274,7 @@
     clear() { this.undoStack = []; this.redoStack = []; this.bytes = 0; this.saved = null; }
   }
 
-  const Core = { rgbaToU32, colorDistance, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, rotateDims, History };
+  const Core = { rgbaToU32, colorDistance, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, rotateDims, Stroke, History };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core;
   else root.Core = Core;
 })(typeof window !== 'undefined' ? window : globalThis);
