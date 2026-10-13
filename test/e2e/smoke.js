@@ -799,7 +799,19 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       const Q = (f, a) => bp.evaluate(f, a);
       await bp.keyboard.press('KeyB');
       await Q(() => { window.__paint.S.sizes.brush = 2; });
-      ok(await Q(() => window.__paint.S.smoothing) === 2 && await Q(() => !document.querySelector('label[data-for="brush"] #smoothing').closest('label').hidden), 'brush shows Smoothing, default 2');
+      const smW = () => Q(() => document.querySelector('#smoothing').getBoundingClientRect().width);
+      ok(await Q(() => window.__paint.S.smoothing) === 2 && await smW() > 0, 'brush shows Smoothing, default 2');
+      await bp.keyboard.press('KeyP');
+      ok(await smW() === 0, 'pencil hides Smoothing');
+      await bp.keyboard.press('KeyB');
+      // pointer use hands focus back (letter shortcuts work); keyboard use keeps it
+      await bp.click('#smoothing'); await bp.keyboard.press('KeyP');
+      ok(await Q(() => window.__paint.S.tool) === 'pencil', 'shortcut works after clicking Smoothing');
+      await bp.keyboard.press('KeyB');
+      await bp.focus('#smoothing'); await Q(() => { const r = document.querySelector('#smoothing'); r.value = 2; r.dispatchEvent(new Event('input', { bubbles: true })); });
+      await bp.keyboard.press('ArrowRight');
+      ok(await Q(() => window.__paint.S.smoothing === 3 && document.activeElement.id === 'smoothing'), 'arrow key changes Smoothing and keeps focus');
+      await Q(() => { const r = document.querySelector('#smoothing'); r.value = 2; r.dispatchEvent(new Event('input', { bubbles: true })); document.activeElement.blur(); });
       const z = await Q(() => window.__paint.S.zoom), bb = await bp.locator('#image').boundingBox();
       const scr = (x, y) => [bb.x + (x + 0.5) * z, bb.y + (y + 0.5) * z];
       const hash = () => Q(() => { const d = window.__paint.img.getContext('2d').getImageData(0, 0, window.__paint.img.width, window.__paint.img.height).data; let h = 0; for (let i = 0; i < d.length; i++) h = (h * 31 + d[i]) | 0; return h; });
@@ -837,11 +849,13 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       ok(sd(raw) > 1.5 && sd(smooth) < sd(raw) / 2, `smoothing steadies jitter: sd ${sd(smooth).toFixed(2)} vs raw ${sd(raw).toFixed(2)}`);
       // the radius is fixed at pointerdown: zooming mid-stroke doesn't jump or break the stroke
       await Q(() => { window.__paint.S.smoothing = 2; });
+      const n0 = await Q(() => window.__paint.hist.undoStack.length);
       await bp.mouse.move(...scr(60, 300)); await bp.mouse.down();
       for (let x = 61; x <= 120; x++) await bp.mouse.move(...scr(x, 300));
       await Q(() => window.__paint.setZoom(window.__paint.S.zoom * 2));
       await bp.mouse.up(); await bp.waitForTimeout(50);
-      ok(await Q(() => window.__paint.drag === null && window.__paint.hist.canUndo()), 'zoom mid-stroke: stroke still finishes');
+      ok(await Q(() => window.__paint.drag === null && window.__paint.hist.undoStack.length) === n0 + 1, 'zoom mid-stroke: one undo step');
+      ok(await px(60, 300) < 128 && await px(118, 300) < 128, 'zoom mid-stroke: stroke drawn start to end');
       await bp.close();
     }
     // non-Mac labels
