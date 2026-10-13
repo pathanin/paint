@@ -1,4 +1,4 @@
-// End-to-end smoke test (Playwright + installed Chrome). See HANDOFF.md / README for how to run.
+// End-to-end smoke test (Playwright + installed Chrome). See task.md / README for how to run.
 // Functional smoke test. usage: node smoke.js [url]   exit 0 = all pass
 const { chromium } = require('playwright');
 const url = process.argv[2] || 'http://localhost:8765/';
