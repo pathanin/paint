@@ -39,7 +39,7 @@
     const e = Core.sizeError(w, h, MAX_DIM, MAX_PIXELS);
     if (!e) return null;
     return e.reason === 'range' ? `sides must be between 1 and ${MAX_DIM} px`
-      : `${w} × ${h} px is ${megapixels(w, h)} MP, and the maximum is ${MAX_PIXELS / 1e6} MP`;
+      : `${w} × ${h} px (${megapixels(w, h)} MP) is over the ${MAX_PIXELS / 1e6} MP limit`;
   }
 
   let drag = null;   // in-progress pointer interaction
@@ -66,9 +66,22 @@
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
   let msgTimer = 0;
+  const toastX = document.createElement('button');
+  toastX.className = 'toast-x';
+  toastX.tabIndex = -1; // the toast is aria-hidden (live regions announce it); this is a pointer convenience
+  toastX.innerHTML = '<svg><use href="#i-x"/></svg>';
+  toastX.addEventListener('click', () => { clearTimeout(msgTimer); $('#toast').classList.remove('show'); });
+  // Errors stay while the pointer is over them, so they can be read to the end.
+  $('#toast').addEventListener('pointerenter', () => { if ($('#toast').classList.contains('error')) clearTimeout(msgTimer); });
+  $('#toast').addEventListener('pointerleave', () => {
+    if (!$('#toast').classList.contains('error') || !$('#toast').classList.contains('show')) return;
+    clearTimeout(msgTimer);
+    msgTimer = setTimeout(() => $('#toast').classList.remove('show'), 2500);
+  });
   function flash(msg, isError) {
     const t = $('#toast');
     t.textContent = msg;
+    if (isError) t.appendChild(toastX);
     // Screen readers: errors are assertive; clear first so a repeated message is announced again.
     const live = $(isError ? '#srAlert' : '#srStatus');
     live.textContent = '';
@@ -283,6 +296,7 @@
     sv.setAttribute('aria-label', dirty ? 'Save (unsaved changes)' : 'Save');
     sv.dataset.hint = dirty ? 'Unsaved changes' : '';
     $('#undoBtn').disabled = !hist.canUndo() && !(sel && sel.float); // undo drops a floating paste/move
+    $('#stIntro').hidden = !S.pristine || !!textAt;
     $('#redoBtn').disabled = !hist.canRedo();
   }
 
@@ -404,12 +418,14 @@
     placeTextBox();
     textBox.focus(); // the overlay's mousedown default is suppressed, so focus sticks immediately
     $('#stHint').hidden = false;
+    $('#stIntro').hidden = true;
   }
   function commitText() {
     if (!textAt) return;
     const t = textAt; textAt = null;
     textBox.hidden = true;
     $('#stHint').hidden = true;
+    $('#stIntro').hidden = !S.pristine;
     const lines = textBox.value.split('\n');
     textBox.value = '';
     if (!lines.join('').trim()) return;
@@ -435,6 +451,7 @@
     textAt = null;
     textBox.hidden = true;
     $('#stHint').hidden = true;
+    $('#stIntro').hidden = !S.pristine;
     textBox.value = '';
   }
 
@@ -1220,7 +1237,7 @@
   const pal = $('#palette');
   for (const [c, name] of PALETTE) {
     const b = document.createElement('button');
-    b.style.background = c;
+    b.style.setProperty('--c', c);
     b.dataset.color = c;
     b.dataset.name = b.dataset.tip = name;
     b.dataset.hint = 'Right-click or Shift-click for color 2';
@@ -1295,8 +1312,10 @@
     tip.hidden = false;
     const r = el.getBoundingClientRect(), t = tip.getBoundingClientRect();
     const side = el.closest('#rail');
+    // Palette: below the whole palette, so a tip never hides the other row of swatches.
+    const bottom = el.parentElement === pal ? pal.getBoundingClientRect().bottom : r.bottom;
     let x = side ? r.right + 8 : r.left + r.width / 2 - t.width / 2;
-    let y = side ? r.top + r.height / 2 - t.height / 2 : r.bottom + 6;
+    let y = side ? r.top + r.height / 2 - t.height / 2 : bottom + 6;
     x = clamp(x, 6, innerWidth - t.width - 6);
     y = clamp(y, 6, innerHeight - t.height - 6);
     tip.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
@@ -1410,6 +1429,7 @@
   window.addEventListener('resize', helpFade);
   setColor('primary', S.primary);
   setColor('secondary', S.secondary);
+  $('#stIntro').textContent = `Draw, or drop or paste an image · ${keyLabel('⌘O')} opens a file`;
   newDoc(800, 600);
   setTool('pencil');
 

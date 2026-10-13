@@ -159,20 +159,26 @@ button.labeled { padding: 0 9px 0 7px; }
 #primary { left: 0; top: 0; z-index: 1; }
 #secondary { left: 15px; top: 11px; }
 .well .swap {
-  position: absolute; right: -11px; top: -2px;
-  min-width: 0; width: 22px; height: 22px; padding: 0; border-radius: 5px; color: var(--muted);
+  position: absolute; right: -12px; top: -2px;
+  min-width: 0; width: 24px; height: 24px; padding: 0; border-radius: 5px; color: var(--muted);
 }
 .well .swap:hover { color: var(--text); }
 .well .swap svg { width: 13px; height: 13px; stroke-width: 2; }
-#palette { display: grid; grid-template-columns: repeat(10, 18px); grid-auto-rows: 18px; gap: 3px; }
+/* Each swatch is a 24px target (WCAG 2.2 target size) around an 18px painted chip. */
+#palette { display: grid; grid-template-columns: repeat(10, 24px); grid-auto-rows: 24px; margin: 0 -3px; }
 #palette button {
-  min-width: 0; width: 18px; height: 18px; padding: 0;
-  border: 0; border-radius: 4px;
-  box-shadow: inset 0 0 0 1px rgba(0,0,0,.18);
+  position: relative; min-width: 0; width: 24px; height: 24px; padding: 0;
+  border: 0; border-radius: 6px; background: none;
 }
-#palette button.is2 { box-shadow: inset 0 0 0 1px rgba(0,0,0,.18), 0 0 0 1.5px var(--panel), 0 0 0 3px var(--muted); }
-#palette button.is1 { box-shadow: inset 0 0 0 1px rgba(0,0,0,.18), 0 0 0 1.5px var(--panel), 0 0 0 3px var(--text); }
-#palette button:hover { transform: scale(1.18); box-shadow: inset 0 0 0 1px rgba(0,0,0,.3), 0 1px 3px rgba(0,0,0,.25); }
+#palette button:hover { background: none; }
+#palette button::before {
+  content: ""; position: absolute; inset: 3px; border-radius: 4px;
+  background: var(--c); box-shadow: inset 0 0 0 1px rgba(0,0,0,.18);
+  transition: transform .08s;
+}
+#palette button.is2::before { box-shadow: inset 0 0 0 1px rgba(0,0,0,.18), 0 0 0 1.5px var(--panel), 0 0 0 3px var(--muted); }
+#palette button.is1::before { box-shadow: inset 0 0 0 1px rgba(0,0,0,.18), 0 0 0 1.5px var(--panel), 0 0 0 3px var(--text); }
+#palette button:hover::before { transform: scale(1.18); box-shadow: inset 0 0 0 1px rgba(0,0,0,.3), 0 1px 3px rgba(0,0,0,.25); }
 
 /* ---------- main area ---------- */
 #main { display: grid; grid-template-columns: auto 1fr; min-height: 0; }
@@ -266,6 +272,7 @@ button.labeled { padding: 0 9px 0 7px; }
 #stPos { min-width: 11ch; }
 .st-hint { margin-left: auto; color: var(--text); }
 .st-hint[hidden] { display: none; }
+#stIntro { color: var(--muted); }
 #stage.tiny .handle[data-edge=e], #stage.tiny .handle[data-edge=s] { display: none; }
 
 /* ---------- toast, drop zone, tooltip ---------- */
@@ -273,14 +280,21 @@ button.labeled { padding: 0 9px 0 7px; }
   position: fixed; left: 50%; bottom: 40px; z-index: 20;
   transform: translate(-50%, 8px);
   max-width: min(520px, calc(100vw - 32px));
-  padding: 8px 14px; border-radius: 8px;
+  padding: 8px 14px; border-radius: 8px; text-wrap: balance;
   background: #24262b; color: #f3f4f6;
   box-shadow: var(--pop);
   opacity: 0; pointer-events: none;
   transition: opacity .15s, transform .15s;
 }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
-#toast.error { background: #b42318; }
+#toast.error { background: #b42318; pointer-events: auto; display: flex; align-items: center; gap: 10px; padding-right: 6px; }
+#toast .toast-x {
+  min-width: 0; width: 24px; height: 24px; padding: 0; flex: none;
+  border-radius: 5px; background: none; color: inherit; opacity: .85;
+}
+#toast .toast-x:hover { background: rgba(255,255,255,.16); opacity: 1; }
+#toast .toast-x svg { width: 14px; height: 14px; stroke-width: 2.25; }
+#rAnchor:disabled .note { visibility: hidden; } /* irrelevant in Resize mode; keep its space so nothing jumps */
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 /* Unsaved marker on Save when the file name is hidden (narrow windows). */
 [data-cmd=save] { position: relative; }
@@ -391,8 +405,8 @@ dialog fieldset:disabled { opacity: .4; }
     box-shadow: 0 0 0 1.5px var(--panel);
   }
   #toolName { display: none; }
-  #palette { grid-template-columns: repeat(10, 16px); grid-auto-rows: 16px; gap: 2px; }
-  #palette button { width: 16px; height: 16px; }
+  .colors { gap: 16px; } /* swap's 24px box sticks 12px out of the well; keep it clear of the first swatch */
+  #palette button::before { inset: 4px; } /* smaller chip, same 24px target */
 }
 @media (max-width: 760px) {
   #topbar { padding: 0 4px; }
@@ -408,7 +422,10 @@ dialog fieldset:disabled { opacity: .4; }
   #topbar button { min-width: 26px; padding: 0 4px; }
   .group + .group::before { margin: 0 2px 0 1px; }
   .opts { gap: 10px; overflow-x: auto; scrollbar-width: thin; }
-  .opts input[type=range] { width: 60px; }
+  .opts label[data-for~=pencil] .lbl { display: none; } /* the slider is labelled and has a tooltip; room for the palette's 24px targets */
+  .colors { gap: 16px; }
+  .seg span { padding: 3px 7px; }
+  .opts input[type=range] { width: 52px; }
 }
 /* Last resort for very narrow windows: let the bars scroll rather than clip controls. */
 #topbar, #optbar { overflow-x: auto; scrollbar-width: thin; }

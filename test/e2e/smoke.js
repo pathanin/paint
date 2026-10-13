@@ -653,12 +653,62 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       } else ok(false, 'resize dialog opens');
       ok(await dims() === before, 'no size change from any refused path');
     }
+    // round 9: WCAG 2.2 target size (24px, or 24px pitch) for palette and swap, at wide and narrow widths
+    for (const w of [1280, 820, 600]) {
+      await page.setViewportSize({ width: w, height: 700 }); await page.waitForTimeout(100);
+      const small = await P(() => [...document.querySelectorAll('#palette button, .well .swap')]
+        .map((b) => { const r = b.getBoundingClientRect(); return [b.getAttribute('aria-label'), r.width, r.height]; })
+        .filter(([, bw, bh]) => bw < 24 || bh < 24));
+      ok(small.length === 0, `targets >= 24px at ${w}: ` + JSON.stringify(small.slice(0, 3)));
+      ok(await P(() => { const a = document.querySelector('.well .swap').getBoundingClientRect(), b = document.querySelector('#palette button').getBoundingClientRect(); return a.right <= b.left + 0.5; }), `swap target clear of the palette at ${w}`);
+      ok(await P(() => { const o = document.querySelector('#optbar'); return o.scrollWidth <= o.clientWidth + 1; }) || w < 640, `options bar not overflowing at ${w}`);
+    }
+    await page.setViewportSize({ width: 1280, height: 800 }); await page.waitForTimeout(100);
+    // round 9: palette tooltip doesn't cover the other palette row
+    for (const c of ['#ed1c24', '#b97a57']) {
+      await page.hover(`#palette [data-color="${c}"]`); await page.waitForTimeout(700);
+      const hit = await P(() => { const t = document.querySelector('#tip').getBoundingClientRect();
+        return document.querySelector('#tip').hidden ? 'hidden' : [...document.querySelectorAll('#palette button')].filter((b) => { const r = b.getBoundingClientRect();
+          return !(r.right <= t.left || r.left >= t.right || r.bottom <= t.top || r.top >= t.bottom); }).length; });
+      ok(hit === 0, `palette tooltip for ${c} covers ${hit} swatches`);
+      await page.mouse.move(600, 400); await page.waitForTimeout(200);
+    }
+    // round 9: resize tabs don't repeat the title; anchor note hidden while it doesn't apply
+    await page.keyboard.press('Shift+KeyR'); await page.waitForTimeout(100);
+    ok(await page.locator('#resizeDlg').evaluate((d) => d.open), 'Shift+R opens resize');
+    const tabs = await P(() => [...document.querySelectorAll('#resizeDlg .seg span')].map((x) => x.textContent));
+    ok(!tabs.includes(await page.locator('#resizeTitle').textContent()), 'resize tabs differ from title: ' + tabs);
+    ok(await P(() => getComputedStyle(document.querySelector('#rAnchor .note')).visibility === 'hidden'), 'anchor note hidden in scale mode');
+    await page.click('#resizeDlg .seg label:nth-child(2)');
+    ok(await P(() => getComputedStyle(document.querySelector('#rAnchor .note')).visibility === 'visible'), 'anchor note shown in canvas mode');
+    await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+    // round 9: error toasts can be dismissed; info toasts aren't interactive
+    await P(() => window.__paint.flash('Something broke', true)); await page.waitForTimeout(200);
+    const x = page.locator('#toast .toast-x');
+    ok(await x.count() === 1 && await x.isVisible(), 'error toast has a dismiss button');
+    if (await x.count()) { await x.click(); await page.waitForTimeout(250); }
+    ok(await P(() => !document.querySelector('#toast').classList.contains('show')), 'dismiss hides the error toast');
+    await P(() => window.__paint.flash('Copied')); await page.waitForTimeout(200);
+    ok(await page.locator('#toast .toast-x').count() === 0 && await P(() => getComputedStyle(document.querySelector('#toast')).pointerEvents === 'none'), 'info toast has no button and ignores the pointer');
     // picker hint not clipped at 600
     await page.setViewportSize({ width: 600, height: 700 }); await page.waitForTimeout(100);
     await page.keyboard.press('KeyI');
     ok(await P(() => { const h = document.querySelector('.hint[data-for~="picker"]'); return h.scrollWidth <= h.clientWidth; }), 'picker hint fits at 600');
     await page.setViewportSize({ width: 1280, height: 800 });
     ok(errs.length === 0, 'console errors: ' + JSON.stringify(errs));
+    // round 9: first-run hint on a fresh blank document, gone after the first edit
+    {
+      const fp = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+      await fp.goto(url); await fp.waitForTimeout(200);
+      const intro = () => fp.evaluate(() => { const e = document.querySelector('#stIntro'); return e && !e.hidden ? e.textContent : null; });
+      ok(/open/i.test(await intro() || '') && /paste|drop/i.test(await intro() || ''), 'first-run hint shown: ' + await intro());
+      const b = await fp.locator('#overlay').boundingBox();
+      await fp.keyboard.press('KeyB');
+      await fp.mouse.move(b.x + 50, b.y + 50); await fp.mouse.down(); await fp.mouse.move(b.x + 90, b.y + 70, { steps: 4 }); await fp.mouse.up();
+      await fp.waitForTimeout(100);
+      ok(await intro() === null, 'first-run hint gone after drawing');
+      await fp.close();
+    }
     // non-Mac labels
     const wpage = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     await wpage.addInitScript(() => Object.defineProperty(Navigator.prototype, 'platform', { get: () => 'Win32' }));
