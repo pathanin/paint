@@ -1079,6 +1079,9 @@
       if (e.code !== 'Space') e.preventDefault();
       return;
     }
+    if (e.key === 'Escape' && $('#toast').classList.contains('error') && $('#toast').classList.contains('show')) {
+      clearTimeout(msgTimer); $('#toast').classList.remove('show'); e.preventDefault(); return; // keyboard path for the toast's ×
+    }
     // Space/Enter on a focused control activate it (keyboard users); they are not shortcuts there.
     if ((e.code === 'Space' || e.key === 'Enter') && e.target.closest && e.target.closest('button, input, select')) return;
     const mod = e.metaKey || e.ctrlKey;
@@ -1353,7 +1356,7 @@
   const HELP = [
     ['Tools', [['Select', 'S'], ['Pencil', 'P'], ['Brush', 'B'], ['Eraser', 'E'], ['Fill', 'F'], ['Color picker', 'I'],
       ['Text', 'T'], ['Line', 'L'], ['Rectangle', 'R'], ['Ellipse', 'O']]],
-    ['Edit', [['Undo', '⌘Z'], ['Redo', '⌘⇧Z', '⌘Y'], ['Select all', '⌘A'], ['Deselect', 'Esc'], ['Clear selection to color 2', 'Delete', '⌫'],
+    ['Edit', [['Undo', '⌘Z'], ['Redo', '⌘⇧Z', '⌘Y'], ['Select all', '⌘A'], ['Deselect / dismiss error', 'Esc'], ['Clear selection to color 2', 'Delete', '⌫'],
       ['Nudge selection (⇧ = 10px)', '←', '↑', '→', '↓'], ['Copy, cut, paste', '⌘C', '⌘X', '⌘V'], ['Crop to selection', '⌘⇧X']]],
     ['Drawing', [['Draw with color 1 / color 2', '~Left / right click'], ['Swap colors', 'X'], ['Smaller / bigger size', '[', ']'],
       ['Square, circle, 45° line', '⇧', '~drag'], ['Pick color 2 from a swatch', '~right-click / ⇧-click'],

@@ -690,6 +690,24 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     ok(await P(() => !document.querySelector('#toast').classList.contains('show')), 'dismiss hides the error toast');
     await P(() => window.__paint.flash('Copied')); await page.waitForTimeout(200);
     ok(await page.locator('#toast .toast-x').count() === 0 && await P(() => getComputedStyle(document.querySelector('#toast')).pointerEvents === 'none'), 'info toast has no button and ignores the pointer');
+    // round 10: Esc dismisses an error toast first (keyboard path), and only then deselects
+    await page.mouse.move(600, 400);
+    await P(() => { window.__paint.setTool('select'); window.__paint.selectAll(); document.querySelector('#viewport').focus(); });
+    await P(() => window.__paint.flash('Save failed: disk full', true)); await page.waitForTimeout(150);
+    await page.keyboard.press('Escape'); await page.waitForTimeout(100);
+    ok(await P(() => !document.querySelector('#toast').classList.contains('show')), 'Esc dismisses the error toast');
+    ok(await P(() => !!window.__paint.sel), 'that Esc keeps the selection');
+    await page.keyboard.press('Escape'); await page.waitForTimeout(100);
+    ok(await P(() => !window.__paint.sel), 'next Esc deselects');
+    // round 10: the swap button's box never covers the visible part of the Color 2 well
+    for (const w of [1280, 820, 600]) {
+      await page.setViewportSize({ width: w, height: 700 }); await page.waitForTimeout(100);
+      ok(await P(() => { const a = document.querySelector('.well .swap').getBoundingClientRect(), b = document.querySelector('#secondary').getBoundingClientRect(); return a.left >= b.right - 0.5 || a.bottom <= b.top + 0.5; }), `swap clear of Color 2 at ${w}`);
+      ok(await P(() => { const o = document.querySelector('#optbar'); return [...o.querySelectorAll('.opts > :not([hidden]), .colors')].every((e) => e.getBoundingClientRect().right <= o.getBoundingClientRect().right + 0.5); }), `options bar contents fit at ${w}`);
+    }
+    await page.setViewportSize({ width: 600, height: 700 }); await page.keyboard.press('KeyR'); await page.waitForTimeout(100);
+    ok(await P(() => { const r = document.querySelector('.seg[data-for]').getBoundingClientRect(), o = document.querySelector('.opts').getBoundingClientRect(); return r.right <= o.right + 0.5; }), 'shape style still fits at 600 after swap move');
+    await page.setViewportSize({ width: 1280, height: 800 }); await page.waitForTimeout(100);
     // picker hint not clipped at 600
     await page.setViewportSize({ width: 600, height: 700 }); await page.waitForTimeout(100);
     await page.keyboard.press('KeyI');

@@ -17,7 +17,7 @@ A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, ann
 | [ ] | Smaller / bigger size |
 | Shift while dragging | Square / circle / 45° line |
 | ⌘Z / ⌘⇧Z (or ⌘Y) | Undo / redo |
-| ⌘A, Esc, Delete (or Backspace) | Select all, deselect (Esc also cancels a shape, selection, move or canvas drag), clear selection to color 2 |
+| ⌘A, Esc, Delete (or Backspace) | Select all, deselect (Esc also cancels a shape, selection, move or canvas drag, and dismisses an error message), clear selection to color 2 |
 | Enter, Shift+Enter, Esc (text tool) | Apply text, new line, cancel |
 | Arrows (Shift = 10px) | Nudge selection |
 | ⌘C ⌘X ⌘V | Copy, cut, paste the selection. With nothing selected, ⌘C and ⌘X copy the whole image and leave it unchanged |

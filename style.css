@@ -147,7 +147,7 @@ button.labeled { padding: 0 9px 0 7px; }
 .seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 0; }
 
 /* colors */
-.colors { display: flex; align-items: center; gap: 20px; flex: none; }
+.colors { display: flex; align-items: center; gap: 26px; flex: none; } /* room for the swap button */
 .well { position: relative; width: 44px; height: 36px; flex: none; }
 .well input[type=color] {
   position: absolute; width: 25px; height: 25px; padding: 0; margin: 0;
@@ -159,11 +159,11 @@ button.labeled { padding: 0 9px 0 7px; }
 #primary { left: 0; top: 0; z-index: 1; }
 #secondary { left: 15px; top: 11px; }
 .well .swap {
-  position: absolute; right: -12px; top: -2px;
+  position: absolute; right: -22px; top: -2px; /* fully clear of Color 2's visible corner */
   min-width: 0; width: 24px; height: 24px; padding: 0; border-radius: 5px; color: var(--muted);
 }
-.well .swap:hover { color: var(--text); }
-.well .swap svg { width: 13px; height: 13px; stroke-width: 2; }
+.well .swap:hover, .well .swap:focus-visible { color: var(--text); }
+.well .swap svg { width: 15px; height: 15px; stroke-width: 2; }
 /* Each swatch is a 24px target (WCAG 2.2 target size) around an 18px painted chip. */
 #palette { display: grid; grid-template-columns: repeat(10, 24px); grid-auto-rows: 24px; margin: 0 -3px; }
 #palette button {
@@ -405,7 +405,7 @@ dialog fieldset:disabled { opacity: .4; }
     box-shadow: 0 0 0 1.5px var(--panel);
   }
   #toolName { display: none; }
-  .colors { gap: 16px; } /* swap's 24px box sticks 12px out of the well; keep it clear of the first swatch */
+  .colors { gap: 26px; }
   #palette button::before { inset: 4px; } /* smaller chip, same 24px target */
 }
 @media (max-width: 760px) {
@@ -421,11 +421,11 @@ dialog fieldset:disabled { opacity: .4; }
   #topbar { justify-content: space-between; }
   #topbar button { min-width: 26px; padding: 0 4px; }
   .group + .group::before { margin: 0 2px 0 1px; }
-  .opts { gap: 10px; overflow-x: auto; scrollbar-width: thin; }
+  .opts { gap: 8px; overflow-x: auto; scrollbar-width: thin; }
   .opts label[data-for~=pencil] .lbl { display: none; } /* the slider is labelled and has a tooltip; room for the palette's 24px targets */
-  .colors { gap: 16px; }
-  .seg span { padding: 3px 7px; }
-  .opts input[type=range] { width: 52px; }
+  .colors { gap: 26px; }
+  .seg span { padding: 3px 6px; }
+  .opts input[type=range] { width: 48px; }
 }
 /* Last resort for very narrow windows: let the bars scroll rather than clip controls. */
 #topbar, #optbar { overflow-x: auto; scrollbar-width: thin; }
