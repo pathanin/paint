@@ -198,6 +198,21 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.click('[data-cmd="save"]');
     await page.waitForTimeout(150);
     ok(/Downloaded/.test(await page.locator('#toast').textContent()), 'download save shows toast');
+    // round 11: Save As on the download path asks for a name; cancel downloads nothing
+    {
+      const fn0 = await P(() => window.__paint.S.fileName);
+      await P(() => { window.__realPrompt = window.prompt; window.prompt = () => null; window.__paint.flash('—'); });
+      await page.keyboard.press('Meta+Shift+KeyS'); await page.waitForTimeout(150);
+      ok(!/Downloaded/.test(await page.locator('#toast').textContent()) && await P(() => window.__paint.S.fileName) === fn0, 'cancelled Save As downloads nothing');
+      await P(() => { window.prompt = (m, d) => { window.__promptDefault = d; return ' sketch '; }; });
+      await page.keyboard.press('Meta+Shift+KeyS'); await page.waitForTimeout(150);
+      ok(await P(() => window.__promptDefault) === fn0, 'Save As prompt suggests the current name');
+      ok(/Downloaded sketch\.png/.test(await page.locator('#toast').textContent()) && await P(() => window.__paint.S.fileName) === 'sketch.png', 'Save As downloads under the typed name, .png added: ' + await page.locator('#toast').textContent());
+      await P(() => { window.prompt = () => 'photo.jpg'; });
+      await page.keyboard.press('Meta+Shift+KeyS'); await page.waitForTimeout(150);
+      ok(await P(() => window.__paint.S.fileName) === 'photo.jpg', 'Save As keeps a writable extension');
+      await P(() => { window.prompt = window.__realPrompt; });
+    }
     // resize dialog title follows mode
     await page.keyboard.press('Shift+KeyC'); await page.waitForTimeout(100);
     ok(await page.locator('#resizeTitle').textContent() === 'Canvas size', 'canvas dialog titled');
@@ -699,6 +714,21 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     ok(await P(() => !!window.__paint.sel), 'that Esc keeps the selection');
     await page.keyboard.press('Escape'); await page.waitForTimeout(100);
     ok(await P(() => !window.__paint.sel), 'next Esc deselects');
+    // round 11: Esc dismisses an error toast inside the text box without cancelling the text;
+    // in a modal dialog (drawn above the toast) Esc still closes the dialog
+    await P(() => window.__paint.flash('Something failed', true)); await page.waitForTimeout(100);
+    await page.keyboard.press('Alt+KeyN'); await page.waitForTimeout(100);
+    await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+    ok(!(await page.locator('#newDlg').evaluate((d) => d.open)), 'Esc closes a dialog even with an error toast up');
+    await page.keyboard.press('Escape'); await page.waitForTimeout(100);
+    await page.keyboard.press('KeyT');
+    { const b = await page.locator('#overlay').boundingBox(); await page.mouse.click(b.x + 60, b.y + 60); }
+    await page.waitForTimeout(100); await page.keyboard.type('hi');
+    await P(() => window.__paint.flash('Something failed', true)); await page.waitForTimeout(100);
+    await page.keyboard.press('Escape'); await page.waitForTimeout(100);
+    ok(await P(() => !document.querySelector('#toast').classList.contains('show') && !document.querySelector('#textInput').hidden), 'Esc in the text box dismisses the toast, text stays open');
+    await page.keyboard.press('Escape'); await page.waitForTimeout(100);
+    ok(await P(() => document.querySelector('#textInput').hidden), 'next Esc cancels the text');
     // round 10: the swap button's box never covers the visible part of the Color 2 well
     for (const w of [1280, 820, 600]) {
       await page.setViewportSize({ width: w, height: 700 }); await page.waitForTimeout(100);

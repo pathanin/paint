@@ -702,6 +702,12 @@
           (await h.requestPermission({ mode: 'readwrite' })) !== 'granted') h = null;
       if (!h) {
         if (!window.showSaveFilePicker) {
+          if (as) { // no save picker here: ask for the name, so Save As differs from Save
+            const typed = prompt('Save as', name);
+            if (typed === null || !typed.trim()) return;
+            name = typed.trim();
+            if (!canWrite(name)) name = /\.[^.]*$/.test(name) ? asPng(name) : name + '.png';
+          }
           const a = document.createElement('a');
           a.href = URL.createObjectURL(await encode(mimeFor(name)));
           a.download = name;
@@ -1066,6 +1072,14 @@
     if (e.key.length === 1 && e.code !== 'Space') return /^Key[A-Z]$/.test(e.code) && e.key.charCodeAt(0) > 127 ? e.code : '';
     return e.code;
   }
+  // Esc dismisses a visible error toast first (keyboard path for its ×). Capture phase, so the text box
+  // doesn't also cancel (and lose its text) on the same press. Not while a modal is open: the dialog sits
+  // above the toast and Esc belongs to it. Mid-drag Esc still cancels the drag.
+  window.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || drag || modalOpen() || !$('#toast').classList.contains('error') || !$('#toast').classList.contains('show')) return;
+    clearTimeout(msgTimer); $('#toast').classList.remove('show');
+    e.preventDefault(); e.stopImmediatePropagation();
+  }, true);
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !tip.hidden) {
       const fromKeyboard = tipByKey;
@@ -1078,9 +1092,6 @@
       else if (e.key === 'Shift' && SHAPES.has(drag.t)) { drag.shift = true; requestRender(); }
       if (e.code !== 'Space') e.preventDefault();
       return;
-    }
-    if (e.key === 'Escape' && $('#toast').classList.contains('error') && $('#toast').classList.contains('show')) {
-      clearTimeout(msgTimer); $('#toast').classList.remove('show'); e.preventDefault(); return; // keyboard path for the toast's ×
     }
     // Space/Enter on a focused control activate it (keyboard users); they are not shortcuts there.
     if ((e.code === 'Space' || e.key === 'Enter') && e.target.closest && e.target.closest('button, input, select')) return;
