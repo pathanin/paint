@@ -41,3 +41,5 @@ Save format follows the file extension (PNG, JPEG, WebP); JPEG is flattened onto
 - `test/e2e/smoke.js` — browser smoke test (about 280 checks). Dev-only: needs Playwright somewhere on `NODE_PATH` and Google Chrome.
   Serve the folder (`python3 -m http.server 8765`), then `NODE_PATH=/path/to/node_modules node test/e2e/smoke.js [url]`
   (url defaults to `http://localhost:8765/`; `file:///…/index.html` works too). `test/e2e/shots.js PREFIX` saves screenshots.
+- `test/e2e/history.js` (pixel-exact undo/redo of every edit kind, undo depth on a 12 MP image) and `test/e2e/preview.js` (selection and shape previews on screen at several zooms) — same setup and `[url]` argument as the smoke test.
+- `test/e2e/bench.js [url] [--runs N] [--only substr] [--json out.json]` — performance benchmark: main-thread time, frame times and memory per scenario, median of N runs. `test/e2e/bench-compare.js before.json after.json` prints the deltas and exits 1 on a regression.

@@ -1,13 +1,17 @@
 (function () {
   'use strict';
   const $ = (s) => document.querySelector(s);
-  const img = $('#image'), ov = $('#overlay'), stage = $('#stage'), vp = $('#viewport'), textBox = $('#textInput');
+  const ov = $('#overlay'), stage = $('#stage'), vp = $('#viewport'), textBox = $('#textInput');
   const ring = $('#ring');
-  const ctx = img.getContext('2d');
-  const octx = ov.getContext('2d');
-  // GPU-side copy of the canvas taken at the start of each op; undo regions are read from it at the end.
-  const backup = document.createElement('canvas');
-  const bctx = backup.getContext('2d');
+  // The document canvas. Whole-image ops (crop, rotate, resize...) swap in a new element rather than
+  // copying pixels, and undo swaps it back, so these are reassigned by adoptImage().
+  let img = $('#image');
+  let ctx = img.getContext('2d');
+  // #overlay is only the pointer target (never drawn, so it has no backing store). Shape previews,
+  // marching ants and floating selections are drawn on #preview, which covers just the visible part
+  // of the image. A document-sized overlay costs 400 MB at 100 MP, and twice that once shown.
+  const pv = $('#preview');
+  const octx = pv.getContext('2d');
 
   const S = {
     tool: 'pencil', prevTool: 'pencil',
@@ -19,7 +23,8 @@
     fileHandle: null, fileName: 'untitled.png',
     pristine: true, panKey: false,
   };
-  const hist = new Core.History({ maxBytes: 256 * 1024 * 1024, maxCount: 100 });
+  // Dropped doc entries hold whole canvases: free them now (width 0) rather than at some later GC.
+  const hist = new Core.History({ maxBytes: 256 * 1024 * 1024, maxCount: 100, onDrop: (e) => { if (e.type === 'doc') e.canvas.width = 0; } });
   const SHAPES = new Set(['line', 'rect', 'ellipse']);
   const TOOL_KEYS = {
     KeyS: 'select', KeyP: 'pencil', KeyB: 'brush', KeyE: 'eraser', KeyF: 'fill',
@@ -44,7 +49,7 @@
 
   let drag = null;   // in-progress pointer interaction
   let sel = null;    // {x, y, w, h, float: canvas|null}
-  let op = null;     // dirty bbox of the current undoable region op
+  let op = null;     // the current undoable region op: {tiles} (see touch())
   let textAt = null; // {x, y, color} while the text box is open
 
   // ---------- helpers ----------
@@ -62,6 +67,17 @@
     const n = parseInt(hex.slice(1), 16);
     return Core.rgbaToU32((n >> 16) & 255, (n >> 8) & 255, n & 255, 255);
   }
+  // Write-if-changed DOM setters for paths that run on every pointermove or frame. Rewriting an
+  // identical value isn't free: textContent replaces the text node (layout), and attribute or
+  // `disabled` writes queue mutation records (the topbar's MutationObserver then forces a layout).
+  function setText(el, v) { if (el.textContent !== v) el.textContent = v; }
+  function setAttr(el, k, v) {
+    if (v == null) { if (el.hasAttribute(k)) el.removeAttribute(k); return; }
+    v = String(v);
+    if (el.getAttribute(k) !== v) el.setAttribute(k, v);
+  }
+  function setProp(el, k, v) { if (el[k] !== v) el[k] = v; }
+  function setData(el, k, v) { if (el.dataset[k] !== v) el.dataset[k] = v; }
   const toHex = (r, g, b) => '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
@@ -103,54 +119,160 @@
     : k.replace(/⌘/g, 'Ctrl+').replace(/⇧([- ])/g, 'Shift$1').replace(/⇧/g, 'Shift+').replace(/\+\+$/, '+Plus').replace(/\+−$/, '+Minus'));
 
   // ---------- document & history ----------
+  // Make canvas c the document, without copying it: it replaces #image in the page.
+  function adoptImage(c) {
+    if (c === img) return;
+    c.id = 'image';
+    c.setAttribute('role', 'img');
+    img.replaceWith(c);
+    img.removeAttribute('id');
+    img = c;
+    ctx = c.getContext('2d');
+  }
+  // source: a canvas to adopt as the document, a bitmap to draw into it, or null for white.
   function setDoc(source, w, h) {
-    img.width = ov.width = backup.width = w;
-    img.height = ov.height = backup.height = h;
-    if (source) ctx.drawImage(source, 0, 0);
-    else { ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h); }
-    sel = null; drag = null; op = null;
+    if (source instanceof HTMLCanvasElement) adoptImage(source);
+    else {
+      img.width = w; img.height = h; // also clears it
+      if (source) ctx.drawImage(source, 0, 0);
+      else { ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h); }
+    }
+    dropOp();
+    sel = null; drag = null;
     layout();
     requestRender();
   }
 
-  function beginOp() {
-    bctx.clearRect(0, 0, backup.width, backup.height);
-    bctx.drawImage(img, 0, 0);
-    op = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+  // Undo is copy-on-write. Every edit calls touch(rect) *before* drawing into rect; the first touch
+  // of each TILE x TILE tile saves its pixels. endOp() keeps only the touched part of each tile.
+  // So no op copies the whole image, and a long diagonal stroke stores a thin band of tiles, not
+  // its whole bounding box. Tiles are saved one of two ways:
+  //  - strokes (beginOp(true)): each tile is copied into a small canvas of its own (GPU drawImage),
+  //    and read back once, in endOp() (or mid-stroke, once more than 512 are live);
+  //  - everything else touches its whole area once, up front: one getImageData of those tiles.
+  // Two Chrome gotchas shape this (measured on a 10000 px canvas):
+  //  - No readback (getImageData) of the document, or of anything drawn from it, while a stroke is in
+  //    progress: each one costs ~10 ms per frame, as the next frame then copies the whole canvas.
+  //  - No reusing snapshot canvases after they were read back: Chrome may move a canvas that was
+  //    read to the CPU, and then drawing the document into it is a readback too. So tiles are fresh
+  //    per op, and freed (width 0) as soon as endOp() has read them.
+  const TILE = 256;
+  function beginOp(stroke) {
+    dropOp();
+    op = { tiles: new Map(), stroke: !!stroke, live: 0 };
   }
   function touch(x, y, w, h) {
     if (!op) return;
-    op.x0 = Math.min(op.x0, Math.floor(x));
-    op.y0 = Math.min(op.y0, Math.floor(y));
-    op.x1 = Math.max(op.x1, Math.ceil(x + w));
-    op.y1 = Math.max(op.y1, Math.ceil(y + h));
+    const fresh = [];
+    for (const p of Core.tileParts({ x, y, w, h }, img.width, img.height, TILE)) {
+      const t = op.tiles.get(p.key);
+      if (t) {
+        t.x0 = Math.min(t.x0, p.x); t.y0 = Math.min(t.y0, p.y);
+        t.x1 = Math.max(t.x1, p.x + p.w); t.y1 = Math.max(t.y1, p.y + p.h);
+        continue;
+      }
+      const ox = p.tx * TILE, oy = p.ty * TILE;
+      const t2 = { c: null, data: null, ox, oy, w: Math.min(TILE, img.width - ox), h: Math.min(TILE, img.height - oy), x0: p.x, y0: p.y, x1: p.x + p.w, y1: p.y + p.h };
+      op.tiles.set(p.key, t2);
+      fresh.push(t2);
+    }
+    if (!fresh.length) return;
+    if (op.stroke) {
+      // Bound the GPU memory a long scribble can pin: past 512 live tile canvases (128 MB), read
+      // them back now. That one readback stalls a frame; the alternative is unbounded memory.
+      for (const t of fresh) {
+        if (op.live >= 512) { readTiles([...op.tiles.values()].filter((x) => x.c)); op.live = 0; }
+        op.live++;
+        t.c = makeCanvas(t.w, t.h);
+        t.c.getContext('2d').drawImage(img, t.ox, t.oy, t.w, t.h, 0, 0, t.w, t.h); // onto transparent: exact, alpha too
+      }
+      return;
+    }
+    // One readback covering the new tiles, cut up per tile.
+    const X0 = Math.min(...fresh.map((t) => t.ox)), Y0 = Math.min(...fresh.map((t) => t.oy));
+    const X1 = Math.max(...fresh.map((t) => t.ox + t.w)), Y1 = Math.max(...fresh.map((t) => t.oy + t.h));
+    const all = ctx.getImageData(X0, Y0, X1 - X0, Y1 - Y0);
+    for (const t of fresh) {
+      t.data = new ImageData(t.w, t.h);
+      blit(all, t.ox - X0, t.oy - Y0, t.data, 0, 0, t.w, t.h);
+    }
   }
   function endOp() {
     const o = op; op = null;
-    if (!o || o.x1 <= o.x0 || o.y1 <= o.y0) return;
-    const r = Core.clampRect({ x: o.x0, y: o.y0, w: o.x1 - o.x0, h: o.y1 - o.y0 }, img.width, img.height);
-    if (!r) return;
-    const before = bctx.getImageData(r.x, r.y, r.w, r.h);
-    const after = ctx.getImageData(r.x, r.y, r.w, r.h);
-    pushHist({ type: 'region', x: r.x, y: r.y, before, after, bytes: r.w * r.h * 8 });
+    if (!o || !o.tiles.size) return;
+    const tiles = [...o.tiles.values()];
+    if (o.stroke) readTiles(tiles.filter((t) => t.c));
+    const parts = [];
+    let bytes = 0;
+    for (const t of tiles) {
+      const w = t.x1 - t.x0, h = t.y1 - t.y0;
+      let data = t.data;
+      if (w !== t.w || h !== t.h) { data = new ImageData(w, h); blit(t.data, t.x0 - t.ox, t.y0 - t.oy, data, 0, 0, w, h); }
+      parts.push({ x: t.x0, y: t.y0, data });
+      bytes += w * h * 4;
+    }
+    pushHist({ type: 'region', parts, bytes });
   }
-  // Replace the whole document (crop/resize/rotate/...) as one undo step.
+  // Stroke tiles -> t.data. Each readback has a large fixed cost, so the tiles are first drawn into
+  // atlases of up to 16 x 16 tiles, and each atlas is read back once.
+  function readTiles(tiles) {
+    for (let i = 0; i < tiles.length; i += 256) {
+      const batch = tiles.slice(i, i + 256);
+      const cols = Math.ceil(Math.sqrt(batch.length)), rows = Math.ceil(batch.length / cols);
+      const atlas = makeCanvas(cols * TILE, rows * TILE), g = atlas.getContext('2d');
+      batch.forEach((t, j) => { g.drawImage(t.c, (j % cols) * TILE, Math.floor(j / cols) * TILE); t.c.width = 0; t.c = null; });
+      const all = g.getImageData(0, 0, atlas.width, atlas.height);
+      atlas.width = 0;
+      batch.forEach((t, j) => {
+        t.data = new ImageData(t.w, t.h);
+        blit(all, (j % cols) * TILE, Math.floor(j / cols) * TILE, t.data, 0, 0, t.w, t.h);
+      });
+    }
+  }
+  // Abandon the current op. With restore, first put back every pixel it changed.
+  function dropOp(restore) {
+    const o = op; op = null;
+    if (!o) return;
+    for (const t of o.tiles.values()) {
+      const w = t.x1 - t.x0, h = t.y1 - t.y0;
+      if (restore && t.c) { ctx.clearRect(t.x0, t.y0, w, h); ctx.drawImage(t.c, t.x0 - t.ox, t.y0 - t.oy, w, h, t.x0, t.y0, w, h); }
+      else if (restore) ctx.putImageData(t.data, t.ox, t.oy, t.x0 - t.ox, t.y0 - t.oy, w, h);
+      if (t.c) t.c.width = 0;
+    }
+  }
+  // Copy a w x h block between ImageData buffers (u32 rows).
+  function blit(src, sx, sy, dst, dx, dy, w, h) {
+    const s32 = new Uint32Array(src.data.buffer), d32 = new Uint32Array(dst.data.buffer);
+    for (let r = 0; r < h; r++) d32.set(s32.subarray((sy + r) * src.width + sx, (sy + r) * src.width + sx + w), (dy + r) * dst.width + dx);
+  }
+  // Swap a region entry's pixels with the canvas. Readbacks have a large fixed cost (one 400 MB read
+  // ~70 ms; the same as 40 bands ~340 ms), so nearby parts share one readback and one put
+  // (pixels between them are written back unchanged).
+  function swapParts(parts) {
+    const rects = parts.map((p) => ({ x: p.x, y: p.y, w: p.data.width, h: p.data.height }));
+    for (const g of Core.groupRects(rects, 2)) {
+      const ps = g.items.map((i) => parts[i]);
+      const x0 = g.x, y0 = g.y;
+      const band = ctx.getImageData(x0, y0, g.w, g.h);
+      for (const p of ps) {
+        const cur = new ImageData(p.data.width, p.data.height);
+        blit(band, p.x - x0, p.y - y0, cur, 0, 0, cur.width, cur.height);
+        blit(p.data, 0, 0, band, p.x - x0, p.y - y0, cur.width, cur.height);
+        p.data = cur;
+      }
+      ctx.putImageData(band, x0, y0);
+    }
+  }
+  // Replace the whole document (crop/resize/rotate/...) as one undo step. The entry keeps the old
+  // canvas element itself; undo and redo swap it with the live one. No pixels are copied.
   function docOp(next) {
     commitText();
     commitSelection();
-    const before = cloneCanvas(img);
-    setDoc(next, next.width, next.height);
-    pushDocHist(before, next);
+    const before = img;
+    setDoc(next);
+    pushDocHist(before);
   }
-  function pushDocHist(before, after) {
-    // Back-to-back whole-image ops (rotate, flip, resize...) share the canvas between them:
-    // the previous step's "after" is this step's "before", so photos keep many more undo steps.
-    const top = hist.top();
-    const shared = top && top.type === 'doc' && top.after.width === before.width && top.after.height === before.height;
-    if (shared) before = top.after;
-    const bytes = (after.width * after.height + (shared ? 0 : before.width * before.height)) * 4;
-    pushHist({ type: 'doc', before, after, bytes });
-  }
+  const pushDocHist = (before) => pushHist({ type: 'doc', canvas: before, bytes: before.width * before.height * 4 });
   function pushHist(e) {
     if (hist.push(e) && !S.trimWarned) {
       S.trimWarned = true;
@@ -159,9 +281,16 @@
     S.pristine = false;
     updateChrome();
   }
-  function applyHist(e, which) {
-    if (e.type === 'region') ctx.putImageData(e[which], e.x, e.y);
-    else setDoc(e[which], e[which].width, e[which].height);
+  // Each entry holds the pixels of the *other* state (before when on the undo stack, after when on
+  // the redo stack); applying it swaps them with what's on the canvas, so one copy serves both ways.
+  function applyHist(e) {
+    if (e.type === 'region') swapParts(e.parts);
+    else if (e.type === 'fill') applyFill(e);
+    else {
+      const other = e.canvas;
+      e.canvas = img;
+      setDoc(other);
+    }
     updateChrome();
     requestRender();
   }
@@ -171,7 +300,7 @@
     commitSelection();
     if (sel) { sel = null; requestRender(); } // the marquee would outline pixels that just changed
     const e = hist.undo();
-    if (e) applyHist(e, 'before');
+    if (e) applyHist(e);
   }
   function redo() {
     if (drag) return;
@@ -179,7 +308,7 @@
     commitSelection();
     if (sel) { sel = null; requestRender(); }
     const e = hist.redo();
-    if (e) applyHist(e, 'after');
+    if (e) applyHist(e);
   }
 
   function newDoc(w, h) {
@@ -199,6 +328,7 @@
     stage.classList.toggle('tiny', img.width * S.zoom < 48 || img.height * S.zoom < 48); // corner handle only
     if (textAt) placeTextBox();
     updateStatus();
+    requestRender(); // the preview follows the view
   }
   function setZoom(z, cx, cy) {
     z = clamp(z, 0.05, 32);
@@ -233,28 +363,92 @@
     return { x: (e.clientX - r.left) * img.width / r.width, y: (e.clientY - r.top) * img.height / r.height };
   }
 
-  let rafPending = false, overlayDirty = false;
+  let rafPending = false;
+  // The preview is redrawn only when what it shows changes (ovKey), and only the area drawn last
+  // time is cleared (ovBox): a static selection costs no canvas work. Moving or resizing the preview
+  // wipes it, so placePreview() resets both.
+  let ovKey = '', ovBox = null;
+  // pvAt: the image-px rect #preview covers, and k = its backing px per image px. k is 1 when the
+  // view is zoomed in (image px, CSS-scaled like #image), and screen resolution when zoomed out.
+  let pvAt = null;
+  function placePreview() {
+    const z = S.zoom, k = Math.min(1, z * devicePixelRatio);
+    const v = vp.getBoundingClientRect(), r = stage.getBoundingClientRect();
+    const L = v.left + vp.clientLeft - r.left, T = v.top + vp.clientTop - r.top;
+    const vis = { // visible image px
+      x0: clamp(Math.floor(L / z), 0, img.width), y0: clamp(Math.floor(T / z), 0, img.height),
+      x1: clamp(Math.ceil((L + vp.clientWidth) / z), 0, img.width), y1: clamp(Math.ceil((T + vp.clientHeight) / z), 0, img.height),
+    };
+    const a = pvAt;
+    if (a && a.z === z && a.k === k && a.W === img.width && a.H === img.height &&
+        vis.x0 >= a.x && vis.y0 >= a.y && vis.x1 <= a.x + a.w && vis.y1 <= a.y + a.h) return;
+    // A quarter view of margin on each side, so short scrolls don't need a move (a reallocation and
+    // redraw), while the backing stays near screen size.
+    const mx = Math.ceil((vis.x1 - vis.x0) / 4) + 1, my = Math.ceil((vis.y1 - vis.y0) / 4) + 1;
+    const x = Math.max(0, vis.x0 - mx), y = Math.max(0, vis.y0 - my);
+    const w = Math.max(1, Math.min(img.width, vis.x1 + mx) - x), h = Math.max(1, Math.min(img.height, vis.y1 + my) - y);
+    pvAt = { x, y, w, h, z, k, W: img.width, H: img.height };
+    pv.width = Math.ceil(w * k); pv.height = Math.ceil(h * k); // also clears it
+    Object.assign(pv.style, { left: x * z + 'px', top: y * z + 'px', width: w * z + 'px', height: h * z + 'px' });
+    octx.setTransform(pv.width / w, 0, 0, pv.height / h, -x * pv.width / w, -y * pv.height / h);
+    ovKey = ''; ovBox = null;
+  }
+  pv.addEventListener('contextrestored', () => { pvAt = null; ovKey = ''; ovBox = null; requestRender(); });
+  vp.addEventListener('scroll', () => requestRender(), { passive: true });
+  // The view can also grow (window resize, fullscreen) or change DPR (browser zoom, another monitor)
+  // with no scroll or pointer event: re-place the preview, and redo the pixelated/smooth choice.
+  new ResizeObserver(() => requestRender()).observe(vp);
+  (function watchDpr() {
+    matchMedia(`(resolution: ${devicePixelRatio}dppx)`).addEventListener('change', () => { layout(); watchDpr(); }, { once: true });
+  })();
+  const floatIds = new WeakMap(); // canvas -> id, so a new float with the same geometry still redraws
+  let nFloats = 0;
+  const floatId = (c) => { if (!floatIds.has(c)) floatIds.set(c, ++nFloats); return floatIds.get(c); };
   function requestRender() {
     if (rafPending) return;
     rafPending = true;
     requestAnimationFrame(render);
   }
+  // DOM writes for pointer feedback happen here, once per frame, never in the pointermove handler:
+  // a write there dirties layout, and Chrome's hit test for the follow-up mouse events then forces it.
   function render() {
     rafPending = false;
+    updateRing(hoverPt);
+    if (!drag) setProp(ov.style, 'cursor', S.tool === 'select' && sel && hoverPt && inside(hoverPt, sel) ? 'move' : '');
+    if (drag && drag.t === 'canvas') showGhost(drag);
     const shape = drag && SHAPES.has(drag.t);
     const marquee = drag && drag.t === 'select';
-    const brush = drag && drag.t === 'brush';
-    if (!overlayDirty && !shape && !marquee && !sel && !brush) { updateStatus(); return; }
-    octx.clearRect(0, 0, ov.width, ov.height);
-    overlayDirty = false;
-    // Live end of the stroke: what release would add, so the ink always reaches the pointer.
-    if (brush) { brushPath(octx, drag.stroke.tail(drag.ptr), drag.color, drag.size); overlayDirty = true; }
-    if (shape) { drawShape(octx, drag); overlayDirty = true; }
-    if (marquee) { ants(Core.normRect(drag.start, drag.end)); overlayDirty = true; }
-    if (sel) {
-      if (sel.float) octx.drawImage(sel.float, sel.x, sel.y);
-      ants(sel);
-      overlayDirty = true;
+    const mq = marquee ? Core.normRect(drag.start, drag.end) : null;
+    // Live end of a brush stroke: what release would add, so the ink always reaches the pointer.
+    const tail = drag && drag.t === 'brush' ? drag.stroke.tail(drag.ptr) : null;
+    const key = JSON.stringify([
+      S.zoom,
+      tail ? [tail, drag.color, drag.size] : 0,
+      shape ? [drag.t, drag.start, drag.end, drag.shift, drag.color, drag.alt, S.sizes[drag.t], S.fillMode] : 0,
+      mq || 0,
+      sel ? [sel.x, sel.y, sel.w, sel.h, sel.float ? floatId(sel.float) : 0] : 0,
+    ]);
+    if (shape || mq || sel || (tail && tail.length)) placePreview();
+    if (key !== ovKey) {
+      ovKey = key;
+      if (ovBox) octx.clearRect(ovBox.x, ovBox.y, ovBox.w, ovBox.h);
+      let box = null;
+      const add = (r) => {
+        const pad = 2 / S.zoom + 2; // stroke half-widths and antialiasing
+        const b = { x: Math.floor(r.x - pad), y: Math.floor(r.y - pad), w: Math.ceil(r.w + 2 * pad) + 1, h: Math.ceil(r.h + 2 * pad) + 1 };
+        if (!box) { box = b; return; }
+        const x1 = Math.max(box.x + box.w, b.x + b.w), y1 = Math.max(box.y + box.h, b.y + b.h);
+        box.x = Math.min(box.x, b.x); box.y = Math.min(box.y, b.y); box.w = x1 - box.x; box.h = y1 - box.y;
+      };
+      if (tail && tail.length) { brushPath(octx, tail, drag.color, drag.size); add(segsBox(tail, drag.size / 2 + 1)); }
+      if (shape) add(drawShape(octx, drag));
+      if (mq) { ants(mq); add(mq); }
+      if (sel) {
+        if (sel.float) octx.drawImage(sel.float, sel.x, sel.y);
+        ants(sel);
+        add(sel);
+      }
+      ovBox = box;
     }
     updateStatus();
   }
@@ -271,40 +465,44 @@
     octx.restore();
   }
 
-  let cursor = null;
+  let cursor = null;  // integer image px under the pointer, for the status bar
+  let hoverPt = null; // the same point unrounded (null when the pointer is off the canvas); render() places the ring there
+  const EL = {
+    stPos: $('#stPos'), stSelWrap: $('#stSelWrap'), stSel: $('#stSel'), stSize: $('#stSize'),
+    zoomBtn: $('#zoomBtn'), zoomIn: $('[data-cmd="zoomIn"]'), zoomOut: $('[data-cmd="zoomOut"]'), crop: $('#cropBtn'),
+    docTitle: $('#docTitle'), docDirty: $('#docDirty'), save: $('[data-cmd="save"]'), undo: $('#undoBtn'), redo: $('#redoBtn'), stIntro: $('#stIntro'),
+  };
+  // Runs every frame and pointermove; everything is write-if-changed, so a still image costs ~nothing.
   function updateStatus() {
-    $('#stPos').textContent = cursor ? `${cursor.x}, ${cursor.y} px` : '—';
+    setText(EL.stPos, cursor ? `${cursor.x}, ${cursor.y} px` : '—');
     const r = drag && drag.t === 'select' ? Core.normRect(drag.start, drag.end) : sel;
-    $('#stSelWrap').hidden = !r;
-    $('#stSel').textContent = r ? `${r.w} × ${r.h} px` : '';
-    const label = `Image, ${img.width} × ${img.height} px`;
-    if (img.getAttribute('aria-label') !== label) img.setAttribute('aria-label', label);
-    $('#stSize').textContent = drag && drag.t === 'canvas'
+    setProp(EL.stSelWrap, 'hidden', !r);
+    setText(EL.stSel, r ? `${r.w} × ${r.h} px` : '');
+    setAttr(img, 'aria-label', `Image, ${img.width} × ${img.height} px`);
+    setText(EL.stSize, drag && drag.t === 'canvas'
       ? `${img.width} × ${img.height} → ${drag.w} × ${drag.h} px · Esc to cancel`
-      : `${img.width} × ${img.height} px`;
+      : `${img.width} × ${img.height} px`);
     const pct = Math.round(S.zoom * 100) + '%';
-    $('#zoomBtn').textContent = pct;
-    $('[data-cmd="zoomIn"]').disabled = S.zoom >= ZOOMS[ZOOMS.length - 1] - 1e-9;
-    $('[data-cmd="zoomOut"]').disabled = S.zoom <= ZOOMS[0] + 1e-9;
-    $('#zoomBtn').setAttribute('aria-label', `Zoom ${pct}. Activate for actual size`);
+    setText(EL.zoomBtn, pct);
+    setProp(EL.zoomIn, 'disabled', S.zoom >= ZOOMS[ZOOMS.length - 1] - 1e-9);
+    setProp(EL.zoomOut, 'disabled', S.zoom <= ZOOMS[0] + 1e-9);
+    setAttr(EL.zoomBtn, 'aria-label', `Zoom ${pct}. Activate for actual size`);
     // aria-disabled (not disabled) keeps Crop focusable, so keyboard users can reach the explanation.
-    const cb = $('#cropBtn');
-    cb.setAttribute('aria-disabled', !sel);
-    cb.dataset.hint = sel ? '' : 'Select an area first';
-    if (sel) cb.removeAttribute('aria-description'); else cb.setAttribute('aria-description', 'Select an area first');
+    setAttr(EL.crop, 'aria-disabled', !sel);
+    setData(EL.crop, 'hint', sel ? '' : 'Select an area first');
+    setAttr(EL.crop, 'aria-description', sel ? null : 'Select an area first');
   }
   function updateChrome() {
     const dirty = isDirty();
-    document.title = (dirty ? '● ' : '') + S.fileName + ' — Paint';
-    if ($('#docTitle').textContent !== S.fileName) $('#docTitle').textContent = S.fileName;
-    $('#docDirty').hidden = !dirty;
+    setProp(document, 'title', (dirty ? '● ' : '') + S.fileName + ' — Paint');
+    setText(EL.docTitle, S.fileName);
+    setProp(EL.docDirty, 'hidden', !dirty);
     document.body.classList.toggle('dirty', dirty);
-    const sv = $('[data-cmd="save"]');
-    sv.setAttribute('aria-label', dirty ? 'Save (unsaved changes)' : 'Save');
-    sv.dataset.hint = dirty ? 'Unsaved changes' : '';
-    $('#undoBtn').disabled = !hist.canUndo() && !(sel && sel.float); // undo drops a floating paste/move
-    $('#stIntro').hidden = !S.pristine || !!textAt;
-    $('#redoBtn').disabled = !hist.canRedo();
+    setAttr(EL.save, 'aria-label', dirty ? 'Save (unsaved changes)' : 'Save');
+    setData(EL.save, 'hint', dirty ? 'Unsaved changes' : '');
+    setProp(EL.undo, 'disabled', !hist.canUndo() && !(sel && sel.float)); // undo drops a floating paste/move
+    setProp(EL.stIntro, 'hidden', !S.pristine || !!textAt);
+    setProp(EL.redo, 'disabled', !hist.canRedo());
   }
 
   // ---------- tools ----------
@@ -339,24 +537,25 @@
     document.querySelectorAll('#palette button').forEach((b) => {
       b.classList.toggle('is1', b.dataset.color === S.primary);
       b.classList.toggle('is2', b.dataset.color === S.secondary);
-      b.setAttribute('aria-pressed', b.dataset.color === S.primary);
-      b.dataset.tip = b.dataset.name + (b.dataset.color === S.secondary ? ' (color 2)' : '');
-      b.setAttribute('aria-label', b.dataset.tip);
+      setAttr(b, 'aria-pressed', b.dataset.color === S.primary);
+      setData(b, 'tip', b.dataset.name + (b.dataset.color === S.secondary ? ' (color 2)' : ''));
+      setAttr(b, 'aria-label', b.dataset.tip);
     });
   }
 
   function stampLine(a, b, color, size) {
     const off = Math.floor(size / 2);
+    touch(Math.min(a.x, b.x) - off, Math.min(a.y, b.y) - off, Math.abs(b.x - a.x) + size, Math.abs(b.y - a.y) + size);
     ctx.fillStyle = color;
     ctx.beginPath();
     for (const [x, y] of Core.line(a.x, a.y, b.x, b.y)) ctx.rect(x - off, y - off, size, size);
     ctx.fill();
-    touch(Math.min(a.x, b.x) - off, Math.min(a.y, b.y) - off, Math.abs(b.x - a.x) + size, Math.abs(b.y - a.y) + size);
   }
   // Brush: Core.Stroke segments ({a, c, b}, c = quadratic control or null) as one path, so joins blend once.
-  // The same call draws committed segments on the image and the live tail on the overlay.
+  // The same call draws committed segments on the image and the live tail on the preview.
   function brushPath(c, segs, color, size) {
     if (!segs.length) return;
+    if (c === ctx) for (const g of segs) { const b = segsBox([g], size / 2 + 1); touch(b.x, b.y, b.w, b.h); } // before drawing
     c.save();
     c.strokeStyle = color;
     c.lineWidth = size;
@@ -366,32 +565,61 @@
     for (const { c: q, b } of segs) { if (q) c.quadraticCurveTo(q.x, q.y, b.x, b.y); else c.lineTo(b.x, b.y); }
     c.stroke();
     c.restore();
-    if (c !== ctx) return;
-    const h = size / 2 + 1; // a quadratic stays inside the hull of its points
+  }
+  // Bounding box of segments grown by h (a quadratic stays inside the hull of its points).
+  function segsBox(segs, h) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const g of segs) {
-      const xs = [g.a.x, g.b.x, g.c ? g.c.x : g.a.x], ys = [g.a.y, g.b.y, g.c ? g.c.y : g.a.y];
-      const x0 = Math.min(...xs), y0 = Math.min(...ys);
-      touch(x0 - h, y0 - h, Math.max(...xs) - x0 + 2 * h, Math.max(...ys) - y0 + 2 * h);
+      for (const q of g.c ? [g.a, g.b, g.c] : [g.a, g.b]) {
+        if (q.x < x0) x0 = q.x; if (q.y < y0) y0 = q.y; if (q.x > x1) x1 = q.x; if (q.y > y1) y1 = q.y;
+      }
     }
+    return { x: x0 - h, y: y0 - h, w: x1 - x0 + 2 * h, h: y1 - y0 + 2 * h };
   }
   function brushDot(p, color, size) {
+    touch(p.x - size / 2 - 1, p.y - size / 2 - 1, size + 2, size + 2);
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.arc(p.x, p.y, size / 2, 0, Math.PI * 2);
     ctx.fill();
-    touch(p.x - size / 2 - 1, p.y - size / 2 - 1, size + 2, size + 2);
   }
 
   function doFill(p, color) {
     const W = img.width, H = img.height;
     if (p.x < 0 || p.y < 0 || p.x >= W || p.y >= H) return;
+    const c = hexToU32(color);
+    // Exact-match fill on a pixel that already has the colour changes nothing: skip the full readback.
+    if (Math.round(S.tolerance * 255 / 100) === 0 && new Uint32Array(ctx.getImageData(p.x, p.y, 1, 1).data.buffer)[0] === c) return;
     const data = ctx.getImageData(0, 0, W, H);
-    const box = Core.floodFill(new Uint32Array(data.data.buffer), W, H, p.x, p.y, hexToU32(color), S.tolerance);
-    if (!box) return;
-    beginOp();
+    const u32 = new Uint32Array(data.data.buffer);
+    const { mask, box } = Core.floodMask(u32, W, H, p.x, p.y, S.tolerance);
+    // The undo entry: the box's pixels before, plus the region as a bit mask. "After" is those
+    // pixels with the masked ones set to c, so neither undo nor redo has to read the canvas back.
+    const before = new ImageData(box.w, box.h);
+    blit(data, box.x, box.y, before, 0, 0, box.w, box.h);
+    const bits = new Uint8Array(Math.ceil(box.w * box.h / 8));
+    let changed = false;
+    for (let y = 0, k = 0; y < box.h; y++) {
+      for (let i = (box.y + y) * W + box.x, e = i + box.w; i < e; i++, k++) {
+        if (!mask[i]) continue;
+        bits[k >> 3] |= 1 << (k & 7);
+        if (u32[i] !== c) { u32[i] = c; changed = true; }
+      }
+    }
+    if (!changed) return;
     ctx.putImageData(data, 0, 0, box.x, box.y, box.w, box.h);
-    touch(box.x, box.y, box.w, box.h);
-    endOp();
+    pushHist({ type: 'fill', x: box.x, y: box.y, before, bits, color: c, undone: false, bytes: before.data.length + bits.length });
+  }
+  // Undo/redo of a fill entry: put back the pixels before, or recompute the filled ones.
+  function applyFill(e) {
+    let im = e.before;
+    if (e.undone) {
+      im = new ImageData(new Uint8ClampedArray(e.before.data), e.before.width, e.before.height);
+      const u32 = new Uint32Array(im.data.buffer);
+      for (let k = 0; k < u32.length; k++) if (e.bits[k >> 3] & (1 << (k & 7))) u32[k] = e.color;
+    }
+    ctx.putImageData(im, e.x, e.y);
+    e.undone = !e.undone;
   }
 
   function pick(p, right) {
@@ -422,7 +650,11 @@
       if (S.fillMode !== 'fill') c.stroke();
     }
     c.restore();
-    const r = Core.normRect(a, b);
+    return shapeBox(d);
+  }
+  // Everything drawShape(d) can paint.
+  function shapeBox(d) {
+    const r = Core.normRect(d.start, Core.constrainShape(d.start, d.end, d.shift, d.t)), lw = S.sizes[d.t];
     return { x: r.x - lw, y: r.y - lw, w: r.w + 2 * lw + 1, h: r.h + 2 * lw + 1 };
   }
 
@@ -463,13 +695,10 @@
     ctx.textBaseline = 'alphabetic';
     const m = ctx.measureText('Hg');
     const asc = m.fontBoundingBoxAscent, desc = m.fontBoundingBoxDescent;
-    let w = 0;
-    lines.forEach((ln, i) => {
-      ctx.fillText(ln, t.x, t.y + i * lh + (lh - (asc + desc)) / 2 + asc);
-      w = Math.max(w, ctx.measureText(ln).width);
-    });
-    ctx.restore();
+    const w = lines.reduce((m, ln) => Math.max(m, ctx.measureText(ln).width), 0); // not Math.max(...): huge pastes overflow the stack
     touch(t.x - fs / 2, t.y - fs / 2, w + fs, lines.length * lh + fs);
+    lines.forEach((ln, i) => ctx.fillText(ln, t.x, t.y + i * lh + (lh - (asc + desc)) / 2 + asc));
+    ctx.restore();
     endOp();
   }
   function cancelText() {
@@ -486,16 +715,16 @@
     beginOp();
     const f = makeCanvas(sel.w, sel.h);
     f.getContext('2d').drawImage(img, sel.x, sel.y, sel.w, sel.h, 0, 0, sel.w, sel.h);
+    touch(sel.x, sel.y, sel.w, sel.h);
     ctx.fillStyle = S.secondary;
     ctx.fillRect(sel.x, sel.y, sel.w, sel.h);
-    touch(sel.x, sel.y, sel.w, sel.h);
     sel.float = f;
     updateChrome();
   }
   function commitSelection() {
     if (!sel || !sel.float) return;
-    ctx.drawImage(sel.float, sel.x, sel.y);
     touch(sel.x, sel.y, sel.w, sel.h);
+    ctx.drawImage(sel.float, sel.x, sel.y);
     sel.float = null;
     finishFloat();
     requestRender();
@@ -506,8 +735,8 @@
     if (!sel.growFrom) { endOp(); return; }
     const before = sel.growFrom;
     sel.growFrom = null;
-    op = null;
-    pushDocHist(before, cloneCanvas(img));
+    dropOp();
+    pushDocHist(before);
   }
   function dropSelection() {
     commitSelection();
@@ -518,9 +747,9 @@
     if (sel.float) { sel.float = null; finishFloat(); }
     else {
       beginOp();
+      touch(sel.x, sel.y, sel.w, sel.h);
       ctx.fillStyle = S.secondary;
       ctx.fillRect(sel.x, sel.y, sel.w, sel.h);
-      touch(sel.x, sel.y, sel.w, sel.h);
       endOp();
     }
     sel = null;
@@ -551,7 +780,7 @@
 
   // ---------- clipboard ----------
   function selectionCanvas() {
-    if (!sel) return cloneCanvas(img);
+    if (!sel) return img; // toBlob() encodes a snapshot, so later edits can't leak in
     if (sel.float) return sel.float;
     const c = makeCanvas(sel.w, sel.h);
     c.getContext('2d').drawImage(img, sel.x, sel.y, sel.w, sel.h, 0, 0, sel.w, sel.h);
@@ -582,13 +811,13 @@
     // finishFloat() records grow + paste as a single undo step.
     let growFrom = null;
     if (bmp.width > img.width || bmp.height > img.height) {
-      growFrom = cloneCanvas(img);
+      growFrom = img; // kept as is for the undo entry; the grown canvas replaces it
       const c = makeCanvas(Math.max(img.width, bmp.width), Math.max(img.height, bmp.height));
       const g = c.getContext('2d');
       g.fillStyle = S.secondary;
       g.fillRect(0, 0, c.width, c.height);
       g.drawImage(img, 0, 0);
-      setDoc(c, c.width, c.height);
+      setDoc(c);
     }
     if (growFrom) flash(`Canvas enlarged to ${img.width} × ${img.height} to fit the paste`);
     // Drop it at the top-left of what's visible.
@@ -872,8 +1101,12 @@
 
   // ---------- canvas resize handles (Paint-style: right, bottom, corner; top-left stays put) ----------
   const ghost = $('#resizeGhost');
-  function showGhost(d) {
+  let ghostSize = '';
+  function showGhost(d) { // runs every frame of a handle drag: write only on change
     ghost.hidden = false;
+    const sz = d.w * S.zoom + 'px ' + d.h * S.zoom + 'px';
+    if (sz === ghostSize) return;
+    ghostSize = sz;
     ghost.style.width = d.w * S.zoom + 'px';
     ghost.style.height = d.h * S.zoom + 'px';
   }
@@ -900,8 +1133,7 @@
       if (!drag || drag.t !== 'canvas') return;
       const n = Core.dragResize(img.width, img.height, e.clientX - drag.sx, e.clientY - drag.sy, drag.edge, S.zoom, e.shiftKey, MAX_DIM, MAX_PIXELS);
       drag.w = n.w; drag.h = n.h;
-      showGhost(drag);
-      updateStatus();
+      requestRender(); // ghost and status are written in render()
     });
     h.addEventListener('pointerup', () => { if (drag && drag.t === 'canvas') endCanvasDrag(true); });
     h.addEventListener('pointercancel', () => { if (drag && drag.t === 'canvas') endCanvasDrag(false); });
@@ -931,14 +1163,14 @@
     switch (t) {
       case 'pencil': case 'eraser': {
         const c = t === 'eraser' ? S.secondary : color;
-        beginOp();
+        beginOp(true);
         drag = { t, last: ip, color: c };
         stampLine(ip, ip, c, S.sizes[t]);
         break;
       }
       case 'brush': {
         // Smoothing radius is in screen px (2 per step), fixed for the stroke even if the zoom changes.
-        beginOp();
+        beginOp(true);
         const size = S.sizes.brush;
         drag = { t, color, size, ptr: p, stroke: new Core.Stroke(p, S.smoothing * 2 / S.zoom, 0.5 / S.zoom) };
         brushDot(p, color, size);
@@ -969,12 +1201,8 @@
     const r = img.getBoundingClientRect();
     const p = imgPt(e, r);
     cursor = { x: Math.floor(p.x), y: Math.floor(p.y) };
-    updateRing(p);
-    if (!drag) {
-      ov.style.cursor = S.tool === 'select' && sel && inside(p, sel) ? 'move' : '';
-      updateStatus();
-      return;
-    }
+    hoverPt = p;
+    if (!drag) { requestRender(); return; }
     const d = drag;
     if (d.t === 'pan') {
       vp.scrollLeft = d.sl - (e.clientX - d.sx);
@@ -1011,16 +1239,20 @@
 
   // Outline of the brush footprint, so big sizes show what they'll cover.
   const RING_TOOLS = new Set(['pencil', 'brush', 'eraser']);
+  let ringSize = '', ringTf = '';
   function updateRing(p) {
     const size = S.sizes[S.tool], px = size * S.zoom;
-    if (!RING_TOOLS.has(S.tool) || S.panKey || (drag && drag.t === 'pan') || px < 4) { ring.hidden = true; return; }
+    if (!p || !RING_TOOLS.has(S.tool) || S.panKey || (drag && drag.t === 'pan') || px < 4) { setProp(ring, 'hidden', true); return; }
     let x, y;
     if (S.tool === 'brush') { x = p.x - size / 2; y = p.y - size / 2; }
     else { const off = Math.floor(size / 2); x = Math.floor(p.x) - off; y = Math.floor(p.y) - off; }
     ring.classList.toggle('round', S.tool === 'brush');
-    ring.style.width = ring.style.height = px + 'px';
-    ring.style.transform = `translate(${x * S.zoom}px, ${y * S.zoom}px)`;
-    ring.hidden = false;
+    // Compare with what we wrote last, not with ring.style: CSSOM re-serialises fractional px,
+    // so a read-back never matches and the size would be rewritten (a layout) every frame.
+    const sz = px + 'px', tf = `translate(${x * S.zoom}px, ${y * S.zoom}px)`;
+    if (ringSize !== sz) { ringSize = ring.style.width = ring.style.height = sz; }
+    if (ringTf !== tf) { ringTf = ring.style.transform = tf; }
+    setProp(ring, 'hidden', false);
   }
 
   // Esc mid-gesture: put everything back as it was before the pointer went down.
@@ -1031,9 +1263,8 @@
     drag = null;
     if (d.t === 'move' && sel) {
       if (d.lifted) { // undo the lift this drag made: restore the pixels, drop the float, no history entry
-        ctx.putImageData(bctx.getImageData(d.ox, d.oy, sel.w, sel.h), d.ox, d.oy);
+        dropOp(true);
         sel.float = null;
-        op = null;
       }
       sel.x = d.ox; sel.y = d.oy;
       updateChrome();
@@ -1056,8 +1287,9 @@
     else if (SHAPES.has(d.t)) {
       if (d.t !== 'line' && d.start.x === d.end.x && d.start.y === d.end.y) { requestRender(); return; } // a click, not a shape
       beginOp();
-      const b = drawShape(ctx, d);
+      const b = shapeBox(d);
       touch(b.x, b.y, b.w, b.h);
+      drawShape(ctx, d);
       endOp();
     } else if (d.t === 'select') {
       const r = Core.normRect(d.start, d.end);
@@ -1067,7 +1299,7 @@
   }
   ov.addEventListener('pointerup', finishDrag);
   ov.addEventListener('pointercancel', finishDrag);
-  ov.addEventListener('pointerleave', () => { ring.hidden = true; if (!drag) { cursor = null; updateStatus(); } });
+  ov.addEventListener('pointerleave', () => { hoverPt = null; ring.hidden = true; if (!drag) { cursor = null; updateStatus(); } });
   ov.addEventListener('mousedown', (e) => e.preventDefault()); // keep focus where we put it (text box)
   vp.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -1484,5 +1716,5 @@
   setTool('pencil');
 
   // Handle for scripted smoke tests in the console.
-  window.__paint = { S, hist, img, flash, save, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, loadFile, setZoom, fitZoom, MAX_PIXELS };
+  window.__paint = { S, hist, get img() { return img; }, newDoc, flash, save, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, loadFile, setZoom, fitZoom, MAX_PIXELS };
 })();

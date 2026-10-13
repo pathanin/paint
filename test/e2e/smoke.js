@@ -816,7 +816,14 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       const scr = (x, y) => [bb.x + (x + 0.5) * z, bb.y + (y + 0.5) * z];
       const hash = () => Q(() => { const d = window.__paint.img.getContext('2d').getImageData(0, 0, window.__paint.img.width, window.__paint.img.height).data; let h = 0; for (let i = 0; i < d.length; i++) h = (h * 31 + d[i]) | 0; return h; });
       const px = (x, y) => Q(([x, y]) => window.__paint.img.getContext('2d').getImageData(x, y, 1, 1).data[0], [x, y]);
-      const ovAt = (x, y) => Q(([x, y]) => document.querySelector('#overlay').getContext('2d').getImageData(x, y, 1, 1).data[3], [x, y]);
+      // Live tail alpha at image pixel (x, y): #preview covers part of the image at its own scale.
+      const ovAt = (x, y) => Q(([x, y]) => {
+        const pv = document.querySelector('#preview'), z = window.__paint.S.zoom, st = pv.style;
+        const k = pv.width / parseFloat(st.width) * z; // backing px per image px
+        const bx = Math.floor((x + 0.5 - parseFloat(st.left) / z) * k), by = Math.floor((y + 0.5 - parseFloat(st.top) / z) * k);
+        if (bx < 0 || by < 0 || bx >= pv.width || by >= pv.height) return 0;
+        return pv.getContext('2d').getImageData(bx, by, 1, 1).data[3];
+      }, [x, y]);
       const centre = (y0) => Q((y0) => {
         const d = window.__paint.img.getContext('2d').getImageData(0, y0 - 20, 400, 40).data, out = [];
         for (let x = 0; x < 400; x++) { let s = 0, n = 0; for (let y = 0; y < 40; y++) if (d[(y * 400 + x) * 4] < 128) { s += y; n++; } out.push(n ? s / n : null); }

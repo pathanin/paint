@@ -21,7 +21,13 @@ mkdir -p /tmp/pw && (cd /tmp/pw && npm i playwright@1)
 NODE_PATH=/tmp/pw/node_modules node test/e2e/smoke.js                      # http://localhost:8765/
 NODE_PATH=/tmp/pw/node_modules node test/e2e/smoke.js file://$PWD/index.html
 NODE_PATH=/tmp/pw/node_modules node test/e2e/shots.js /tmp/pw/shot         # light/dark/dialog/narrow screenshots
+NODE_PATH=/tmp/pw/node_modules node test/e2e/history.js                    # pixel-exact undo/redo, undo depth
+NODE_PATH=/tmp/pw/node_modules node test/e2e/preview.js                    # previews on screen at several zooms
+NODE_PATH=/tmp/pw/node_modules node test/e2e/bench.js --json /tmp/pw/a.json   # perf benchmark (3 runs, medians)
+node test/e2e/bench-compare.js /tmp/pw/before.json /tmp/pw/a.json           # deltas; exit 1 on a regression
 ```
+
+The benchmark's `task` (CDP main-thread time) varies by about ±15% between runs. For sub-millisecond per-frame changes, compare Chrome traces instead.
 
 When smoke fails, read the **first** `FAIL` line, because later failures often cascade from it. The tests drive the app through `window.__paint`, a test handle defined at the bottom of `js/app.js`. Add to it rather than reaching into the DOM for internal state.
 
@@ -33,10 +39,20 @@ When smoke fails, read the **first** `FAIL` line, because later failures often c
   - `drag` is the in-progress pointer gesture, keyed by `drag.t`: `pencil`, `brush`, `move`, `select`, `canvas`, `pan`, and so on.
   - `sel` is the selection; `sel.float` is a lifted or pasted canvas that hasn't been committed yet.
   - `textAt` is non-null while the text box is open.
-- **Rendering:** `#image` is the document canvas, and `#overlay` draws marching ants, shape previews and floating selections. `#ring` is a DOM brush-footprint cursor. `render()` is rAF-throttled through `requestRender()` and returns early when the overlay is clean.
-- **Undo** uses two entry types.
-  - `region` entries store before/after `ImageData` for a dirty bbox. The flow is `beginOp()` (snapshot into the `backup` canvas), then `touch()` (grow the bbox), then `endOp()`.
-  - `doc` entries store whole canvases (crop, resize, rotate, a paste that grows the canvas). Consecutive doc entries share canvases.
+- **Rendering:**
+  - `#image` is the document canvas. Whole-image ops swap in a new element (`adoptImage()`), so `img` and `ctx` are reassigned; never cache them.
+  - `#overlay` is only the pointer target. It is never drawn on, so it has no backing store.
+  - `#preview` draws marching ants, shape previews and floating selections. It covers only the visible part of the image plus a margin (`placePreview()`), at no more than screen resolution.
+  - `#ring` is a DOM brush-footprint cursor.
+  - `render()` is rAF-throttled through `requestRender()`. It redraws the preview only when its inputs change (`ovKey`) and clears only the last drawn box (`ovBox`).
+  - Pointer handlers only record state. All DOM writes happen in `render()`, through the write-if-changed setters (`setText`, `setAttr`, `setProp`). A DOM write inside `pointermove` forces a layout in Chrome's hit test.
+- **Undo** is copy-on-write and keeps one buffer per entry, which is swapped with the canvas on undo and redo. There are three entry types.
+  - `region` entries come from `beginOp()`, then `touch(rect)` called **before** each draw into `rect`, then `endOp()`. Only the touched part of each 256² tile is stored.
+    - Strokes (`beginOp(true)`) snapshot tiles into small GPU canvases and read them back once, at `endOp()`. A stroke that has more than 512 live tiles reads them back early, which bounds GPU memory.
+    - Other ops read their tiles once, up front.
+    - Never read back the document while a stroke is in progress; each readback stalls the next frame. `dropOp(true)` restores the tiles.
+  - `fill` entries store the before pixels plus a bit mask, so neither undo nor redo reads the canvas.
+  - `doc` entries hold the previous `#image` element itself (crop, resize, rotate, a paste that grows the canvas). `History`'s `onDrop` frees dropped canvases.
   - Unsaved state is `isDirty()` = `!hist.isClean()` OR a floating selection OR non-empty open text. Never keep a separate dirty flag.
 - **UI wiring** is mostly data-driven from attributes in `index.html`:
   - `data-tool` and `data-cmd` buttons are dispatched by one document-level click handler, which looks commands up in `CMDS`.

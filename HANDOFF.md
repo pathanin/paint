@@ -23,6 +23,45 @@ The design decisions behind the current UI, the evidence behind them, and what's
    - A VoiceOver pass over dialogs, toasts and the canvas label.
 2. **Phone widths (<600px)** are out of scope, since the app is desktop-first. The top bar and options bar scroll sideways there rather than reflowing.
 
+## Performance work (branch `perf`, 2026-10-13)
+
+Three rounds, each reviewed by a fresh agent, then `master` (smooth brush) merged in at 6161d22. Design and gotchas are in `CLAUDE.md` (Rendering, Undo) and the code comments. Measure with `test/e2e/bench.js` and `bench-compare.js`; pixel-exactness is guarded by `test/e2e/history.js`, previews by `test/e2e/preview.js`.
+
+The table compares medians of 3 headless Chrome runs on an M4, against the pre-perf code (1d72654):
+
+| Scenario | Before | After |
+|---|---|---|
+| Memory after edits, 10000² | 6.3 GB | 4.3 GB |
+| Undo steps kept, 4000×3000 / 10000² | 4 / 1 | 13 / 4 |
+| Brush stroke, 300 moves, 4000×3000 / 10000² (main-thread ms) | 1153 / 3170 | 653 / 762 |
+| Pencil stroke, 10000² | 1052 | 705 |
+| Rotate ×2, 10000² | 304 | 61 |
+| Flood fill ×2, 4000×3000 / 10000² | 415 / 2695 | 214 / 1832 |
+
+Hover cost per move is near Chrome's per-frame floor. The app is fully idle when nothing changes.
+
+### Left to do (pick up here)
+
+1. **Whole-image undo/redo at 100 MP is slower:** 1.3 s vs 0.83 s for 10 steps.
+   - Region entries hold one copy of the pixels, so `swapParts()` reads the canvas back.
+   - Idea: snapshot into GPU tile canvases, put the stored pixels, and convert the snapshot to ImageData at idle via `readTiles()`.
+2. **Committing a rect/ellipse/line at 100 MP is about 37% slower,** because `touch()` reads the shape's tiles back up front. Try GPU tile snapshots, as strokes use.
+3. **Marching ants are invisible at ≥ 800% zoom** (a bug older than this branch). `#preview` is 1 backing px per image px when zoomed in, so the 1/zoom px dashes collapse.
+   - Draw the ants at screen resolution, but keep shape and float previews pixelated.
+4. **Not verified:**
+   - the DPR-change path (`matchMedia` watcher), since CDP emulation doesn't fire `change`;
+   - headed GPU runs of very large scribbles;
+   - Firefox and Safari performance.
+5. **Benchmark noise:** `task` varies about ±15% between runs. Small-document rows flagged by `bench-compare` were within that noise. Brush rows compare against code without smoothing. For sub-millisecond questions use a Chrome trace.
+
+Measured gotchas behind the design (Chrome, M4, 10000² canvas):
+- Any readback of the document mid-stroke (`getImageData`, or of a canvas drawn from it) costs ~10 ms a frame.
+- A canvas that was read back must not be reused as a snapshot target: drawing into it becomes a readback too.
+- One 400 MB readback takes ~70 ms; 40 band readbacks take ~340 ms.
+- A DOM write inside `pointermove` forces a layout in the hit test.
+- Comparing against a `style` read-back never matches for fractional px, so cache the last value written yourself.
+- `WeakMap` has no `.size`.
+
 ## Decisions taken (don't relitigate without a new reason)
 
 | Decision | Why |

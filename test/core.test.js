@@ -337,6 +337,145 @@ test('stepSize: [ and ] are inverse around the 10 px boundary', () => {
   }
 });
 
+test('tileParts: splits a rect into per-tile pieces that exactly cover its in-image area', () => {
+  let s = 7; const rnd = (n) => ((s = Math.imul(s, 1103515245) + 12345 >>> 0) >>> 8) % n;
+  for (let iter = 0; iter < 300; iter++) {
+    const W = 1 + rnd(90), H = 1 + rnd(90), T = 1 + rnd(20);
+    const r = { x: rnd(120) - 15, y: rnd(120) - 15, w: rnd(60), h: rnd(60) };
+    const cover = new Uint8Array(W * H);
+    for (const p of Core.tileParts(r, W, H, T)) {
+      // the piece lies inside its tile, which lies inside the image
+      assert.ok(p.x >= p.tx * T && p.x + p.w <= Math.min(W, (p.tx + 1) * T), 'x within tile');
+      assert.ok(p.y >= p.ty * T && p.y + p.h <= Math.min(H, (p.ty + 1) * T), 'y within tile');
+      assert.equal(p.key, p.ty * Math.ceil(W / T) + p.tx);
+      assert.ok(p.w > 0 && p.h > 0);
+      for (let y = p.y; y < p.y + p.h; y++) for (let x = p.x; x < p.x + p.w; x++) cover[y * W + x]++;
+    }
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const want = x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h ? 1 : 0;
+      assert.equal(cover[y * W + x], want, `pixel ${x},${y} of ${JSON.stringify(r)} in ${W}x${H} T=${T}`);
+    }
+  }
+});
+
+test('tileParts: fractional rects grow outward to whole pixels', () => {
+  const parts = Core.tileParts({ x: 1.5, y: 2.2, w: 1, h: 0.1 }, 10, 10, 4);
+  assert.deepEqual(parts.map(({ x, y, w, h }) => ({ x, y, w, h })), [{ x: 1, y: 2, w: 2, h: 1 }]);
+});
+
+test('History onDrop: called once for every entry that becomes unreachable, never for live ones', () => {
+  const dropped = [];
+  const h = new Core.History({ maxCount: 3, onDrop: (e) => dropped.push(e.id) });
+  for (let id = 1; id <= 4; id++) h.push({ id, bytes: 1 }); // 1 evicted by count
+  assert.deepEqual(dropped, [1]);
+  h.undo(); h.undo(); // 4, 3 on the redo stack
+  h.push({ id: 5, bytes: 1 }); // redo stack discarded
+  assert.deepEqual(dropped, [1, 4, 3]);
+  h.undo(); h.redo(); // moving between stacks drops nothing
+  assert.deepEqual(dropped, [1, 4, 3]);
+  h.push({ id: 6, bytes: 1 }); h.push({ id: 7, bytes: 1 }); // [2, 5, 6, 7] -> evicts 2
+  assert.deepEqual(dropped, [1, 4, 3, 2]);
+  h.undo(); // 7 on redo
+  h.clear();
+  assert.deepEqual(dropped.sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7]);
+  assert.equal(h.canUndo() || h.canRedo(), false);
+});
+
+test('History onDrop: byte eviction drops the oldest first and keeps the newest', () => {
+  const dropped = [];
+  const h = new Core.History({ maxBytes: 10, onDrop: (e) => dropped.push(e.id) });
+  h.push({ id: 1, bytes: 4 }); h.push({ id: 2, bytes: 4 }); h.push({ id: 3, bytes: 4 });
+  assert.deepEqual(dropped, [1]);
+  h.push({ id: 4, bytes: 50 }); // over budget alone: everything older goes, it stays
+  assert.deepEqual(dropped, [1, 2, 3]);
+  assert.equal(h.top().id, 4);
+});
+
+test('groupRects: every rect lands in exactly one group whose box contains it', () => {
+  let s = 99; const rnd = (n) => ((s = Math.imul(s, 1103515245) + 12345 >>> 0) >>> 8) % n;
+  for (let iter = 0; iter < 200; iter++) {
+    const rects = Array.from({ length: 1 + rnd(40) }, () => ({ x: rnd(2000), y: rnd(2000), w: 1 + rnd(256), h: 1 + rnd(256) }));
+    const groups = Core.groupRects(rects, 2);
+    const seen = new Array(rects.length).fill(0);
+    for (const g of groups) {
+      let area = 0;
+      for (const i of g.items) {
+        const r = rects[i]; seen[i]++; area += r.w * r.h;
+        assert.ok(r.x >= g.x && r.y >= g.y && r.x + r.w <= g.x + g.w && r.y + r.h <= g.y + g.h, 'inside its group');
+      }
+      // a group of several rects never wastes more than the slack allows
+      if (g.items.length > 1) assert.ok(g.w * g.h <= 2 * area, `group box ${g.w}x${g.h} vs area ${area}`);
+    }
+    assert.ok(seen.every((n) => n === 1));
+  }
+});
+
+test('groupRects: a dense band merges into one group, far-apart rects stay apart', () => {
+  const band = Array.from({ length: 10 }, (_, i) => ({ x: i * 256, y: 512, w: 256, h: 256 }));
+  assert.equal(Core.groupRects(band, 2).length, 1);
+  // two touching diagonal tiles waste exactly 2x (merge); a third would waste 3x (doesn't)
+  const diagonal = Array.from({ length: 10 }, (_, i) => ({ x: i * 256, y: i * 256, w: 256, h: 256 }));
+  assert.equal(Core.groupRects(diagonal, 2).length, 5);
+  const spaced = Array.from({ length: 10 }, (_, i) => ({ x: i * 512, y: i * 512, w: 256, h: 256 }));
+  assert.equal(Core.groupRects(spaced, 2).length, 10);
+  assert.deepEqual(Core.groupRects([], 2), []);
+});
+
+// The pre-optimisation flood fill, kept verbatim as an oracle.
+function oracleFill(u32, w, h, x, y, color, tolerance) {
+  if (x < 0 || y < 0 || x >= w || y >= h) return null;
+  const target = u32[y * w + x];
+  const thr = Math.round((tolerance || 0) * 255 / 100);
+  if (thr === 0 && target === color) return null;
+  const match = thr === 0 ? (i) => u32[i] === target : (i) => Core.colorDistance(u32[i], target) <= thr;
+  const seen = new Uint8Array(w * h);
+  const stack = [x, y];
+  let minX = x, maxX = x, minY = y, maxY = y, changed = false;
+  while (stack.length) {
+    const sy = stack.pop(), sx = stack.pop();
+    const row = sy * w;
+    if (seen[row + sx] || !match(row + sx)) continue;
+    let l = sx, r = sx;
+    while (l > 0 && !seen[row + l - 1] && match(row + l - 1)) l--;
+    while (r < w - 1 && !seen[row + r + 1] && match(row + r + 1)) r++;
+    for (let i = l; i <= r; i++) { if (u32[row + i] !== color) changed = true; u32[row + i] = color; seen[row + i] = 1; }
+    if (l < minX) minX = l; if (r > maxX) maxX = r; if (sy < minY) minY = sy; if (sy > maxY) maxY = sy;
+    for (const ny of [sy - 1, sy + 1]) {
+      if (ny < 0 || ny >= h) continue;
+      const nrow = ny * w; let inRun = false;
+      for (let i = l; i <= r; i++) { const ok = !seen[nrow + i] && match(nrow + i); if (ok && !inRun) stack.push(i, ny); inRun = ok; }
+    }
+  }
+  return changed ? { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 } : null;
+}
+
+test('floodFill and floodMask agree with the original fill on random images', () => {
+  let s = 4242; const rnd = (n) => ((s = Math.imul(s, 1103515245) + 12345 >>> 0) >>> 8) % n;
+  for (let iter = 0; iter < 400; iter++) {
+    const w = 1 + rnd(40), h = 1 + rnd(40);
+    const pal = Array.from({ length: 1 + rnd(4) }, () => Core.rgbaToU32(rnd(256), rnd(256), rnd(256), rnd(2) ? 255 : rnd(256)));
+    const img = new Uint32Array(w * h).map(() => pal[rnd(pal.length)]);
+    const x = rnd(w + 2) - 1, y = rnd(h + 2) - 1, tol = [0, 0, 5, 30, 60, 100][rnd(6)];
+    const color = rnd(3) ? pal[rnd(pal.length)] : Core.rgbaToU32(rnd(256), rnd(256), rnd(256), 255);
+    const a = img.slice(), b = img.slice();
+    const ra = oracleFill(a, w, h, x, y, color, tol);
+    const rb = Core.floodFill(b, w, h, x, y, color, tol);
+    assert.deepEqual(rb, ra, `box, iter ${iter}`);
+    assert.deepEqual(b, a, `pixels, iter ${iter}`);
+    // the mask marks exactly the region the fill reached (independent of the fill colour)
+    const m = Core.floodMask(img, w, h, x, y, tol);
+    if (x < 0 || y < 0 || x >= w || y >= h) { assert.equal(m, null); continue; }
+    const probe = img.slice(); const marker = 0x01020304 === img[y * w + x] ? 0x05060708 : 0x01020304;
+    const want = new Uint8Array(w * h);
+    if (!pal.includes(marker) && oracleFill(probe, w, h, x, y, marker, tol)) for (let i = 0; i < w * h; i++) want[i] = probe[i] === marker && img[i] !== marker ? 1 : 0;
+    else continue; // marker collides with a palette colour: skip the mask check for this case
+    assert.deepEqual(m.mask, want, `mask, iter ${iter}`);
+    const xs = [], ys = [];
+    want.forEach((v, i) => { if (v) { xs.push(i % w); ys.push((i / w) | 0); } });
+    assert.deepEqual(m.box, { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs) + 1, h: Math.max(...ys) - Math.min(...ys) + 1 });
+  }
+});
+
 // ---------- Stroke (smoothed brush path) ----------
 // Flatten segments ({a, c, b}; c null = straight) into a fine polyline, independently of Core.
 function flatten(segs) {
