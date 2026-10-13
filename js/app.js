@@ -62,6 +62,17 @@
     const n = parseInt(hex.slice(1), 16);
     return Core.rgbaToU32((n >> 16) & 255, (n >> 8) & 255, n & 255, 255);
   }
+  // Write-if-changed DOM setters for paths that run on every pointermove or frame. Rewriting an
+  // identical value isn't free: textContent replaces the text node (layout), and attribute or
+  // `disabled` writes queue mutation records (the topbar's MutationObserver then forces a layout).
+  function setText(el, v) { if (el.textContent !== v) el.textContent = v; }
+  function setAttr(el, k, v) {
+    if (v == null) { if (el.hasAttribute(k)) el.removeAttribute(k); return; }
+    v = String(v);
+    if (el.getAttribute(k) !== v) el.setAttribute(k, v);
+  }
+  function setProp(el, k, v) { if (el[k] !== v) el[k] = v; }
+  function setData(el, k, v) { if (el.dataset[k] !== v) el.dataset[k] = v; }
   const toHex = (r, g, b) => '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
@@ -106,6 +117,7 @@
   function setDoc(source, w, h) {
     img.width = ov.width = backup.width = w;
     img.height = ov.height = backup.height = h;
+    ovKey = ''; ovBox = null; // resizing cleared the overlay
     if (source) ctx.drawImage(source, 0, 0);
     else { ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h); }
     sel = null; drag = null; op = null;
@@ -233,25 +245,53 @@
     return { x: (e.clientX - r.left) * img.width / r.width, y: (e.clientY - r.top) * img.height / r.height };
   }
 
-  let rafPending = false, overlayDirty = false;
+  let rafPending = false;
+  // The overlay is redrawn only when what it shows changes (ovKey), and only the area drawn last
+  // time is cleared (ovBox): a static selection costs no canvas work, and a large document never
+  // pays for a full-canvas clear. setDoc() resets both, since resizing a canvas wipes it.
+  let ovKey = '', ovBox = null;
+  const floatIds = new WeakMap();
+  const floatId = (c) => { if (!floatIds.has(c)) floatIds.set(c, floatIds.size + 1); return floatIds.get(c); };
   function requestRender() {
     if (rafPending) return;
     rafPending = true;
     requestAnimationFrame(render);
   }
+  // DOM writes for pointer feedback happen here, once per frame, never in the pointermove handler:
+  // a write there dirties layout, and Chrome's hit test for the follow-up mouse events then forces it.
   function render() {
     rafPending = false;
+    updateRing(hoverPt);
+    if (!drag) setProp(ov.style, 'cursor', S.tool === 'select' && sel && hoverPt && inside(hoverPt, sel) ? 'move' : '');
+    if (drag && drag.t === 'canvas') showGhost(drag);
     const shape = drag && SHAPES.has(drag.t);
     const marquee = drag && drag.t === 'select';
-    if (!overlayDirty && !shape && !marquee && !sel) { updateStatus(); return; }
-    octx.clearRect(0, 0, ov.width, ov.height);
-    overlayDirty = false;
-    if (shape) { drawShape(octx, drag); overlayDirty = true; }
-    if (marquee) { ants(Core.normRect(drag.start, drag.end)); overlayDirty = true; }
-    if (sel) {
-      if (sel.float) octx.drawImage(sel.float, sel.x, sel.y);
-      ants(sel);
-      overlayDirty = true;
+    const mq = marquee ? Core.normRect(drag.start, drag.end) : null;
+    const key = JSON.stringify([
+      S.zoom,
+      shape ? [drag.t, drag.start, drag.end, drag.shift, drag.color, drag.alt, S.sizes[drag.t], S.fillMode] : 0,
+      mq || 0,
+      sel ? [sel.x, sel.y, sel.w, sel.h, sel.float ? floatId(sel.float) : 0] : 0,
+    ]);
+    if (key !== ovKey) {
+      ovKey = key;
+      if (ovBox) octx.clearRect(ovBox.x, ovBox.y, ovBox.w, ovBox.h);
+      let box = null;
+      const add = (r) => {
+        const pad = 2 / S.zoom + 2; // stroke half-widths and antialiasing
+        const b = { x: Math.floor(r.x - pad), y: Math.floor(r.y - pad), w: Math.ceil(r.w + 2 * pad) + 1, h: Math.ceil(r.h + 2 * pad) + 1 };
+        if (!box) { box = b; return; }
+        const x1 = Math.max(box.x + box.w, b.x + b.w), y1 = Math.max(box.y + box.h, b.y + b.h);
+        box.x = Math.min(box.x, b.x); box.y = Math.min(box.y, b.y); box.w = x1 - box.x; box.h = y1 - box.y;
+      };
+      if (shape) add(drawShape(octx, drag));
+      if (mq) { ants(mq); add(mq); }
+      if (sel) {
+        if (sel.float) octx.drawImage(sel.float, sel.x, sel.y);
+        ants(sel);
+        add(sel);
+      }
+      ovBox = box;
     }
     updateStatus();
   }
@@ -268,40 +308,44 @@
     octx.restore();
   }
 
-  let cursor = null;
+  let cursor = null;  // integer image px under the pointer, for the status bar
+  let hoverPt = null; // the same point unrounded (null when the pointer is off the canvas); render() places the ring there
+  const EL = {
+    stPos: $('#stPos'), stSelWrap: $('#stSelWrap'), stSel: $('#stSel'), stSize: $('#stSize'),
+    zoomBtn: $('#zoomBtn'), zoomIn: $('[data-cmd="zoomIn"]'), zoomOut: $('[data-cmd="zoomOut"]'), crop: $('#cropBtn'),
+    docTitle: $('#docTitle'), docDirty: $('#docDirty'), save: $('[data-cmd="save"]'), undo: $('#undoBtn'), redo: $('#redoBtn'), stIntro: $('#stIntro'),
+  };
+  // Runs every frame and pointermove; everything is write-if-changed, so a still image costs ~nothing.
   function updateStatus() {
-    $('#stPos').textContent = cursor ? `${cursor.x}, ${cursor.y} px` : '—';
+    setText(EL.stPos, cursor ? `${cursor.x}, ${cursor.y} px` : '—');
     const r = drag && drag.t === 'select' ? Core.normRect(drag.start, drag.end) : sel;
-    $('#stSelWrap').hidden = !r;
-    $('#stSel').textContent = r ? `${r.w} × ${r.h} px` : '';
-    const label = `Image, ${img.width} × ${img.height} px`;
-    if (img.getAttribute('aria-label') !== label) img.setAttribute('aria-label', label);
-    $('#stSize').textContent = drag && drag.t === 'canvas'
+    setProp(EL.stSelWrap, 'hidden', !r);
+    setText(EL.stSel, r ? `${r.w} × ${r.h} px` : '');
+    setAttr(img, 'aria-label', `Image, ${img.width} × ${img.height} px`);
+    setText(EL.stSize, drag && drag.t === 'canvas'
       ? `${img.width} × ${img.height} → ${drag.w} × ${drag.h} px · Esc to cancel`
-      : `${img.width} × ${img.height} px`;
+      : `${img.width} × ${img.height} px`);
     const pct = Math.round(S.zoom * 100) + '%';
-    $('#zoomBtn').textContent = pct;
-    $('[data-cmd="zoomIn"]').disabled = S.zoom >= ZOOMS[ZOOMS.length - 1] - 1e-9;
-    $('[data-cmd="zoomOut"]').disabled = S.zoom <= ZOOMS[0] + 1e-9;
-    $('#zoomBtn').setAttribute('aria-label', `Zoom ${pct}. Activate for actual size`);
+    setText(EL.zoomBtn, pct);
+    setProp(EL.zoomIn, 'disabled', S.zoom >= ZOOMS[ZOOMS.length - 1] - 1e-9);
+    setProp(EL.zoomOut, 'disabled', S.zoom <= ZOOMS[0] + 1e-9);
+    setAttr(EL.zoomBtn, 'aria-label', `Zoom ${pct}. Activate for actual size`);
     // aria-disabled (not disabled) keeps Crop focusable, so keyboard users can reach the explanation.
-    const cb = $('#cropBtn');
-    cb.setAttribute('aria-disabled', !sel);
-    cb.dataset.hint = sel ? '' : 'Select an area first';
-    if (sel) cb.removeAttribute('aria-description'); else cb.setAttribute('aria-description', 'Select an area first');
+    setAttr(EL.crop, 'aria-disabled', !sel);
+    setData(EL.crop, 'hint', sel ? '' : 'Select an area first');
+    setAttr(EL.crop, 'aria-description', sel ? null : 'Select an area first');
   }
   function updateChrome() {
     const dirty = isDirty();
-    document.title = (dirty ? '● ' : '') + S.fileName + ' — Paint';
-    if ($('#docTitle').textContent !== S.fileName) $('#docTitle').textContent = S.fileName;
-    $('#docDirty').hidden = !dirty;
+    setProp(document, 'title', (dirty ? '● ' : '') + S.fileName + ' — Paint');
+    setText(EL.docTitle, S.fileName);
+    setProp(EL.docDirty, 'hidden', !dirty);
     document.body.classList.toggle('dirty', dirty);
-    const sv = $('[data-cmd="save"]');
-    sv.setAttribute('aria-label', dirty ? 'Save (unsaved changes)' : 'Save');
-    sv.dataset.hint = dirty ? 'Unsaved changes' : '';
-    $('#undoBtn').disabled = !hist.canUndo() && !(sel && sel.float); // undo drops a floating paste/move
-    $('#stIntro').hidden = !S.pristine || !!textAt;
-    $('#redoBtn').disabled = !hist.canRedo();
+    setAttr(EL.save, 'aria-label', dirty ? 'Save (unsaved changes)' : 'Save');
+    setData(EL.save, 'hint', dirty ? 'Unsaved changes' : '');
+    setProp(EL.undo, 'disabled', !hist.canUndo() && !(sel && sel.float)); // undo drops a floating paste/move
+    setProp(EL.stIntro, 'hidden', !S.pristine || !!textAt);
+    setProp(EL.redo, 'disabled', !hist.canRedo());
   }
 
   // ---------- tools ----------
@@ -336,9 +380,9 @@
     document.querySelectorAll('#palette button').forEach((b) => {
       b.classList.toggle('is1', b.dataset.color === S.primary);
       b.classList.toggle('is2', b.dataset.color === S.secondary);
-      b.setAttribute('aria-pressed', b.dataset.color === S.primary);
-      b.dataset.tip = b.dataset.name + (b.dataset.color === S.secondary ? ' (color 2)' : '');
-      b.setAttribute('aria-label', b.dataset.tip);
+      setAttr(b, 'aria-pressed', b.dataset.color === S.primary);
+      setData(b, 'tip', b.dataset.name + (b.dataset.color === S.secondary ? ' (color 2)' : ''));
+      setAttr(b, 'aria-label', b.dataset.tip);
     });
   }
 
@@ -879,8 +923,7 @@
       if (!drag || drag.t !== 'canvas') return;
       const n = Core.dragResize(img.width, img.height, e.clientX - drag.sx, e.clientY - drag.sy, drag.edge, S.zoom, e.shiftKey, MAX_DIM, MAX_PIXELS);
       drag.w = n.w; drag.h = n.h;
-      showGhost(drag);
-      updateStatus();
+      requestRender(); // ghost and status are written in render()
     });
     h.addEventListener('pointerup', () => { if (drag && drag.t === 'canvas') endCanvasDrag(true); });
     h.addEventListener('pointercancel', () => { if (drag && drag.t === 'canvas') endCanvasDrag(false); });
@@ -945,12 +988,8 @@
     const r = img.getBoundingClientRect();
     const p = imgPt(e, r);
     cursor = { x: Math.floor(p.x), y: Math.floor(p.y) };
-    updateRing(p);
-    if (!drag) {
-      ov.style.cursor = S.tool === 'select' && sel && inside(p, sel) ? 'move' : '';
-      updateStatus();
-      return;
-    }
+    hoverPt = p;
+    if (!drag) { requestRender(); return; }
     const d = drag;
     if (d.t === 'pan') {
       vp.scrollLeft = d.sl - (e.clientX - d.sx);
@@ -986,16 +1025,20 @@
 
   // Outline of the brush footprint, so big sizes show what they'll cover.
   const RING_TOOLS = new Set(['pencil', 'brush', 'eraser']);
+  let ringSize = '', ringTf = '';
   function updateRing(p) {
     const size = S.sizes[S.tool], px = size * S.zoom;
-    if (!RING_TOOLS.has(S.tool) || S.panKey || (drag && drag.t === 'pan') || px < 4) { ring.hidden = true; return; }
+    if (!p || !RING_TOOLS.has(S.tool) || S.panKey || (drag && drag.t === 'pan') || px < 4) { setProp(ring, 'hidden', true); return; }
     let x, y;
     if (S.tool === 'brush') { x = p.x - size / 2; y = p.y - size / 2; }
     else { const off = Math.floor(size / 2); x = Math.floor(p.x) - off; y = Math.floor(p.y) - off; }
     ring.classList.toggle('round', S.tool === 'brush');
-    ring.style.width = ring.style.height = px + 'px';
-    ring.style.transform = `translate(${x * S.zoom}px, ${y * S.zoom}px)`;
-    ring.hidden = false;
+    // Compare with what we wrote last, not with ring.style: CSSOM re-serialises fractional px,
+    // so a read-back never matches and the size would be rewritten (a layout) every frame.
+    const sz = px + 'px', tf = `translate(${x * S.zoom}px, ${y * S.zoom}px)`;
+    if (ringSize !== sz) { ringSize = ring.style.width = ring.style.height = sz; }
+    if (ringTf !== tf) { ringTf = ring.style.transform = tf; }
+    setProp(ring, 'hidden', false);
   }
 
   // Esc mid-gesture: put everything back as it was before the pointer went down.
@@ -1036,7 +1079,7 @@
   }
   ov.addEventListener('pointerup', finishDrag);
   ov.addEventListener('pointercancel', finishDrag);
-  ov.addEventListener('pointerleave', () => { ring.hidden = true; if (!drag) { cursor = null; updateStatus(); } });
+  ov.addEventListener('pointerleave', () => { hoverPt = null; ring.hidden = true; if (!drag) { cursor = null; updateStatus(); } });
   ov.addEventListener('mousedown', (e) => e.preventDefault()); // keep focus where we put it (text box)
   vp.addEventListener('contextmenu', (e) => e.preventDefault());
 
