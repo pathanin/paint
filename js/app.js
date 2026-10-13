@@ -9,7 +9,8 @@
   let ctx = img.getContext('2d');
   // #overlay is only the pointer target (never drawn, so it has no backing store). Shape previews
   // and floating selections are drawn on #preview, which covers just the visible part of the image
-  // (marching ants are the #ants element, at screen resolution). A document-sized overlay costs 400 MB at 100 MP, and twice that once shown.
+  // (marching ants are the #ants element, at screen resolution). A document-sized overlay costs
+  // 400 MB at 100 MP, and twice that once shown.
   const pv = $('#preview');
   const octx = pv.getContext('2d');
 
@@ -152,9 +153,9 @@
   // its whole bounding box. Tiles are saved on the GPU (drawImage, no readback):
   //  - strokes (beginOp(true)): each tile into a small canvas of its own, as the stroke reaches it
   //    (past 512 live tile canvases, 128 MB, they are read back mid-stroke to bound GPU memory);
-  //  - everything else: the tiles of each touch() packed into one atlas canvas.
-  // The stored pixels stay on the GPU until an idle callback reads them back (toData(), batched
-  // through one atlas per 256 parts); undo/redo before that draws them straight back.
+  //  - everything else: one canvas per contiguous block of each touch()'s tiles (snapshot()).
+  // The stored pixels stay on the GPU until an idle callback reads them back (toData()); undo/redo
+  // before that draws them straight back.
   // Two Chrome gotchas shape this (measured on a 10000 px canvas):
   //  - No readback (getImageData) of the document, or of anything drawn from it, while a stroke is in
   //    progress: each one costs ~10 ms per frame, as the next frame then copies the whole canvas.
@@ -312,7 +313,7 @@
     for (let r = 0; r < h; r++) d32.set(s32.subarray((sy + r) * src.width + sx, (sy + r) * src.width + sx + w), (dy + r) * dst.width + dx);
   }
   // Swap a region entry's pixels with the canvas, with no readback: snapshot what's there now into
-  // fresh atlases (GPU), then write the stored pixels, then read the snapshot back at idle.
+  // fresh canvases (GPU), then write the stored pixels, then read the snapshot back at idle.
   // One copy of the pixels at a time, so the entry's bytes don't change.
   function swapParts(parts) {
     const old = parts.map((p) => ({ x: p.x, y: p.y, w: p.w, h: p.h, cv: p.cv, cx: p.cx, cy: p.cy, data: p.data }));
