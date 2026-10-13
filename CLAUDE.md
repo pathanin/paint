@@ -31,6 +31,8 @@ NODE_PATH=/tmp/pw/node_modules node test/e2e/bench.js --json /tmp/pw/a.json   # 
 node test/e2e/bench-compare.js /tmp/pw/before.json /tmp/pw/a.json           # deltas; exit 1 on a regression
 ```
 
+CI (`.github/workflows/ci.yml`, GitHub Actions) runs the unit tests and smoke (http and `file://`), history, preview, filledge and libs on every push to master and every PR, in the runner's installed Chrome. The benchmark isn't in CI: shared runners are too noisy to gate on.
+
 The benchmark's `task` (CDP main-thread time) varies by about ±15% between runs. For sub-millisecond per-frame changes, compare Chrome traces instead.
 
 When smoke fails, read the **first** `FAIL` line, because later failures often cascade from it. The tests drive the app through `window.__paint`, a test handle defined at the bottom of `js/app.js`. Add to it rather than reaching into the DOM for internal state.
