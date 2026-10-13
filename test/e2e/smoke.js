@@ -738,6 +738,20 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     ok(await P(() => !document.querySelector('#toast').classList.contains('show') && !document.querySelector('#textInput').hidden), 'Esc in the text box dismisses the toast, text stays open');
     await page.keyboard.press('Escape'); await page.waitForTimeout(100);
     ok(await P(() => document.querySelector('#textInput').hidden), 'next Esc cancels the text');
+    // final: with a keyboard-focus tooltip AND an error toast up, Esc closes the tooltip first, then the toast
+    {
+      const tp = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+      await tp.goto(url); await tp.waitForTimeout(200);
+      await tp.keyboard.press('Tab'); await tp.waitForTimeout(700);
+      await tp.evaluate(() => window.__paint.flash('x', true)); await tp.waitForTimeout(100);
+      const st = () => tp.evaluate(() => [!document.querySelector('#tip').hidden, document.querySelector('#toast').classList.contains('show')].join());
+      ok(await st() === 'true,true', 'tooltip and toast both up: ' + await st());
+      await tp.keyboard.press('Escape'); await tp.waitForTimeout(100);
+      ok(await st() === 'false,true', 'first Esc closes the focus tooltip: ' + await st());
+      await tp.keyboard.press('Escape'); await tp.waitForTimeout(100);
+      ok(await st() === 'false,false', 'second Esc closes the toast: ' + await st());
+      await tp.close();
+    }
     // round 12: Delete/Backspace on a focused toolbar control don't clear the selection
     await P(() => { window.__paint.setTool('select'); window.__paint.selectAll(); });
     await page.focus('#palette button'); ok(await P(() => document.activeElement.matches('#palette button')), 'swatch focused for the Delete check');

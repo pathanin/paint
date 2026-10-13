@@ -1080,6 +1080,7 @@
   // above the toast and Esc belongs to it. Mid-drag Esc still cancels the drag.
   window.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || drag || modalOpen() || !$('#toast').classList.contains('error') || !$('#toast').classList.contains('show')) return;
+    if (!tip.hidden && tipByKey) return; // a keyboard-focus tooltip takes the first Esc (handled below)
     clearTimeout(msgTimer); $('#toast').classList.remove('show');
     e.preventDefault(); e.stopImmediatePropagation();
   }, true);
