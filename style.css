@@ -214,6 +214,18 @@ button.labeled { padding: 0 9px 0 7px; }
    from growing the viewport's scroll area (a stale preview did, and scrolled the image out of view). */
 #pvClip { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
 #stage #preview { inset: auto; pointer-events: none; }
+/* Marching ants: 1 CSS px, 4 px dashes, black then white, at screen resolution at every zoom
+   (#preview is image px when zoomed in, too coarse for them). Placed by render(). */
+#ants {
+  position: absolute; pointer-events: none;
+  --dash: #000 0 4px, #fff 4px 8px;
+  background:
+    repeating-linear-gradient(90deg, var(--dash)) top left / 100% 1px no-repeat,
+    repeating-linear-gradient(90deg, var(--dash)) bottom left / 100% 1px no-repeat,
+    repeating-linear-gradient(180deg, var(--dash)) top left / 1px 100% no-repeat,
+    repeating-linear-gradient(180deg, var(--dash)) top right / 1px 100% no-repeat;
+}
+#ants[hidden] { display: none; }
 #overlay { touch-action: none; cursor: crosshair; }
 #stage[data-tool=text] #overlay { cursor: text; }
 #stage.panning #overlay { cursor: grab; }
