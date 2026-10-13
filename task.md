@@ -49,6 +49,9 @@ Done on branch `perf-leftovers` (2026-10-14):
 - **Marching ants** are an `#ants` element at screen resolution. `preview.js` checks them at 800% and 1600%.
 - **`bench.js`** now flushes the idle readback at the end of each scenario, so the cost lands on the edit that caused it. "undo all" rows therefore include reading back every undone entry, which the app does in idle chunks.
 
+- **Undo data on the GPU** (branch `gpu-undo-safety`): a floating selection no longer postpones the readback (its op's tiles are queued; only a pointer gesture waits), and a GPU context loss drops the entries it erased, plus everything only reachable through them, with a flash, instead of letting undo paint blanks. Tested by dispatching `contextlost` on `#image` (`history.js` 1c); a real driver reset is not tested. The live document and an open float are still lost on a reset; that's Chrome's to restore.
+- **Benchmark:** the `10000 pencil stroke` long-frame count swings from 1 to 80 depending on which scenarios ran before it, on master too. Don't read it as a regression without a same-filter master run.
+
 1. **Not verified:**
    - the DPR-change path (`matchMedia` watcher), since CDP emulation doesn't fire `change`;
    - headed GPU runs of very large scribbles;

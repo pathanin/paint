@@ -586,3 +586,33 @@ test('Stroke lazy step moves the brush by distance − radius (lazy-brush rule)'
   s.add({ x: 40, y: 0 });
   assert.deepEqual(s.brush, { x: 10, y: 0 });
 });
+
+test('History.dropLost drops lost entries and everything only reachable through them', () => {
+  const dropped = [];
+  const h = new Core.History({ onDrop: (e) => dropped.push(e.id) });
+  for (const id of [1, 2, 3, 4, 5]) h.push({ id, bytes: 10 });
+  h.undo(); h.undo(); // undo [1,2,3], redo next 4 then 5
+  h.markSaved(); // saved at 3
+  const lost = new Set([2, 5]);
+  assert.equal(h.dropLost((e) => lost.has(e.id)), 3); // 1, 2 (older side) and 5 (beyond it)
+  assert.deepEqual(dropped.sort(), [1, 2, 5]);
+  assert.deepEqual(h.undoStack.map((e) => e.id), [3]);
+  assert.equal(h.redo().id, 4);
+  assert.equal(h.redo(), null);
+  assert.equal(h.bytes, 20);
+  h.undo(); assert.ok(h.isClean()); // saved entry 3 survives
+  h.undo(); assert.equal(h.undo(), null);
+  assert.equal(h.dropLost(() => false), 0);
+});
+
+test('History.dropLost: the saved state becomes unreachable when it is dropped', () => {
+  const h = new Core.History();
+  h.markSaved(); // saved = base (null)
+  h.push({ id: 1 }); h.push({ id: 2 });
+  h.dropLost((e) => e.id === 1); // base can no longer be reached
+  assert.ok(!h.isClean()); h.undo(); assert.ok(!h.isClean());
+  const g = new Core.History();
+  g.push({ id: 1 }); g.markSaved(); g.push({ id: 2 }); g.undo();
+  g.dropLost((e) => e.id === 1); // the saved entry itself is gone, though we're on top of its state
+  assert.ok(!g.isClean());
+});

@@ -7,6 +7,7 @@
   // copying pixels, and undo swaps it back, so these are reassigned by adoptImage().
   let img = $('#image');
   let ctx = img.getContext('2d');
+  img.addEventListener('contextlost', () => gpuLost());
   // #overlay is only the pointer target (never drawn, so it has no backing store). Shape previews
   // and floating selections are drawn on #preview, which covers just the visible part of the image
   // (marching ants are the #ants element, at screen resolution). A document-sized overlay costs
@@ -184,6 +185,7 @@
     img.removeAttribute('id');
     img = c;
     ctx = c.getContext('2d');
+    c.addEventListener('contextlost', gpuLost);
   }
   // source: a canvas to adopt as the document, a bitmap to draw into it, or null for white.
   function setDoc(source, w, h) {
@@ -231,6 +233,7 @@
   function snapshot(items) {
     for (const g of Core.groupRects(items, 1)) {
       const cv = makeCanvas(g.w, g.h);
+      cv.addEventListener('contextlost', gpuLost);
       cv.getContext('2d').drawImage(img, g.x, g.y, g.w, g.h, 0, 0, g.w, g.h); // onto transparent: exact, alpha too
       cv.refs = g.items.length;
       for (const i of g.items) { const t = items[i]; t.cv = cv; t.cx = t.x - g.x; t.cy = t.y - g.y; }
@@ -273,7 +276,7 @@
       fresh.push(t2);
     }
     if (!fresh.length) return;
-    if (!op.stroke) { snapshot(fresh); return; }
+    if (!op.stroke) { snapshot(fresh); queueToData(fresh); return; } // a float can keep an op open for long
     for (const t of fresh) {
       if (op.live >= 512) { toData([...op.tiles.values()].filter((x) => x.cv)); op.live = 0; }
       op.live++;
@@ -287,6 +290,7 @@
     let bytes = 0;
     for (const t of o.tiles.values()) {
       const w = t.x1 - t.x0, h = t.y1 - t.y0, dx = t.x0 - t.x, dy = t.y0 - t.y;
+      pendingParts.delete(t); // its canvas ref moves to the part
       const part = { x: t.x0, y: t.y0, w, h, cv: t.cv, cx: t.cx + dx, cy: t.cy + dy, data: t.data };
       if (t.data && (w !== t.w || h !== t.h)) { part.data = new ImageData(w, h); blit(t.data, dx, dy, part.data, 0, 0, w, h); }
       parts.push(part);
@@ -323,9 +327,10 @@
       });
     }
   }
-  // Read history parts back to the CPU when the app is idle, up to 256 parts (~64 MB) per callback,
-  // never while a gesture or op is in progress (see the gotchas above). It starts a second after the
-  // last history change, so a run of undo/redo doesn't pay a readback per step.
+  // Read history parts (and the tiles of an open op, e.g. under a floating selection) back to the CPU
+  // when the app is idle, up to 256 parts (~64 MB) per callback, never during a pointer gesture (see
+  // the gotchas above). It starts a second after the last history change, so a run of undo/redo
+  // doesn't pay a readback per step. Until then a GPU context loss can take them: see gpuLost().
   const pendingParts = new Set();
   let toDataGen = 0;
   const onIdle = window.requestIdleCallback || ((f) => setTimeout(f, 0));
@@ -337,7 +342,7 @@
   }
   function idleToData(gen) {
     if (gen !== toDataGen) return;
-    if (drag || op) { queueToData([]); return; }
+    if (drag) { queueToData([]); return; }
     const batch = [];
     for (const p of pendingParts) {
       pendingParts.delete(p);
@@ -348,6 +353,23 @@
     if (pendingParts.size) onIdle(() => idleToData(gen));
   }
   function flushToData() { const all = [...pendingParts].filter((p) => p.cv); pendingParts.clear(); toData(all); }
+  // The GPU context was lost (driver reset, GPU process crash): every canvas's pixels are gone, so
+  // pixels not yet read back are too. Drop the undo steps that held any (doc entries hold a canvas;
+  // fill entries and read-back parts are safe), and those only reachable through them, rather than
+  // let undo paint blanks. An open op that can't be restored is abandoned along with its float.
+  function gpuLost() {
+    const onGpu = (e) => e.type === 'doc' || (e.type === 'region' && e.parts.some((p) => p.cv));
+    let n = hist.dropLost(onGpu);
+    if (op && [...op.tiles.values()].some((t) => t.cv)) {
+      dropOp(); n++;
+      if (sel && sel.float) sel = null;
+    }
+    pendingParts.clear();
+    if (!n) return;
+    flash('Graphics were reset; some undo steps were lost');
+    updateChrome();
+    requestRender();
+  }
   // Abandon the current op. With restore, first put back every pixel it changed.
   function dropOp(restore) {
     const o = op; op = null;
@@ -1969,5 +1991,5 @@
   setTool('pencil');
 
   // Handle for scripted smoke tests in the console.
-  window.__paint = { S, hist, libState, used, decodeFile, get img() { return img; }, newDoc, flash, save, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, loadFile, setZoom, fitZoom, MAX_PIXELS, flushToData, get pendingParts() { return [...pendingParts].filter((p) => p.cv).length; } };
+  window.__paint = { S, hist, libState, used, decodeFile, get img() { return img; }, newDoc, flash, save, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, loadFile, setZoom, fitZoom, MAX_PIXELS, flushToData, get op() { return op; }, get pendingParts() { return [...pendingParts].filter((p) => p.cv).length; } };
 })();

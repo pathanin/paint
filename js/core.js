@@ -341,6 +341,21 @@
     canRedo() { return this.redoStack.length > 0; }
     markSaved(entry = this.top()) { this.saved = entry; }
     isClean() { return this.saved !== LOST && this.top() === this.saved; }
+    // Drop the entries whose stored state is gone (isLost(entry)), and with them every entry that can
+    // only be reached by stepping through one: all older undo entries, all further redo entries.
+    // Returns the number dropped.
+    dropLost(isLost) {
+      const u = this.undoStack.map(isLost).lastIndexOf(true) + 1;
+      const r = this.redoStack.map(isLost).lastIndexOf(true) + 1; // redoStack[0] is the furthest redo
+      const gone = [...this.undoStack.splice(0, u), ...this.redoStack.splice(0, r)];
+      if (u && this.saved === null) this.saved = LOST;
+      for (const e of gone) {
+        this.bytes -= e.bytes || 0;
+        if (e === this.saved) this.saved = LOST;
+        if (this.onDrop) this.onDrop(e);
+      }
+      return gone.length;
+    }
     clear() {
       if (this.onDrop) for (const e of [...this.undoStack, ...this.redoStack]) this.onDrop(e);
       this.undoStack = []; this.redoStack = []; this.bytes = 0; this.saved = null;
