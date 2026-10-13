@@ -792,6 +792,58 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       ok(await intro() === null, 'first-run hint gone after drawing');
       await fp.close();
     }
+    // smoothed brush: lazy-brush stabiliser + quadratic curves; exact ends; tail reaches the pointer; undo is exact
+    {
+      const bp = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+      await bp.goto(url); await bp.waitForTimeout(200);
+      const Q = (f, a) => bp.evaluate(f, a);
+      await bp.keyboard.press('KeyB');
+      await Q(() => { window.__paint.S.sizes.brush = 2; });
+      ok(await Q(() => window.__paint.S.smoothing) === 2 && await Q(() => !document.querySelector('label[data-for="brush"] #smoothing').closest('label').hidden), 'brush shows Smoothing, default 2');
+      const z = await Q(() => window.__paint.S.zoom), bb = await bp.locator('#image').boundingBox();
+      const scr = (x, y) => [bb.x + (x + 0.5) * z, bb.y + (y + 0.5) * z];
+      const hash = () => Q(() => { const d = window.__paint.img.getContext('2d').getImageData(0, 0, window.__paint.img.width, window.__paint.img.height).data; let h = 0; for (let i = 0; i < d.length; i++) h = (h * 31 + d[i]) | 0; return h; });
+      const px = (x, y) => Q(([x, y]) => window.__paint.img.getContext('2d').getImageData(x, y, 1, 1).data[0], [x, y]);
+      const ovAt = (x, y) => Q(([x, y]) => document.querySelector('#overlay').getContext('2d').getImageData(x, y, 1, 1).data[3], [x, y]);
+      const centre = (y0) => Q((y0) => {
+        const d = window.__paint.img.getContext('2d').getImageData(0, y0 - 20, 400, 40).data, out = [];
+        for (let x = 0; x < 400; x++) { let s = 0, n = 0; for (let y = 0; y < 40; y++) if (d[(y * 400 + x) * 4] < 128) { s += y; n++; } out.push(n ? s / n : null); }
+        return out;
+      }, y0);
+      const sd = (a) => { const v = a.slice(100, 260); const m = v.reduce((s, c) => s + c, 0) / v.length; return Math.sqrt(v.reduce((s, c) => s + (c - m) ** 2, 0) / v.length); };
+      const jig = (x, y0) => y0 + (x % 8 < 4 ? 3 : -3);
+      const draw = async (y0, end = 300) => {
+        await bp.mouse.move(...scr(60, y0)); await bp.mouse.down();
+        for (let x = 61; x <= end; x++) await bp.mouse.move(...scr(x, jig(x, y0)));
+      };
+      const h0 = await hash();
+      await draw(100);
+      await bp.waitForTimeout(50);
+      ok(await ovAt(300, jig(300, 100)) > 0 || await px(300, jig(300, 100)) < 128, 'mid-stroke: ink reaches the pointer');
+      await bp.mouse.up(); await bp.waitForTimeout(50);
+      const smooth = await centre(100);
+      ok(await px(60, 100) < 128 && await px(300, jig(300, 100)) < 128, 'smoothed stroke starts and ends exactly at the pointer');
+      ok(await Q(() => { const o = document.querySelector('#overlay'); return !o.getContext('2d').getImageData(0, 0, o.width, o.height).data.some((v, i) => i % 4 === 3 && v); }), 'overlay clear after the stroke');
+      await Q(() => window.__paint.undo());
+      ok(await hash() === h0, 'undo restores the canvas exactly after a smoothed stroke');
+      await Q(() => window.__paint.redo());
+      // smoothing 0 follows every sample; smoothing steadies the same jitter
+      await Q(() => { const r = document.querySelector('#smoothing'); r.value = 0; r.dispatchEvent(new Event('input', { bubbles: true })); });
+      ok(await Q(() => window.__paint.S.smoothing === 0 && document.querySelector('#smoothOut').textContent === '0'), 'Smoothing slider sets 0');
+      await draw(200); await bp.mouse.up(); await bp.waitForTimeout(50);
+      const raw = await centre(200);
+      let missed = 0; for (let x = 61; x <= 300; x++) if (await px(x, jig(x, 200)) >= 128) missed++;
+      ok(missed === 0, 'smoothing 0 paints every sampled point, missed ' + missed);
+      ok(sd(raw) > 1.5 && sd(smooth) < sd(raw) / 2, `smoothing steadies jitter: sd ${sd(smooth).toFixed(2)} vs raw ${sd(raw).toFixed(2)}`);
+      // the radius is fixed at pointerdown: zooming mid-stroke doesn't jump or break the stroke
+      await Q(() => { window.__paint.S.smoothing = 2; });
+      await bp.mouse.move(...scr(60, 300)); await bp.mouse.down();
+      for (let x = 61; x <= 120; x++) await bp.mouse.move(...scr(x, 300));
+      await Q(() => window.__paint.setZoom(window.__paint.S.zoom * 2));
+      await bp.mouse.up(); await bp.waitForTimeout(50);
+      ok(await Q(() => window.__paint.drag === null && window.__paint.hist.canUndo()), 'zoom mid-stroke: stroke still finishes');
+      await bp.close();
+    }
     // non-Mac labels
     const wpage = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     await wpage.addInitScript(() => Object.defineProperty(Navigator.prototype, 'platform', { get: () => 'Win32' }));

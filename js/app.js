@@ -13,7 +13,7 @@
     tool: 'pencil', prevTool: 'pencil',
     primary: '#000000', secondary: '#ffffff',
     sizes: { pencil: 1, brush: 6, eraser: 12, line: 2, rect: 2, ellipse: 2 },
-    fillMode: 'outline', tolerance: 10,
+    fillMode: 'outline', tolerance: 10, smoothing: 2,
     font: 'system-ui, sans-serif', fontSize: 24,
     zoom: 1,
     fileHandle: null, fileName: 'untitled.png',
@@ -243,9 +243,12 @@
     rafPending = false;
     const shape = drag && SHAPES.has(drag.t);
     const marquee = drag && drag.t === 'select';
-    if (!overlayDirty && !shape && !marquee && !sel) { updateStatus(); return; }
+    const brush = drag && drag.t === 'brush';
+    if (!overlayDirty && !shape && !marquee && !sel && !brush) { updateStatus(); return; }
     octx.clearRect(0, 0, ov.width, ov.height);
     overlayDirty = false;
+    // Live end of the stroke: what release would add, so the ink always reaches the pointer.
+    if (brush) { brushPath(octx, drag.stroke.tail(drag.ptr), drag.color, drag.size); overlayDirty = true; }
     if (shape) { drawShape(octx, drag); overlayDirty = true; }
     if (marquee) { ants(Core.normRect(drag.start, drag.end)); overlayDirty = true; }
     if (sel) {
@@ -350,15 +353,33 @@
     ctx.fill();
     touch(Math.min(a.x, b.x) - off, Math.min(a.y, b.y) - off, Math.abs(b.x - a.x) + size, Math.abs(b.y - a.y) + size);
   }
-  function brushSeg(a, b, color, size) {
-    ctx.fillStyle = ctx.strokeStyle = color;
-    ctx.lineWidth = size;
-    ctx.lineCap = ctx.lineJoin = 'round';
+  // Brush: Core.Stroke segments ({a, c, b}, c = quadratic control or null) as one path, so joins blend once.
+  // The same call draws committed segments on the image and the live tail on the overlay.
+  function brushPath(c, segs, color, size) {
+    if (!segs.length) return;
+    c.save();
+    c.strokeStyle = color;
+    c.lineWidth = size;
+    c.lineCap = c.lineJoin = 'round';
+    c.beginPath();
+    c.moveTo(segs[0].a.x, segs[0].a.y);
+    for (const { c: q, b } of segs) { if (q) c.quadraticCurveTo(q.x, q.y, b.x, b.y); else c.lineTo(b.x, b.y); }
+    c.stroke();
+    c.restore();
+    if (c !== ctx) return;
+    const h = size / 2 + 1; // a quadratic stays inside the hull of its points
+    for (const g of segs) {
+      const xs = [g.a.x, g.b.x, g.c ? g.c.x : g.a.x], ys = [g.a.y, g.b.y, g.c ? g.c.y : g.a.y];
+      const x0 = Math.min(...xs), y0 = Math.min(...ys);
+      touch(x0 - h, y0 - h, Math.max(...xs) - x0 + 2 * h, Math.max(...ys) - y0 + 2 * h);
+    }
+  }
+  function brushDot(p, color, size) {
+    ctx.fillStyle = color;
     ctx.beginPath();
-    if (a.x === b.x && a.y === b.y) { ctx.arc(a.x, a.y, size / 2, 0, Math.PI * 2); ctx.fill(); }
-    else { ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
-    const h = size / 2 + 1;
-    touch(Math.min(a.x, b.x) - h, Math.min(a.y, b.y) - h, Math.abs(b.x - a.x) + 2 * h, Math.abs(b.y - a.y) + 2 * h);
+    ctx.arc(p.x, p.y, size / 2, 0, Math.PI * 2);
+    ctx.fill();
+    touch(p.x - size / 2 - 1, p.y - size / 2 - 1, size + 2, size + 2);
   }
 
   function doFill(p, color) {
@@ -915,11 +936,14 @@
         stampLine(ip, ip, c, S.sizes[t]);
         break;
       }
-      case 'brush':
+      case 'brush': {
+        // Smoothing radius is in screen px (2 per step), fixed for the stroke even if the zoom changes.
         beginOp();
-        drag = { t, last: p, color };
-        brushSeg(p, p, color, S.sizes.brush);
+        const size = S.sizes.brush;
+        drag = { t, color, size, ptr: p, stroke: new Core.Stroke(p, S.smoothing * 2 / S.zoom, 0.5 / S.zoom) };
+        brushDot(p, color, size);
         break;
+      }
       case 'fill': doFill(ip, color); break;
       case 'picker': pick(ip, right); break;
       case 'line': case 'rect': case 'ellipse':
@@ -962,13 +986,14 @@
       if (!evs.length) evs = [e];
       for (const ev of evs) {
         const q = imgPt(ev, r);
-        if (d.t === 'brush') { brushSeg(d.last, q, d.color, S.sizes.brush); d.last = q; }
+        if (d.t === 'brush') { d.segs = (d.segs || []).concat(d.stroke.add(q)); d.ptr = q; }
         else {
           const iq = { x: Math.floor(q.x), y: Math.floor(q.y) };
           stampLine(d.last, iq, d.color, S.sizes[d.t]);
           d.last = iq;
         }
       }
+      if (d.segs) { brushPath(ctx, d.segs, d.color, d.size); d.segs = null; }
     } else if (SHAPES.has(d.t)) {
       d.end = { x: Math.floor(p.x), y: Math.floor(p.y) };
       d.shift = e.shiftKey;
@@ -1016,12 +1041,18 @@
     requestRender();
   }
 
-  function finishDrag() {
+  function finishDrag(e) {
     const d = drag;
     if (!d) return;
     drag = null;
     if (d.t === 'pan') { stage.classList.remove('dragging'); if (!S.panKey) stage.classList.remove('panning'); }
-    else if (d.t === 'pencil' || d.t === 'eraser' || d.t === 'brush') endOp();
+    else if (d.t === 'brush') {
+      // The stroke ends exactly where the pointer lifted (pointercancel carries no reliable position).
+      const q = e && e.type === 'pointerup' ? imgPt(e) : d.ptr;
+      brushPath(ctx, d.stroke.finish(q), d.color, d.size);
+      endOp();
+    }
+    else if (d.t === 'pencil' || d.t === 'eraser') endOp();
     else if (SHAPES.has(d.t)) {
       if (d.t !== 'line' && d.start.x === d.end.x && d.start.y === d.end.y) { requestRender(); return; } // a click, not a shape
       beginOp();
@@ -1242,6 +1273,7 @@
 
   $('#size').addEventListener('input', (e) => setSize(+e.target.value));
   $('#tolerance').addEventListener('input', (e) => { S.tolerance = +e.target.value; $('#tolOut').textContent = S.tolerance; });
+  $('#smoothing').addEventListener('input', (e) => { S.smoothing = +e.target.value; $('#smoothOut').textContent = S.smoothing; });
   document.querySelectorAll('input[name=fillMode]').forEach((r) => r.addEventListener('change', () => { S.fillMode = r.value; }));
   $('#font').addEventListener('change', (e) => { S.font = e.target.value; if (textAt) placeTextBox(); });
   $('#fontSize').addEventListener('input', (e) => {
