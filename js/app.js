@@ -32,6 +32,15 @@
     ['#efe4b0', 'Light yellow'], ['#b5e61d', 'Lime'], ['#99d9ea', 'Light turquoise'], ['#7092be', 'Blue-gray'], ['#c8bfe7', 'Lavender'],
   ];
   const MAX_DIM = 16384;
+  const MAX_PIXELS = 100e6; // ~400 MB per canvas; history keeps several
+  const megapixels = (w, h) => +(w * h / 1e6).toFixed(1);
+  // User-facing reason a w x h document can't exist, or null.
+  function sizeProblem(w, h) {
+    const e = Core.sizeError(w, h, MAX_DIM, MAX_PIXELS);
+    if (!e) return null;
+    return e.reason === 'range' ? `sides must be between 1 and ${MAX_DIM} px`
+      : `${w} × ${h} px is ${megapixels(w, h)} MP, and the maximum is ${MAX_PIXELS / 1e6} MP`;
+  }
 
   let drag = null;   // in-progress pointer interaction
   let sel = null;    // {x, y, w, h, float: canvas|null}
@@ -520,6 +529,10 @@
     }
   }
   function pasteImage(bmp) {
+    const tw = S.pristine ? bmp.width : Math.max(img.width, bmp.width);
+    const th = S.pristine ? bmp.height : Math.max(img.height, bmp.height);
+    const why = sizeProblem(tw, th);
+    if (why) { flash(`Can't paste: ${why}.`, true); return; }
     commitText();
     dropSelection();
     if (S.pristine) { docOp(cloneCanvas(bmp)); fitZoom(true); return; }
@@ -577,7 +590,8 @@
     return out;
   }
   function resizeDoc(w, h, mode, anchor) {
-    if (w > MAX_DIM || h > MAX_DIM) { flash(`Max size is ${MAX_DIM}px`); return; }
+    const why = sizeProblem(w, h);
+    if (why) { flash(`Can't resize: ${why}.`, true); return; }
     if (w === img.width && h === img.height) { flash('Size unchanged'); return; }
     commitText();
     dropSelection();
@@ -608,12 +622,20 @@
   }
   const cantOpen = (file) => (file.type === 'image/svg+xml' || /\.svg$/i.test(file.name)
     ? "Can't open SVG files. Use PNG, JPEG, WebP, GIF or BMP." : 'Not an image: ' + file.name);
+  function tooBigToOpen(file, bmp) {
+    const why = sizeProblem(bmp.width, bmp.height);
+    if (!why) return false;
+    bmp.close();
+    flash(`Can't open ${file.name}: ${why}.`, true);
+    return true;
+  }
   async function loadFile(file, handle, decoded) {
     let bmp = decoded;
     if (!bmp) {
       try { bmp = await createImageBitmap(file); }
       catch { flash(cantOpen(file), true); return; }
     }
+    if (tooBigToOpen(file, bmp)) return;
     cancelText();
     setDoc(bmp, bmp.width, bmp.height);
     bmp.close();
@@ -705,6 +727,10 @@
     f.focus();
     f.select();
   }
+  // The size field the user typed in last (an area error belongs to the one they just changed).
+  let lastSizeField = null;
+  document.addEventListener('input', (e) => { if (/^(newW|newH|rW|rH)$/.test(e.target.id)) lastSizeField = '#' + e.target.id; });
+  const lastEdited = (a, b) => (lastSizeField === a || lastSizeField === b ? lastSizeField : b);
   function clearFieldErrors(note) {
     $(note).textContent = '';
     $(note).closest('form').querySelectorAll('[aria-invalid]').forEach((f) => f.removeAttribute('aria-invalid'));
@@ -722,9 +748,11 @@
   $('#newDlg form').addEventListener('submit', (e) => {
     if (!e.submitter || e.submitter.value !== 'ok') return;
     const w = Math.round(+$('#newW').value), h = Math.round(+$('#newH').value);
-    if (!(w >= 1 && h >= 1 && w <= MAX_DIM && h <= MAX_DIM)) {
+    const err = Core.sizeError(w, h, MAX_DIM, MAX_PIXELS);
+    if (err) {
       e.preventDefault();
-      fieldError('#newNote', !(w >= 1 && w <= MAX_DIM) ? '#newW' : '#newH', `Width and height must be between 1 and ${MAX_DIM} px.`);
+      fieldError('#newNote', err.field ? '#new' + err.field.toUpperCase() : lastEdited('#newW', '#newH'),
+        err.reason === 'range' ? `Width and height must be between 1 and ${MAX_DIM} px.` : `Too large: ${sizeProblem(w, h)}.`);
       return;
     }
     newDoc(w, h);
@@ -783,10 +811,13 @@
       h = Math.max(1, Math.round(img.height * h / 100));
     }
     w = Math.round(w); h = Math.round(h);
-    if (!(w >= 1 && h >= 1 && w <= MAX_DIM && h <= MAX_DIM)) {
+    const err = Core.sizeError(w, h, MAX_DIM, MAX_PIXELS);
+    if (err) {
       e.preventDefault();
-      fieldError('#rErr', !(w >= 1 && w <= MAX_DIM) ? '#rW' : '#rH',
-        `Width and height must be between 1 and ${MAX_DIM} px` + (w >= 1 && h >= 1 ? ` (this would be ${w} × ${h} px).` : '.'));
+      fieldError('#rErr', err.field ? '#r' + err.field.toUpperCase() : lastEdited('#rW', '#rH'),
+        err.reason === 'range'
+          ? `Width and height must be between 1 and ${MAX_DIM} px` + (w >= 1 && h >= 1 ? ` (this would be ${w} × ${h} px).` : '.')
+          : `Too large: ${sizeProblem(w, h)}.`);
       return;
     }
     resizeDoc(w, h, resizeMode(), rForm.anchor.value);
@@ -820,7 +851,7 @@
     });
     h.addEventListener('pointermove', (e) => {
       if (!drag || drag.t !== 'canvas') return;
-      const n = Core.dragResize(img.width, img.height, e.clientX - drag.sx, e.clientY - drag.sy, drag.edge, S.zoom, e.shiftKey, MAX_DIM);
+      const n = Core.dragResize(img.width, img.height, e.clientX - drag.sx, e.clientY - drag.sy, drag.edge, S.zoom, e.shiftKey, MAX_DIM, MAX_PIXELS);
       drag.w = n.w; drag.h = n.h;
       showGhost(drag);
       updateStatus();
@@ -1114,6 +1145,7 @@
     let bmp;
     try { bmp = await createImageBitmap(file); }
     catch { flash(cantOpen(file), true); return; }
+    if (tooBigToOpen(file, bmp)) return; // before asking to discard: nothing would replace it
     if (!confirmDiscard()) { bmp.close(); return; }
     let handle = null;
     try { handle = hp ? await hp : null; } catch { handle = null; }
@@ -1382,5 +1414,5 @@
   setTool('pencil');
 
   // Handle for scripted smoke tests in the console.
-  window.__paint = { S, hist, img, flash, save, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, setZoom, fitZoom };
+  window.__paint = { S, hist, img, flash, save, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, loadFile, setZoom, fitZoom, MAX_PIXELS };
 })();

@@ -268,3 +268,34 @@ test('History.push reports how many old entries were evicted', () => {
   assert.equal(h.push({ bytes: 10 }), 0); // 90
   assert.equal(h.push({ bytes: 1 }), 1); // count 4 > 3
 });
+
+test('sizeError: per-side range on both sides of the boundary', () => {
+  assert.equal(Core.sizeError(1, 1, 200, Infinity), null);
+  assert.equal(Core.sizeError(200, 200, 200, Infinity), null);
+  assert.deepEqual(Core.sizeError(201, 5, 200, Infinity), { field: 'w', reason: 'range' });
+  assert.deepEqual(Core.sizeError(5, 0, 200, Infinity), { field: 'h', reason: 'range' });
+  assert.deepEqual(Core.sizeError(NaN, 5, 200, Infinity), { field: 'w', reason: 'range' });
+});
+
+test('sizeError: total-pixel cap on both sides of the boundary', () => {
+  // 10000 x 10000 = 1e8 exactly fits a 1e8 cap; one more row does not
+  assert.equal(Core.sizeError(10000, 10000, 16384, 1e8), null);
+  assert.deepEqual(Core.sizeError(10000, 10001, 16384, 1e8), { field: null, reason: 'area' });
+});
+
+test('dragResize: area cap clamps each edge, keeps aspect on the corner, never rounds over', () => {
+  // 'e' at h=100, cap 10000 -> w <= 100
+  assert.deepEqual(Core.dragResize(50, 100, 500, 0, 'e', 1, false, 16384, 10000), { w: 100, h: 100 });
+  assert.deepEqual(Core.dragResize(100, 50, 0, 500, 's', 1, false, 16384, 10000), { w: 100, h: 100 });
+  // keepAspect corner: 100x50 x4 = 400x200 = 80000 > 20000 -> factor 2 -> 200x100
+  assert.deepEqual(Core.dragResize(100, 50, 300, 0, 'se', 1, true, 16384, 20000), { w: 200, h: 100 });
+  // free corner 300x300 = 90000 > 10000 -> scale by 1/3 -> 100x100
+  const r = Core.dragResize(100, 100, 200, 200, 'se', 1, false, 16384, 10000);
+  assert.ok(r.w * r.h <= 10000, `area ${r.w * r.h}`);
+  assert.deepEqual(r, { w: 100, h: 100 });
+  // cap 1001 at h=10: w would round to 101 (1010 px) -> must floor to 100
+  assert.deepEqual(Core.dragResize(50, 10, 60, 0, 'e', 1, false, 16384, 1005), { w: 100, h: 10 });
+  // shrinking a doc that sits at the cap still works; default cap = no area limit
+  assert.deepEqual(Core.dragResize(100, 100, -10, 0, 'e', 1, false, 16384, 10000), { w: 90, h: 100 });
+  assert.deepEqual(Core.dragResize(100, 100, 1000, 1000, 'se', 1, false, 16384), { w: 1100, h: 1100 });
+});

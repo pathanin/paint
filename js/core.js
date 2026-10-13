@@ -128,7 +128,8 @@
 
   // New canvas size from dragging a resize handle by (dx, dy) screen px at `zoom`.
   // edge: 'e' (width), 's' (height), 'se' (both; keepAspect follows the larger relative change).
-  function dragResize(w, h, dx, dy, edge, zoom, keepAspect, max) {
+  // maxPixels (optional) caps width x height; the result never rounds over it.
+  function dragResize(w, h, dx, dy, edge, zoom, keepAspect, max, maxPixels = Infinity) {
     let nw = edge === 's' ? w : w + dx / zoom;
     let nh = edge === 'e' ? h : h + dy / zoom;
     if (edge === 'se' && keepAspect) {
@@ -136,7 +137,27 @@
       const f = Math.abs(fw - 1) >= Math.abs(fh - 1) ? fw : fh;
       nw = w * f; nh = h * f;
     }
-    return { w: Math.min(max, Math.max(1, Math.round(nw))), h: Math.min(max, Math.max(1, Math.round(nh))) };
+    nw = Math.min(max, Math.max(1, Math.round(nw)));
+    nh = Math.min(max, Math.max(1, Math.round(nh)));
+    if (nw * nh > maxPixels) {
+      if (edge === 'e') nw = Math.max(1, Math.floor(maxPixels / nh));
+      else if (edge === 's') nh = Math.max(1, Math.floor(maxPixels / nw));
+      else {
+        const f = Math.sqrt(maxPixels / (nw * nh));
+        nw = Math.max(1, Math.floor(nw * f)); nh = Math.max(1, Math.floor(nh * f));
+        while (nw * nh > maxPixels) { if (nw >= nh) nw--; else nh--; } // float error guard
+      }
+    }
+    return { w: nw, h: nh };
+  }
+
+  // Why a w x h document can't be created: null if it can. field = the offending side ('w'|'h'),
+  // or null when only the total-pixel cap is exceeded.
+  function sizeError(w, h, maxDim, maxPixels) {
+    if (!(w >= 1 && w <= maxDim)) return { field: 'w', reason: 'range' };
+    if (!(h >= 1 && h <= maxDim)) return { field: 'h', reason: 'range' };
+    if (w * h > maxPixels) return { field: null, reason: 'area' };
+    return null;
   }
 
   function rotateDims(w, h, deg) {
@@ -191,7 +212,7 @@
     clear() { this.undoStack = []; this.redoStack = []; this.bytes = 0; this.saved = null; }
   }
 
-  const Core = { rgbaToU32, colorDistance, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, rotateDims, History };
+  const Core = { rgbaToU32, colorDistance, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, rotateDims, History };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core;
   else root.Core = Core;
 })(typeof window !== 'undefined' ? window : globalThis);

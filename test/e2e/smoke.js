@@ -615,6 +615,44 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       // slider value text has units
       ok(/px/.test(await page.locator('#size').getAttribute('aria-valuetext') || ''), 'size slider aria-valuetext has px');
     }
+    // total-pixel cap: every way in refuses an oversized document before touching state
+    {
+      const dims = () => P(() => [window.__paint.img.width, window.__paint.img.height].join('x'));
+      const before = await dims();
+      const fake = (w, h) => `({ width: ${w}, height: ${h}, closed: false, close() { this.closed = true; } })`;
+      const big = await P(`(async () => { const b = ${fake(20000, 20000)}; await window.__paint.loadFile({ name: 'huge.png' }, null, b); return b.closed; })()`);
+      ok(big && await dims() === before, 'open refuses >16384 px side and frees the bitmap');
+      ok(/huge\.png/.test(await page.locator('#toast').textContent()), 'open refusal names the file: ' + await page.locator('#toast').textContent());
+      await P(`(async () => { await window.__paint.loadFile({ name: 'wide.png' }, null, ${fake(12000, 9000)}); })()`);
+      ok(await dims() === before && /108 MP/.test(await page.locator('#toast').textContent()), 'open refuses 108 MP with sides in range: ' + await page.locator('#toast').textContent());
+      await P(() => { window.__paint.S.pristine = false; window.__paint.selectAll(); });
+      const ih = await P(() => window.__paint.img.height);
+      const pw = 16000, ph = Math.max(ih, Math.ceil(100e6 / 16000) + 1); // both sides fit, grown area doesn't
+      await P(`window.__paint.pasteImage(${fake(pw, ph)})`);
+      ok(await dims() === before, 'paste that would grow past the cap is refused');
+      ok(await P(() => !!window.__paint.sel && !window.__paint.sel.float), 'refused paste keeps the selection untouched');
+      ok(/Can't paste/.test(await page.locator('#toast').textContent()), 'paste refusal toast');
+      await P(() => window.__paint.resizeDoc(12000, 12000, 'scale', 'mc'));
+      ok(await dims() === before && /144 MP/.test(await page.locator('#toast').textContent()), 'resizeDoc refuses 144 MP');
+      await P(() => document.querySelector('[data-cmd="new"]') && window.__paint.hist.markSaved());
+      await page.keyboard.press('Alt+KeyN'); await page.waitForTimeout(100);
+      await page.fill('#newW', '10000'); await page.fill('#newH', '10001'); await page.click('#newDlg button.primary');
+      ok(await page.locator('#newDlg').evaluate((d) => d.open), 'New dialog stays open over the cap');
+      ok(/100 MP/.test(await page.locator('#newNote').textContent()), 'New dialog area error: ' + await page.locator('#newNote').textContent());
+      ok(await page.locator('#newH').getAttribute('aria-invalid') === 'true', 'area error marks the field edited last');
+      await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+      await P(() => window.__paint.selectAll && document.querySelector('[data-cmd="resize"]').click());
+      await page.waitForTimeout(100);
+      if (await page.locator('#resizeDlg').evaluate((d) => d.open)) {
+        await page.selectOption('#rUnit', 'px');
+        await page.locator('#rLock').setChecked(false);
+        await page.fill('#rH', '9000'); await page.fill('#rW', '12000'); await page.click('#resizeDlg button.primary');
+        ok(/108 MP/.test(await page.locator('#rErr').textContent()), 'Resize dialog area error: ' + await page.locator('#rErr').textContent());
+        ok(await page.locator('#rW').getAttribute('aria-invalid') === 'true', 'resize area error marks the field edited last');
+        await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+      } else ok(false, 'resize dialog opens');
+      ok(await dims() === before, 'no size change from any refused path');
+    }
     // picker hint not clipped at 600
     await page.setViewportSize({ width: 600, height: 700 }); await page.waitForTimeout(100);
     await page.keyboard.press('KeyI');
