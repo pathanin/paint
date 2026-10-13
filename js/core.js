@@ -100,7 +100,7 @@
   // target outside the mask). Doesn't touch u32 (mask is restored). Returns {idx, val, box}: the
   // pixels that change (indices into u32) and their new values, and the region's box grown to cover
   // them. Straight RGBA lerp: exact for opaque pixels and for ink over transparency.
-  const EDGE_DEPTH = 4;
+  const EDGE_DEPTH = 8;
   function fillEdge(u32, w, h, region, target, color, tolerance) {
     const { mask, box, edge } = region;
     const thr = Math.round((tolerance || 0) * 255 / 100);
