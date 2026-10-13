@@ -85,6 +85,14 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       await page.waitForTimeout(100);
       { const c = await colorAt(1500, 800); ok(c === 'red', `${tag}: float drawn in the area a window resize revealed, got ${c}`); }
       await page.setViewportSize({ width: 1000, height: 700 });
+      // a preview placed at 100% must not keep the scroll area large after zooming out (it overflowed
+      // the stage once, which scrolled the image out of view and sent clicks to the viewport)
+      await P(() => { const v = document.querySelector('#viewport'); v.scrollLeft = v.scrollWidth; v.scrollTop = v.scrollHeight; });
+      await frame();
+      await P(() => { window.__paint.setTool('pencil'); window.__paint.fitZoom(false); });
+      await frame();
+      { const hit = await P(() => { const r = document.querySelector('#image').getBoundingClientRect(); const e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return e && e.id; });
+        ok(hit === 'overlay', `${tag}: after zooming out from a scrolled preview, the image is under the pointer, got ${hit}`); }
       if (errs.length) { fails++; console.log('FAIL: page errors', errs); }
       await page.close();
     }

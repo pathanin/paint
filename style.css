@@ -210,7 +210,10 @@ button.labeled { padding: 0 9px 0 7px; }
 }
 #stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 #stage.pixelated canvas { image-rendering: pixelated; }
-#stage #preview { inset: auto; pointer-events: none; } /* placed and sized by placePreview() */
+/* #preview is placed and sized by placePreview() and can extend past the stage; the clip keeps it
+   from growing the viewport's scroll area (a stale preview did, and scrolled the image out of view). */
+#pvClip { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+#stage #preview { inset: auto; pointer-events: none; }
 #overlay { touch-action: none; cursor: crosshair; }
 #stage[data-tool=text] #overlay { cursor: text; }
 #stage.panning #overlay { cursor: grab; }
