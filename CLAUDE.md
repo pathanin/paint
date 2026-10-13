@@ -14,7 +14,7 @@ node --test test/*.test.js                  # unit tests for js/core.js (no deps
 node --test --test-name-pattern="History" test/*.test.js   # single test by name
 ```
 
-End-to-end smoke test: `test/e2e/smoke.js` runs about 270 checks in one sequential script, and later sections depend on state from earlier ones. It is dev-only and needs Playwright on `NODE_PATH` plus an installed Google Chrome (`channel: 'chrome'`).
+End-to-end smoke test: `test/e2e/smoke.js` runs about 280 checks in one sequential script, and later sections depend on state from earlier ones. It is dev-only and needs Playwright on `NODE_PATH` plus an installed Google Chrome (`channel: 'chrome'`).
 
 ```bash
 mkdir -p /tmp/pw && (cd /tmp/pw && npm i playwright@1)
@@ -27,7 +27,7 @@ When smoke fails, read the **first** `FAIL` line, because later failures often c
 
 ## Architecture
 
-- **`js/core.js`** holds pure, DOM-free helpers that are exported as `window.Core` and through `module.exports` for Node. They cover flood fill, Bresenham line, rect/resize/anchor math and `History`. `History` is the bounded undo stack: it evicts by count and bytes and tracks a save point with `markSaved()`/`isClean()`. `push()` returns the number of entries it evicted. Anything testable without a canvas belongs here, test-first.
+- **`js/core.js`** holds pure, DOM-free helpers that are exported as `window.Core` and through `module.exports` for Node. They cover flood fill, Bresenham line, rect/resize/anchor math, the smoothed brush path (`Stroke`) and `History`. `History` is the bounded undo stack: it evicts by count and bytes and tracks a save point with `markSaved()`/`isClean()`. `push()` returns the number of entries it evicted. Anything testable without a canvas belongs here, test-first.
 - **`js/app.js`** is one IIFE organised into `// ---------- section ----------` blocks: document & history, view, tools, text, selection, clipboard, transforms, file I/O, dialogs, handles, pointer, keyboard, toolbar wiring, tooltips, help, boot. The core state lives in module locals:
   - `S` holds settings and the document (tool, colours, sizes, zoom, file handle and name, `pristine`).
   - `drag` is the in-progress pointer gesture, keyed by `drag.t`: `pencil`, `brush`, `move`, `select`, `canvas`, `pan`, and so on.
