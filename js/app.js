@@ -667,6 +667,17 @@
   }
   // Undo/redo of a fill entry: put back the pixels before, or recompute the filled ones.
   function applyFill(e) {
+    // Redo: the box holds exactly the before pixels, so painting the mask's runs in the (opaque) fill
+    // colour gives the after state. One path fill of whole-pixel rects is exact and costs no upload.
+    if (e.undone && (e.color >>> 24) === 255) {
+      const path = fillRuns(e.bits, e.before.width, e.before.height, e.x, e.y);
+      if (path) {
+        ctx.fillStyle = `rgb(${e.color & 255}, ${(e.color >>> 8) & 255}, ${(e.color >>> 16) & 255})`;
+        ctx.fill(path);
+        e.undone = false;
+        return;
+      }
+    }
     let im = e.before;
     if (e.undone) {
       im = new ImageData(new Uint8ClampedArray(e.before.data), e.before.width, e.before.height);
@@ -675,6 +686,39 @@
     }
     ctx.putImageData(im, e.x, e.y);
     e.undone = !e.undone;
+  }
+  // The set bits of a w x h row-major mask as a Path2D of rects at (ox, oy): one per run of set bits
+  // in a row, merged down while the next row has the same run. Null past 100k rects (noise-like
+  // masks), where putting the pixels is cheaper.
+  function fillRuns(bits, w, h, ox, oy) {
+    const path = new Path2D();
+    let open = new Map(), n = 0; // run start x -> {x, y, w} still growing downwards
+    const flush = (r) => { path.rect(ox + r.x, oy + r.y, r.w, r.h); n++; };
+    for (let y = 0; y < h; y++) {
+      const next = new Map(), row = y * w, end = row + w;
+      const run = (x0, x1) => {
+        const r = open.get(x0);
+        if (r && r.w === x1 - x0) { r.h++; open.delete(x0); next.set(x0, r); }
+        else next.set(x0, { x: x0, y, w: x1 - x0, h: 1 });
+      };
+      let start = -1;
+      for (let k = row; k < end;) {
+        if ((k & 7) === 0 && k + 8 <= end) { // whole bytes: skip or extend 8 at a time
+          const b = bits[k >> 3];
+          if (b === 0) { if (start >= 0) { run(start - row, k - row); start = -1; } k += 8; continue; }
+          if (b === 255) { if (start < 0) start = k; k += 8; continue; }
+        }
+        if (bits[k >> 3] & (1 << (k & 7))) { if (start < 0) start = k; }
+        else if (start >= 0) { run(start - row, k - row); start = -1; }
+        k++;
+      }
+      if (start >= 0) run(start - row, end - row);
+      for (const r of open.values()) flush(r);
+      if (n > 100000) return null;
+      open = next;
+    }
+    for (const r of open.values()) flush(r);
+    return path;
   }
 
   function pick(p, right) {
