@@ -757,6 +757,7 @@
     document.querySelectorAll('.opts [data-for]').forEach((l) => { l.hidden = !l.dataset.for.split(' ').includes(t); });
     ring.hidden = true;
     if (S.sizes[t] != null) { $('#size').value = S.sizes[t]; $('#sizeOut').textContent = S.sizes[t]; $('#size').setAttribute('aria-valuetext', S.sizes[t] + ' px'); }
+    requestRender(); // cursor and hover outline follow the tool even if the pointer doesn't move
   }
   function setSize(v) {
     if (S.sizes[S.tool] == null) return;

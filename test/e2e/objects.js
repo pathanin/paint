@@ -352,9 +352,10 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.mouse.click(...await at(35, 20));
     await page.mouse.move(...await at(35, 21)); await frame();
     ok(await hov() === null, 'the selected shape is not outlined again (it has its handles)');
-    await page.keyboard.press('KeyR');
     await page.mouse.move(...await at(150, 20)); await frame();
-    ok(await hov() === null, 'shape tools show no hover outline');
+    ok(await hov() === 'ellipse', 'hovering the ellipse again');
+    await page.keyboard.press('KeyR'); await frame();
+    ok(await hov() === null && await P(() => document.querySelector('#overlay').style.cursor) === '', 'switching to a shape tool by key drops the outline and the move cursor at once');
 
     // ---- 19. ⌥-drag duplicates (Move tool); a ⌥-click doesn't ----
     await page.keyboard.press('KeyV');
