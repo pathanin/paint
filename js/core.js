@@ -451,7 +451,73 @@
     }
   }
 
-  const Core = { rgbaToU32, colorDistance, floodMask, fillEdge, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History };
+  // ---------- objects: live shapes drawn above the raster ----------
+  // An object {id, t: 'rect' | 'ellipse' | 'line', a, b, color, alt, size, mode} is immutable: an
+  // edit makes a new one with the same id. a and b are image px: the corners of the box (rect,
+  // ellipse; either order) or the ends (line).
+  // Everything drawing o can paint (as the shape tools' box).
+  function objBox(o) {
+    const r = normRect(o.a, o.b), lw = o.size;
+    return { x: r.x - lw, y: r.y - lw, w: r.w + 2 * lw + 1, h: r.h + 2 * lw + 1 };
+  }
+  function segDist(p, a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y, n = dx * dx + dy * dy;
+    const t = n ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / n)) : 0;
+    return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
+  }
+  // Is p on o? tol is extra reach in image px (callers pass a few screen px over the zoom), so thin
+  // outlines stay clickable at any zoom. Filled shapes hit inside; outlines only near their edge.
+  function hitsObject(o, p, tol) {
+    const half = o.size / 2 + tol, filled = o.mode !== 'outline';
+    if (o.t === 'line') return segDist(p, o.a, o.b) <= half;
+    const r = normRect(o.a, o.b);
+    if (o.t === 'ellipse' && r.w > 0 && r.h > 0) {
+      const rx = r.w / 2, ry = r.h / 2, cx = r.x + rx, cy = r.y + ry;
+      const k = Math.hypot((p.x - cx) / rx, (p.y - cy) / ry), c = Math.hypot(p.x - cx, p.y - cy);
+      if (k < 1 && filled) return true;
+      return k === 0 ? Math.min(rx, ry) <= half : Math.abs((k - 1) * c / k) <= half; // radial distance to the edge
+    }
+    if (o.t === 'ellipse') return segDist(p, { x: r.x, y: r.y }, { x: r.x + r.w, y: r.y + r.h }); // flat: a line
+    const dx = Math.max(r.x - p.x, p.x - r.x - r.w), dy = Math.max(r.y - p.y, p.y - r.y - r.h);
+    if (dx <= 0 && dy <= 0) return filled || -Math.max(dx, dy) <= half; // inside: distance to the nearest edge
+    return Math.hypot(Math.max(dx, 0), Math.max(dy, 0)) <= half;
+  }
+  // Index of the topmost object (the list runs bottom to top) at p, or -1.
+  function hitObject(objs, p, tol) {
+    for (let i = objs.length - 1; i >= 0; i--) if (hitsObject(objs[i], p, tol)) return i;
+    return -1;
+  }
+  // Resize handles: the two ends of a line; the corners, then the edge midpoints, of a box.
+  function objHandles(o) {
+    if (o.t === 'line') return [{ h: 'a', x: o.a.x, y: o.a.y }, { h: 'b', x: o.b.x, y: o.b.y }];
+    const r = normRect(o.a, o.b), x1 = r.x + r.w, y1 = r.y + r.h, mx = r.x + r.w / 2, my = r.y + r.h / 2;
+    return [{ h: 'nw', x: r.x, y: r.y }, { h: 'ne', x: x1, y: r.y }, { h: 'se', x: x1, y: y1 }, { h: 'sw', x: r.x, y: y1 },
+      { h: 'n', x: mx, y: r.y }, { h: 'e', x: x1, y: my }, { h: 's', x: mx, y: y1 }, { h: 'w', x: r.x, y: my }];
+  }
+  // The nearest handle within tol of p (on a tie a corner, so a tiny box stays resizable), or null.
+  function handleAt(o, p, tol) {
+    let best = null, bd = Infinity;
+    for (const q of objHandles(o)) {
+      const d = Math.max(Math.abs(q.x - p.x), Math.abs(q.y - p.y));
+      if (d <= tol && d < bd) { best = q.h; bd = d; }
+    }
+    return best;
+  }
+  // o with handle h dragged by (dx, dy). A box keeps its other edges, so it can flip past them.
+  function resizeObj(o, h, dx, dy) {
+    if (h === 'a' || h === 'b') return { ...o, [h]: { x: o[h].x + dx, y: o[h].y + dy } };
+    const r = normRect(o.a, o.b);
+    let x0 = r.x, y0 = r.y, x1 = r.x + r.w, y1 = r.y + r.h;
+    if (h.includes('w')) x0 += dx;
+    if (h.includes('e')) x1 += dx;
+    if (h.includes('n')) y0 += dy;
+    if (h.includes('s')) y1 += dy;
+    return { ...o, a: { x: x0, y: y0 }, b: { x: x1, y: y1 } };
+  }
+  const moveObj = (o, dx, dy) => ({ ...o, a: { x: o.a.x + dx, y: o.a.y + dy }, b: { x: o.b.x + dx, y: o.b.y + dy } });
+
+  const Core = { rgbaToU32, colorDistance, floodMask, fillEdge, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History,
+    objBox, hitsObject, hitObject, objHandles, handleAt, resizeObj, moveObj };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core;
   else root.Core = Core;
 })(typeof window !== 'undefined' ? window : globalThis);

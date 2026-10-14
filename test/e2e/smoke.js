@@ -17,7 +17,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     const P = (f, a) => page.evaluate(f, a);
     // every tool button selects its tool
     const tools = await P(() => [...document.querySelectorAll('button[data-tool]')].map((b) => b.dataset.tool));
-    ok(tools.length === 10, 'ten tool buttons, got ' + tools.length);
+    ok(tools.length === 11, 'eleven tool buttons (move + the ten Paint tools), got ' + tools.length);
     for (const t of tools) {
       await page.click(`button[data-tool="${t}"]`);
       ok(await P(() => window.__paint.S.tool) === t, 'tool button ' + t);

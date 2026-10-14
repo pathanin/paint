@@ -73,6 +73,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await stroke(4, [[180, 595], [620, 545]]);
     await P(() => { const p = window.__paint; p.setTool('ellipse'); p.S.fillMode = 'outline'; p.S.sizes.ellipse = 3; });
     { const [x, y] = await at(300, 410), [x2, y2] = await at(420, 500); await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x2, y2, { steps: 5 }); await page.mouse.up(); await frame(); }
+    await P(() => window.__paint.flattenObjs()); // shapes are objects until flattened; the fill works on pixels
     // text with no enclosed counters (an 'o' would leave a white island no fill reaches)
     await P(() => { const p = window.__paint; p.setTool('text'); p.S.fontSize = 40; });
     { const [x, y] = await at(30, 430); await page.mouse.click(x, y); await page.keyboard.type('SMILE'); }

@@ -715,3 +715,71 @@ test('History.dropLost: the saved state becomes unreachable when it is dropped',
   g.dropLost((e) => e.id === 1); // the saved entry itself is gone, though we're on top of its state
   assert.ok(!g.isClean());
 });
+
+// ---------- objects ----------
+const obj = (t, a, b, extra) => Object.assign({ id: 1, t, a, b, color: '#000000', alt: '#ffffff', size: 2, mode: 'outline' }, extra);
+
+test('objBox covers the shape plus its stroke width, either drag direction', () => {
+  assert.deepEqual(Core.objBox(obj('rect', { x: 10, y: 20 }, { x: 40, y: 30 })), { x: 8, y: 18, w: 35, h: 15 });
+  assert.deepEqual(Core.objBox(obj('rect', { x: 40, y: 30 }, { x: 10, y: 20 })), { x: 8, y: 18, w: 35, h: 15 });
+});
+
+test('hitsObject: outline rect hits near the edge only; filled rect hits inside', () => {
+  const o = obj('rect', { x: 10, y: 10 }, { x: 50, y: 50 });
+  assert.ok(Core.hitsObject(o, { x: 10, y: 30 }, 0));
+  assert.ok(Core.hitsObject(o, { x: 13, y: 30 }, 2)); // 3 px in: size/2 (1) + tol (2)
+  assert.ok(!Core.hitsObject(o, { x: 14, y: 30 }, 2));
+  assert.ok(!Core.hitsObject(o, { x: 30, y: 30 }, 2)); // the hollow middle
+  assert.ok(!Core.hitsObject(o, { x: 5, y: 30 }, 2));
+  assert.ok(Core.hitsObject({ ...o, mode: 'fill' }, { x: 30, y: 30 }, 0));
+  assert.ok(Core.hitsObject({ ...o, mode: 'both' }, { x: 30, y: 30 }, 0));
+  assert.ok(!Core.hitsObject({ ...o, mode: 'fill' }, { x: 54, y: 54 }, 2)); // outside the corner (hypot)
+});
+
+test('hitsObject: ellipse and line', () => {
+  const e = obj('ellipse', { x: 0, y: 0 }, { x: 100, y: 50 }); // centre (50, 25), radii 50 x 25
+  assert.ok(Core.hitsObject(e, { x: 100, y: 25 }, 0));
+  assert.ok(Core.hitsObject(e, { x: 50, y: 0 }, 0));
+  assert.ok(!Core.hitsObject(e, { x: 50, y: 25 }, 2)); // hollow
+  assert.ok(Core.hitsObject({ ...e, mode: 'fill' }, { x: 50, y: 25 }, 0));
+  assert.ok(!Core.hitsObject(e, { x: 2, y: 2 }, 2)); // the box corner is off the ellipse
+  const l = obj('line', { x: 0, y: 0 }, { x: 100, y: 100 });
+  assert.ok(Core.hitsObject(l, { x: 50, y: 52 }, 1)); // ~1.4 px off the line
+  assert.ok(!Core.hitsObject(l, { x: 50, y: 60 }, 1));
+  assert.ok(!Core.hitsObject(l, { x: 110, y: 110 }, 1)); // past the end
+  assert.ok(Core.hitsObject(obj('line', { x: 5, y: 5 }, { x: 5, y: 5 }), { x: 6, y: 5 }, 0)); // a dot
+  assert.ok(Core.hitsObject(obj('ellipse', { x: 0, y: 10 }, { x: 40, y: 10 }), { x: 20, y: 11 }, 0)); // flat ellipse
+});
+
+test('hitObject returns the topmost hit (last in the list) or -1', () => {
+  const objs = [obj('rect', { x: 0, y: 0 }, { x: 50, y: 50 }, { id: 1, mode: 'fill' }), obj('rect', { x: 20, y: 20 }, { x: 70, y: 70 }, { id: 2, mode: 'fill' })];
+  assert.equal(Core.hitObject(objs, { x: 30, y: 30 }, 0), 1);
+  assert.equal(Core.hitObject(objs, { x: 10, y: 10 }, 0), 0);
+  assert.equal(Core.hitObject(objs, { x: 90, y: 90 }, 0), -1);
+});
+
+test('objHandles and handleAt: 8 handles for boxes (corners win), 2 ends for lines', () => {
+  const o = obj('rect', { x: 40, y: 30 }, { x: 10, y: 10 });
+  const hs = Core.objHandles(o);
+  assert.equal(hs.length, 8);
+  assert.deepEqual(hs.find((h) => h.h === 'nw'), { h: 'nw', x: 10, y: 10 });
+  assert.deepEqual(hs.find((h) => h.h === 's'), { h: 's', x: 25, y: 30 });
+  assert.equal(Core.handleAt(o, { x: 41, y: 31 }, 2), 'se');
+  assert.equal(Core.handleAt(o, { x: 25, y: 9 }, 2), 'n');
+  assert.equal(Core.handleAt(o, { x: 25, y: 20 }, 2), null);
+  assert.equal(Core.handleAt(obj('rect', { x: 0, y: 0 }, { x: 2, y: 2 }), { x: 2, y: 2 }, 3), 'se'); // tiny: a corner, not an edge
+  const l = obj('line', { x: 0, y: 0 }, { x: 100, y: 0 });
+  assert.deepEqual(Core.objHandles(l).map((h) => h.h), ['a', 'b']);
+  assert.equal(Core.handleAt(l, { x: 99, y: 1 }, 2), 'b');
+});
+
+test('resizeObj moves the dragged edges (and may flip); moveObj shifts both points', () => {
+  const o = obj('rect', { x: 40, y: 30 }, { x: 10, y: 10 });
+  assert.deepEqual(Core.normRect(...(({ a, b }) => [a, b])(Core.resizeObj(o, 'se', 5, 6))), { x: 10, y: 10, w: 35, h: 26 });
+  assert.deepEqual(Core.normRect(...(({ a, b }) => [a, b])(Core.resizeObj(o, 'w', -4, 99))), { x: 6, y: 10, w: 34, h: 20 });
+  assert.deepEqual(Core.normRect(...(({ a, b }) => [a, b])(Core.resizeObj(o, 'e', -40, 0))), { x: 0, y: 10, w: 10, h: 20 }); // past the west edge
+  const l = Core.resizeObj(obj('line', { x: 0, y: 0 }, { x: 10, y: 0 }), 'a', 3, 4);
+  assert.deepEqual([l.a, l.b], [{ x: 3, y: 4 }, { x: 10, y: 0 }]);
+  const m = Core.moveObj(o, -10, 5);
+  assert.deepEqual([m.a, m.b, m.id, o.a.x], [{ x: 30, y: 35 }, { x: 0, y: 15 }, 1, 40]); // o untouched
+});

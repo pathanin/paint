@@ -11,6 +11,7 @@
 <!-- Icons: paths adapted from Lucide (ISC license, lucide.dev). Inline so file:// works. -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <defs>
+    <symbol id="i-move" viewBox="0 0 24 24"><path d="M4.04 4.69a.5.5 0 0 1 .65-.65l16 6.5a.5.5 0 0 1-.06.95l-6.12 1.58a2 2 0 0 0-1.44 1.44l-1.58 6.12a.5.5 0 0 1-.95.06z"/></symbol>
     <symbol id="i-select" viewBox="0 0 24 24"><path d="M5 3a2 2 0 0 0-2 2M19 3a2 2 0 0 1 2 2M21 19a2 2 0 0 1-2 2M5 21a2 2 0 0 1-2-2M9 3h1M9 21h1M14 3h1M14 21h1M3 9v1M21 9v1M3 14v1M21 14v1"/></symbol>
     <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M21.17 6.81a1 1 0 0 0-3.99-3.99L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5zM15 5l4 4"/></symbol>
     <symbol id="i-brush" viewBox="0 0 24 24"><path d="m9.06 11.9 8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z"/></symbol>
@@ -100,12 +101,13 @@
         <option value="ui-monospace, Menlo, monospace">Mono</option>
       </select></label>
     <label data-for="text">Size <input type="number" id="fontSize" min="6" max="400" value="24" aria-label="Font size"><span class="unit">px</span></label>
+    <span class="hint" data-for="move">Click a shape to select · drag to move · drag empty canvas to pan</span>
     <span class="hint" data-for="select">Drag to select · drag inside to move</span>
     <span class="hint" data-for="eraser">Paints with color 2</span>
     <span class="hint" data-for="fill">Click: color 1 · right-click: color 2</span>
     <span class="hint" data-for="picker">Click: color 1 · right-click: color 2</span>
     <span class="hint" data-for="text">Click where the text should start</span>
-    <span class="hint" data-for="line rect ellipse">Hold Shift to constrain</span>
+    <span class="hint" data-for="line rect ellipse">Shift constrains · shapes stay movable (V) until ⌘E flattens them</span>
   </div>
   <div class="colors">
     <div class="well">
@@ -119,6 +121,7 @@
 
 <div id="main">
   <nav id="rail" class="chrome" role="toolbar" aria-label="Tools" aria-orientation="vertical">
+    <button data-tool="move" data-tip="Move" data-kbd="V" data-hint="Moves editable shapes · drag empty canvas to pan" aria-label="Move"><svg><use href="#i-move"/></svg></button>
     <button data-tool="select" data-tip="Select" data-kbd="S" aria-label="Select"><svg><use href="#i-select"/></svg></button>
     <hr>
     <button data-tool="pencil" data-tip="Pencil" data-kbd="P" aria-label="Pencil"><svg><use href="#i-pencil"/></svg></button>
@@ -140,6 +143,7 @@
       <div id="pvClip"><canvas id="preview" aria-hidden="true"></canvas><div id="ants" hidden></div></div>
       <canvas id="overlay" width="1" height="1" aria-hidden="true"></canvas>
       <div id="ring" hidden></div>
+      <div id="objsel" hidden></div>
       <textarea id="textInput" hidden spellcheck="false" rows="1" aria-label="Text"></textarea>
       <div id="resizeGhost" hidden></div>
       <div class="handle" data-edge="e" title="Drag to resize canvas"></div>

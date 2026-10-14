@@ -63,9 +63,12 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await drag('brush', [[200, 20], [280, 180], [150, 100]]); await record('brush');
     await drag('eraser', [[60, 60], [250, 70]]); await record('eraser');
     await P(() => { window.__paint.S.fillMode = 'both'; });
-    await drag('rect', [[20, 120], [90, 190]]); await record('rect');
-    await drag('ellipse', [[100, 20], [190, 90]], { button: 'right' }); await record('ellipse');
-    await drag('line', [[5, 195], [295, 5]]); await record('line');
+    // Shapes are objects above the pixels (docs/objects.md): drawing one leaves the pixels as they
+    // were, and flattening (⌘E) is the step that changes them. Both are steps of their own.
+    const shape = async (name) => { await record(name + ' object'); await P(() => window.__paint.flattenObjs()); await frame(); await record(name + ' flatten'); };
+    await drag('rect', [[20, 120], [90, 190]]); await shape('rect');
+    await drag('ellipse', [[100, 20], [190, 90]], { button: 'right' }); await shape('ellipse');
+    await drag('line', [[5, 195], [295, 5]]); await shape('line');
     await P(() => { window.__paint.S.tolerance = 40; window.__paint.setTool('fill'); });
     { const [x, y] = await at(150, 150); await page.mouse.click(x, y); await frame(); } await record('fill');
     await P(() => window.__paint.setTool('text'));
@@ -129,15 +132,19 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     });
     await frame();
     const g1 = [await hash()];
-    await drag('rect', [[30, 40], [900, 650]]); g1.push(await hash());
-    await drag('ellipse', [[100, 100], [700, 500]]); g1.push(await hash());
+    // A shape is two steps: the object (pixels unchanged), then flattening it (a multi-tile region).
+    const flat = async () => { g1.push(await hash()); await P(() => window.__paint.flattenObjs()); await frame(); g1.push(await hash()); };
+    await drag('rect', [[30, 40], [900, 650]]); await flat();
+    await drag('ellipse', [[100, 100], [700, 500]]); await flat();
     await drag('select', [[300, 200], [800, 600]]); await page.keyboard.press('Delete'); await frame(); g1.push(await hash());
     const flush = () => P(() => window.__paint.flushToData());
     const pending = () => P(() => window.__paint.pendingParts);
     ok(await pending() > 0, 'fresh edits are held on the GPU until idle');
     await flush();
     ok(await pending() === 0, 'flushToData reads everything back');
-    const seq = [['undo', 2, false], ['undo', 1, true], ['redo', 2, false], ['undo', 1, false], ['undo', 0, true], ['redo', 1, true], ['redo', 2, false], ['redo', 3, false], ['undo', 2, true], ['redo', 3, true]];
+    // states: 0 start, 1 rect object, 2 rect flattened, 3 ellipse object, 4 ellipse flattened, 5 deleted
+    const seq = [['undo', 4, false], ['undo', 3, true], ['undo', 2, false], ['redo', 3, false], ['redo', 4, true], ['undo', 3, false], ['undo', 2, false],
+      ['undo', 1, true], ['undo', 0, false], ['redo', 1, true], ['redo', 2, false], ['redo', 3, false], ['redo', 4, false], ['redo', 5, false], ['undo', 4, true], ['redo', 5, true]];
     for (const [f, want, fl] of seq) {
       await P((f) => window.__paint[f](), f); await frame();
       if (fl) await flush();
@@ -147,7 +154,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.waitForTimeout(2500);
     ok(await pending() === 0, 'idle readback drains the GPU-held parts');
     await P(() => window.__paint.undo()); await frame();
-    ok(await hash() === g1[2], 'undo after the idle readback is pixel-exact');
+    ok(await hash() === g1[4], 'undo after the idle readback is pixel-exact');
     // entries dropped while their readback is pending: freed, and nothing left to read
     await P(() => window.__paint.undo()); await frame();
     ok(await pending() > 0, 'undo leaves a pending readback');
@@ -197,8 +204,8 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
 
     // context loss: B (on the GPU) is lost, so B and the older A go; C (a fill: CPU data) survives
     await noise(); await frame();
-    await drag('rect', [[30, 40], [500, 400]]); await flush(); // A: read back
-    await drag('ellipse', [[200, 100], [900, 650]]); // B: on the GPU
+    await drag('rect', [[30, 40], [500, 400]]); await P(() => window.__paint.flattenObjs()); await flush(); // A: read back
+    await drag('ellipse', [[200, 100], [900, 650]]); await P(() => window.__paint.flattenObjs()); // B: on the GPU
     const lb = await hash();
     await P(() => { window.__paint.S.primary = 'rgba(200,30,30,1)'; });
     await drag('fill', [[350, 250]]); // C, inside A and B
