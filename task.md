@@ -17,6 +17,8 @@ The design decisions behind the current UI, the evidence behind them, and what's
 
 ## Backlog
 
+0. **Objects (live shapes), exploration:** see `docs/objects.md`. A spike is on branch `objects-spike`, behind the Editable switch in the shape options. It reopens "selection resize handles" (below) as feature work.
+
 1. **Not yet verified:**
    - Firefox and Safari. Neither has the File System Access API, so the download-save path runs there. The `:has()`, `field-sizing` and `text-wrap: balance` CSS also needs checking.
    - A real Windows machine.

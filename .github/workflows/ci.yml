@@ -58,6 +58,9 @@ jobs:
       - name: filledge
         if: ${{ !cancelled() }}
         run: node test/e2e/filledge.js
+      - name: objects
+        if: ${{ !cancelled() }}
+        run: node test/e2e/objects.js
       - name: libs
         if: ${{ !cancelled() }}
         run: node test/e2e/libs.js

@@ -89,6 +89,7 @@
       <label><input type="radio" name="fillMode" value="fill"><span>Fill</span></label>
       <label data-tip="Outline + fill" data-hint="Fills with color 2"><input type="radio" name="fillMode" value="both"><span>Both</span></label>
     </div>
+    <label data-for="line rect ellipse" data-tip="Editable shapes" data-hint="Shapes stay movable objects above the pixels · ⌘E flattens"><input type="checkbox" id="liveShapes"> Editable</label>
     <label data-for="brush" data-tip="Smoothing" data-hint="Steadies wobbly strokes · 0 follows the pointer exactly">Smoothing
       <input type="range" id="smoothing" min="0" max="10" value="2" aria-label="Smoothing"><output id="smoothOut">2</output></label>
     <label data-for="fill" data-tip="Tolerance" data-hint="How similar a color must be to get filled">Tolerance
@@ -140,6 +141,7 @@
       <div id="pvClip"><canvas id="preview" aria-hidden="true"></canvas><div id="ants" hidden></div></div>
       <canvas id="overlay" width="1" height="1" aria-hidden="true"></canvas>
       <div id="ring" hidden></div>
+      <div id="objsel" hidden></div>
       <textarea id="textInput" hidden spellcheck="false" rows="1" aria-label="Text"></textarea>
       <div id="resizeGhost" hidden></div>
       <div class="handle" data-edge="e" title="Drag to resize canvas"></div>

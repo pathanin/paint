@@ -239,6 +239,14 @@ button.labeled { padding: 0 9px 0 7px; }
   will-change: transform; /* follows the pointer: own layer, so moving it doesn't repaint the stage */
 }
 #ring.round { border-radius: 50%; }
+/* Selected object: outline and handles at screen resolution, placed by render() (placeObjSel). */
+#objsel { position: absolute; z-index: 1; pointer-events: none; box-shadow: 0 0 0 1px var(--accent); }
+#objsel.line { box-shadow: none; }
+#objsel[hidden], #objsel .handle[hidden] { display: none; }
+#objsel .handle {
+  position: absolute; left: -4px; top: -4px; width: 8px; height: 8px; box-sizing: border-box;
+  background: #fff; border: 1px solid var(--accent);
+}
 #textInput {
   position: absolute; z-index: 2;
   margin: 0; padding: 0; border: 0;

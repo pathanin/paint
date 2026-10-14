@@ -20,6 +20,7 @@
     primary: '#000000', secondary: '#ffffff',
     sizes: { pencil: 1, brush: 6, eraser: 12, line: 2, rect: 2, ellipse: 2 },
     fillMode: 'outline', tolerance: 10, smoothing: 2,
+    liveShapes: false, // shapes stay editable objects above the pixels (docs/objects.md)
     font: 'system-ui, sans-serif', fontSize: 24,
     zoom: 1,
     fileHandle: null, fileName: 'untitled.png',
@@ -56,6 +57,9 @@
   let sel = null;    // {x, y, w, h, float: canvas|null}
   let op = null;     // the current undoable region op: {tiles} (see touch())
   let textAt = null; // {x, y, color} while the text box is open
+  // Live shapes (docs/objects.md): immutable objects drawn above #image, bottom to top. They are
+  // pixels only once flattened. objSel is the selected object's id; objVer bumps on every change.
+  let objs = [], objSel = null, objVer = 0, nextObjId = 1;
 
   // ---------- helpers ----------
   function makeCanvas(w, h) {
@@ -302,9 +306,10 @@
       snapshot([t]);
     }
   }
-  function endOp() {
+  // extra: fields for the entry (flattenObjs() adds the object list it baked).
+  function endOp(extra) {
     const o = op; op = null;
-    if (!o || !o.tiles.size) return;
+    if (!o || !o.tiles.size) { if (extra) pushHist({ type: 'obj', bytes: 0, ...extra }); return; }
     const parts = [];
     let bytes = 0;
     for (const t of o.tiles.values()) {
@@ -315,7 +320,7 @@
       parts.push(part);
       bytes += w * h * 4; // a part on the GPU may sit in a larger tile until toData() crops it
     }
-    pushHist({ type: 'region', parts, bytes });
+    pushHist({ type: 'region', parts, bytes, ...extra });
     queueToData(parts);
   }
   // Items on the GPU -> data (w x h ImageData each). Each readback has a large fixed cost, so a
@@ -437,9 +442,13 @@
   // Each entry holds the pixels of the *other* state (before when on the undo stack, after when on
   // the redo stack); applying it swaps them with what's on the canvas, so one copy serves both ways.
   function applyHist(e) {
+    if (e.objs) { // obj entries, and a flatten's region entry
+      const o = objs; objs = e.objs; e.objs = o; objVer++;
+      if (!selObj()) objSel = null;
+    }
     if (e.type === 'region') swapParts(e.parts);
     else if (e.type === 'fill') applyFill(e);
-    else {
+    else if (e.type === 'doc') {
       const other = e.canvas;
       e.canvas = img;
       setDoc(other);
@@ -468,6 +477,7 @@
     commitText();
     setDoc(null, w, h);
     hist.clear();
+    objs = []; objSel = null; objVer++;
     Object.assign(S, { fileHandle: null, fileName: 'untitled.png', pristine: true, trimWarned: false });
     fitZoom(true);
     updateChrome();
@@ -567,7 +577,7 @@
   function render() {
     rafPending = false;
     updateRing(hoverPt);
-    if (!drag) setProp(ov.style, 'cursor', S.tool === 'select' && sel && hoverPt && inside(hoverPt, sel) ? 'move' : '');
+    if (!drag) setProp(ov.style, 'cursor', objCursor(hoverPt) || (S.tool === 'select' && sel && hoverPt && inside(hoverPt, sel) ? 'move' : ''));
     if (drag && drag.t === 'canvas') showGhost(drag);
     const shape = drag && SHAPES.has(drag.t);
     const marquee = drag && drag.t === 'select';
@@ -580,9 +590,11 @@
       shape ? [drag.t, drag.start, drag.end, drag.shift, drag.color, drag.alt, S.sizes[drag.t], S.fillMode] : 0,
       mq || 0,
       sel && sel.float ? [sel.x, sel.y, sel.w, sel.h, floatId(sel.float)] : 0,
+      objVer,
     ]);
     placeAnts(mq || sel);
-    if (shape || (sel && sel.float) || (tail && tail.length)) placePreview();
+    placeObjSel(selObj());
+    if (shape || (sel && sel.float) || (tail && tail.length) || objs.length) placePreview();
     if (key !== ovKey) {
       ovKey = key;
       if (ovBox) octx.clearRect(ovBox.x, ovBox.y, ovBox.w, ovBox.h);
@@ -594,9 +606,11 @@
         const x1 = Math.max(box.x + box.w, b.x + b.w), y1 = Math.max(box.y + box.h, b.y + b.h);
         box.x = Math.min(box.x, b.x); box.y = Math.min(box.y, b.y); box.w = x1 - box.x; box.h = y1 - box.y;
       };
-      if (tail && tail.length) { brushPath(octx, tail, drag.color, drag.size); add(segsBox(tail, drag.size / 2 + 1)); }
-      if (shape) add(drawShape(octx, drag));
+      // Pixels-to-be (a floating selection, the brush tail) under the objects; a shape being drawn on top.
       if (sel && sel.float) { octx.drawImage(sel.float, sel.x, sel.y); add(sel); }
+      if (tail && tail.length) { brushPath(octx, tail, drag.color, drag.size); add(segsBox(tail, drag.size / 2 + 1)); }
+      for (const o of objs) { drawObj(octx, o); add(Core.objBox(o)); }
+      if (shape) add(drawShape(octx, drag));
       ovBox = box;
     }
     updateStatus();
@@ -614,6 +628,35 @@
     Object.assign(antsEl.style, { left: x + 'px', top: y + 'px', width: Math.max(1, w) + 'px', height: Math.max(1, h) + 'px' });
   }
 
+  // Outline and handles of the selected object, in device px like the ants (crisp at every zoom).
+  const objSelEl = $('#objsel');
+  const HANDLE_IDS = ['nw', 'ne', 'se', 'sw', 'n', 'e', 's', 'w', 'a', 'b'];
+  const handleEls = Object.fromEntries(HANDLE_IDS.map((h) => {
+    const el = document.createElement('div');
+    el.className = 'handle';
+    objSelEl.appendChild(el);
+    return [h, el];
+  }));
+  let objSelKey = '';
+  function placeObjSel(o) {
+    const z = S.zoom, d = devicePixelRatio, px = (v) => Math.round(v * z * d) / d;
+    const r = o && Core.normRect(o.a, o.b);
+    const key = o ? [o.t, px(r.x), px(r.y), px(r.x + r.w), px(r.y + r.h), px(o.a.x), px(o.a.y), px(o.b.x), px(o.b.y)].join() : '';
+    if (key === objSelKey) return;
+    objSelKey = key;
+    objSelEl.hidden = !o;
+    if (!o) return;
+    const x = px(r.x), y = px(r.y);
+    Object.assign(objSelEl.style, { left: x + 'px', top: y + 'px', width: px(r.x + r.w) - x + 'px', height: px(r.y + r.h) - y + 'px' });
+    objSelEl.classList.toggle('line', o.t === 'line');
+    const shown = new Map(Core.objHandles(o).map((h) => [h.h, h]));
+    for (const id of HANDLE_IDS) {
+      const h = shown.get(id), el = handleEls[id];
+      el.hidden = !h;
+      if (h) el.style.transform = `translate(${px(h.x) - x}px, ${px(h.y) - y}px)`;
+    }
+  }
+
   let cursor = null;  // integer image px under the pointer, for the status bar
   let hoverPt = null; // the same point unrounded (null when the pointer is off the canvas); render() places the ring there
   const EL = {
@@ -624,7 +667,8 @@
   // Runs every frame and pointermove; everything is write-if-changed, so a still image costs ~nothing.
   function updateStatus() {
     setText(EL.stPos, cursor ? `${cursor.x}, ${cursor.y} px` : '—');
-    const r = drag && drag.t === 'select' ? Core.normRect(drag.start, drag.end) : sel;
+    const so = selObj();
+    const r = drag && drag.t === 'select' ? Core.normRect(drag.start, drag.end) : sel || (so && Core.normRect(so.a, so.b));
     setProp(EL.stSelWrap, 'hidden', !r);
     setText(EL.stSel, r ? `${r.w} × ${r.h} px` : '');
     setAttr(img, 'aria-label', `Image, ${img.width} × ${img.height} px`);
@@ -658,6 +702,10 @@
   function setTool(t) {
     commitText();
     if (t !== 'select') dropSelection();
+    // The selection stays only for tools that edit it: select, and the object's own shape tool (its
+    // size and style controls). Otherwise setting up the next shape would restyle the last one.
+    const so = selObj();
+    if (so && t !== 'select' && t !== so.t) selectObj(null);
     if (t === 'picker' && S.tool !== 'picker') S.prevTool = S.tool;
     S.tool = t;
     stage.dataset.tool = t;
@@ -681,6 +729,7 @@
   }
   function setColor(which, hex) {
     S[which] = hex;
+    restyleObj(which === 'primary' ? { color: hex } : { alt: hex });
     $('#' + which).value = hex;
     if (textAt && which === 'primary') { textAt.color = hex; placeTextBox(); }
     document.querySelectorAll('#palette button').forEach((b) => {
@@ -863,38 +912,109 @@
 
   function pick(p, right) {
     if (p.x < 0 || p.y < 0 || p.x >= img.width || p.y >= img.height) return;
-    const d = ctx.getImageData(p.x, p.y, 1, 1).data;
+    const one = makeCanvas(1, 1), g = one.getContext('2d', { willReadFrequently: true }); // what is seen: pixels + objects
+    g.drawImage(img, p.x, p.y, 1, 1, 0, 0, 1, 1);
+    g.translate(-p.x, -p.y);
+    for (const o of objs) drawObj(g, o);
+    const d = g.getImageData(0, 0, 1, 1).data;
     if (d[3] === 0) { flash('That pixel is transparent. No color picked.'); return; }
     setColor(right ? 'secondary' : 'primary', toHex(d[0], d[1], d[2]));
     setTool(S.prevTool);
   }
 
-  function drawShape(c, d) {
-    const a = d.start, b = Core.constrainShape(d.start, d.end, d.shift, d.t);
-    const lw = S.sizes[d.t], off = lw % 2 ? 0.5 : 0;
+  // The shape a shape drag d describes, as an object (without an id).
+  function shapeObj(d) {
+    return { t: d.t, a: d.start, b: Core.constrainShape(d.start, d.end, d.shift, d.t), color: d.color, alt: d.alt, size: S.sizes[d.t], mode: S.fillMode };
+  }
+  function drawShape(c, d) { const o = shapeObj(d); drawObj(c, o); return Core.objBox(o); }
+  function drawObj(c, o) {
+    const a = o.a, b = o.b, lw = o.size, off = lw % 2 ? 0.5 : 0;
     c.save();
     c.lineWidth = lw;
-    c.strokeStyle = d.color;
+    c.strokeStyle = o.color;
     c.beginPath();
-    if (d.t === 'line') {
+    if (o.t === 'line') {
       c.lineCap = 'round';
       c.moveTo(a.x + off, a.y + off);
       c.lineTo(b.x + off, b.y + off);
       c.stroke();
     } else {
       const r = Core.normRect(a, b);
-      if (d.t === 'rect') c.rect(r.x + off, r.y + off, r.w, r.h);
+      if (o.t === 'rect') c.rect(r.x + off, r.y + off, r.w, r.h);
       else c.ellipse(r.x + r.w / 2 + off, r.y + r.h / 2 + off, r.w / 2, r.h / 2, 0, 0, Math.PI * 2);
-      if (S.fillMode !== 'outline') { c.fillStyle = S.fillMode === 'fill' ? d.color : d.alt; c.fill(); }
-      if (S.fillMode !== 'fill') c.stroke();
+      if (o.mode !== 'outline') { c.fillStyle = o.mode === 'fill' ? o.color : o.alt; c.fill(); }
+      if (o.mode !== 'fill') c.stroke();
     }
     c.restore();
-    return shapeBox(d);
   }
   // Everything drawShape(d) can paint.
-  function shapeBox(d) {
-    const r = Core.normRect(d.start, Core.constrainShape(d.start, d.end, d.shift, d.t)), lw = S.sizes[d.t];
-    return { x: r.x - lw, y: r.y - lw, w: r.w + 2 * lw + 1, h: r.h + 2 * lw + 1 };
+  const shapeBox = (d) => Core.objBox(shapeObj(d));
+
+  // ---------- objects ----------
+  const selObj = () => (objSel == null ? null : objs.find((o) => o.id === objSel) || null);
+  // Replace the object list as one undo step (the entry keeps the list before, and swaps on apply).
+  function setObjs(next) {
+    pushHist({ type: 'obj', objs, bytes: 128 * (objs.length + 1) });
+    objs = next; objVer++;
+    requestRender();
+  }
+  const withObj = (o) => objs.map((x) => (x.id === o.id ? o : x));
+  function addObj(o) {
+    o = { ...o, id: nextObjId++ };
+    setObjs(objs.concat(o));
+    objSel = o.id;
+  }
+  function selectObj(id) {
+    if (objSel === id) return;
+    objSel = id; objVer++;
+    requestRender();
+  }
+  function deleteObj() {
+    const o = selObj();
+    if (!o) return false;
+    objSel = null;
+    setObjs(objs.filter((x) => x !== o));
+    return true;
+  }
+  function nudgeObj(dx, dy) { const o = selObj(); if (o) setObjs(withObj(Core.moveObj(o, dx, dy))); }
+  function restyleObj(props) {
+    const o = selObj();
+    if (!o || Object.keys(props).every((k) => o[k] === props[k])) return;
+    setObjs(withObj({ ...o, ...props }));
+  }
+  function duplicateObj() {
+    const o = selObj();
+    if (!o) return;
+    addObj(Core.moveObj(o, 10, 10));
+  }
+  // Move the selected object one step up (dir 1) or down (-1) the stack.
+  function reorderObj(dir) {
+    const o = selObj(), i = objs.indexOf(o), j = i + dir;
+    if (!o || j < 0 || j >= objs.length) return;
+    const next = objs.slice();
+    next[i] = next[j]; next[j] = o;
+    setObjs(next);
+  }
+  // Bake every object into the pixels as one undo step: a region entry that also keeps the object
+  // list, so undo brings the objects back and un-bakes their pixels together.
+  function flattenObjs() {
+    if (!objs.length) return;
+    commitText();
+    commitSelection(); // a floating selection sits under the objects
+    beginOp();
+    for (const o of objs) { const b = Core.objBox(o); touch(b.x, b.y, b.w, b.h); }
+    for (const o of objs) drawObj(ctx, o);
+    const before = objs;
+    objs = []; objSel = null; objVer++;
+    endOp({ objs: before });
+    requestRender();
+  }
+  // What the document looks like: #image, or a copy with the objects drawn over it.
+  function composite() {
+    if (!objs.length) return img;
+    const c = cloneCanvas(img), g = c.getContext('2d');
+    for (const o of objs) drawObj(g, o);
+    return c;
   }
 
   // ---------- text ----------
@@ -1012,6 +1132,7 @@
     commitText();
     dropSelection();
     setTool('select');
+    selectObj(null);
     sel = { x: 0, y: 0, w: img.width, h: img.height, float: null };
     requestRender();
   }
@@ -1024,6 +1145,7 @@
   function crop() {
     if (!sel) { flash('Select an area to crop first'); return; }
     commitSelection();
+    flattenObjs();
     const r = Core.clampRect(sel, img.width, img.height);
     if (!r) { flash('Selection is outside the image'); return; }
     const c = makeCanvas(r.w, r.h);
@@ -1033,21 +1155,31 @@
 
   // ---------- clipboard ----------
   function selectionCanvas() {
-    if (!sel) return img; // toBlob() encodes a snapshot, so later edits can't leak in
+    const o = !sel && selObj();
+    if (o) { // the selected object, alone
+      const b = Core.objBox(o), c = makeCanvas(b.w, b.h), g = c.getContext('2d');
+      g.translate(-b.x, -b.y);
+      drawObj(g, o);
+      return c;
+    }
+    if (!sel) return composite(); // toBlob() encodes a snapshot, so later edits can't leak in
     if (sel.float) return sel.float;
-    const c = makeCanvas(sel.w, sel.h);
-    c.getContext('2d').drawImage(img, sel.x, sel.y, sel.w, sel.h, 0, 0, sel.w, sel.h);
+    const c = makeCanvas(sel.w, sel.h), g = c.getContext('2d');
+    g.drawImage(img, sel.x, sel.y, sel.w, sel.h, 0, 0, sel.w, sel.h);
+    g.translate(-sel.x, -sel.y);
+    for (const ob of objs) drawObj(g, ob); // copy what is seen
     return c;
   }
   async function copySel(cut) {
     commitText();
     const c = selectionCanvas();
     const blob = new Promise((res) => c.toBlob(res, 'image/png'));
-    const didCut = cut && !!sel; // with nothing selected, ⌘X copies the whole image and keeps it
-    if (didCut) deleteSelection();
+    const some = !!sel || !!selObj();
+    const didCut = cut && some; // with nothing selected, ⌘X copies the whole image and keeps it
+    if (didCut && !deleteObj()) deleteSelection();
     try {
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-      flash(didCut ? 'Cut' : sel ? 'Copied' : 'Copied the whole image');
+      flash(didCut ? 'Cut' : some ? 'Copied' : 'Copied the whole image');
     } catch (err) {
       flash('Copy failed: ' + errText(err, 'the browser blocked clipboard access'), true);
     }
@@ -1059,6 +1191,7 @@
     if (why) { flash(`Can't paste: ${why}`, true); return; }
     commitText();
     dropSelection();
+    selectObj(null);
     if (S.pristine) { docOp(cloneCanvas(bmp)); fitZoom(true); return; }
     // Grow the canvas to fit the paste (each axis only as needed). No history entry yet:
     // finishFloat() records grow + paste as a single undo step.
@@ -1088,6 +1221,7 @@
   function transformDoc(kind) {
     commitText();
     dropSelection();
+    flattenObjs();
     const w = img.width, h = img.height;
     const dims = Core.rotateDims(w, h, kind === 'rotL' ? -90 : kind === 'rotR' ? 90 : 0);
     const c = makeCanvas(dims.w, dims.h), g = c.getContext('2d');
@@ -1167,6 +1301,7 @@
     if (w === img.width && h === img.height) { flash('Size unchanged'); return; }
     commitText();
     dropSelection();
+    flattenObjs();
     if (mode === 'scale') return scaleDoc(w, h);
     const c = makeCanvas(w, h), g = c.getContext('2d');
     g.fillStyle = S.secondary;
@@ -1238,6 +1373,7 @@
     setDoc(bmp, bmp.width, bmp.height);
     bmp.close();
     hist.clear();
+    objs = []; objSel = null; objVer++;
     Object.assign(S, { fileHandle: handle || null, fileName: file.name, pristine: false, trimWarned: false });
     fitZoom(true);
     updateChrome();
@@ -1250,14 +1386,13 @@
     const ext = name.split('.').pop().toLowerCase();
     return ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'webp' ? 'image/webp' : 'image/png';
   }
-  function encode(type) {
-    let src = img;
+  function encode(type, src = composite()) {
     if (type === 'image/jpeg') { // no alpha in JPEG: flatten onto white instead of black
-      src = makeCanvas(img.width, img.height);
-      const g = src.getContext('2d');
+      const c = makeCanvas(src.width, src.height), g = c.getContext('2d');
       g.fillStyle = '#ffffff';
-      g.fillRect(0, 0, src.width, src.height);
-      g.drawImage(img, 0, 0);
+      g.fillRect(0, 0, c.width, c.height);
+      g.drawImage(src, 0, 0);
+      src = c;
     }
     return new Promise((res, rej) => src.toBlob((b) => (b ? res(b) : rej(new Error('encode failed'))), type, 0.92));
   }
@@ -1275,8 +1410,9 @@
     const UPNG = img.width * img.height <= UPNG_MAX_PIXELS
       ? await lib('upng').catch(() => { used.pngMissed = true; return null; }) : null;
     // Read the pixels in the same tick as toBlob() snapshots them, so both encoders see one image.
-    const w = img.width, h = img.height, raw = UPNG && ctx.getImageData(0, 0, w, h).data.buffer;
-    const native = await encode('image/png');
+    const src = composite(); // with any objects drawn over the pixels
+    const w = src.width, h = src.height, raw = UPNG && src.getContext('2d').getImageData(0, 0, w, h).data.buffer;
+    const native = await encode('image/png', src);
     used.png = 'builtin';
     if (!UPNG || upngMs(w * h, native.size / raw.byteLength) > UPNG_BUDGET_MS) return native;
     try {
@@ -1500,6 +1636,37 @@
   });
 
   // ---------- pointer ----------
+  // Object editing under the pointer, for the select tool (any object) and the shape tools (the
+  // selected one; elsewhere they draw a new shape). Tolerances are screen px.
+  const objTol = () => 4 / S.zoom;
+  function objTarget(p) {
+    const o = selObj();
+    if (o && (S.tool === 'select' || SHAPES.has(S.tool))) {
+      const h = Core.handleAt(o, p, objTol() + 1 / S.zoom);
+      if (h) return { o, h };
+      if (Core.hitsObject(o, p, objTol())) return { o, h: null };
+    }
+    if (S.tool !== 'select') return null;
+    const i = Core.hitObject(objs, p, objTol());
+    return i < 0 ? null : { o: objs[i], h: null };
+  }
+  const HANDLE_CURSORS = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', a: 'move', b: 'move' };
+  function objCursor(p) {
+    const hit = p && objs.length && objTarget(p);
+    return hit ? (hit.h ? HANDLE_CURSORS[hit.h] : 'move') : '';
+  }
+  function objPointerDown(p) {
+    const hit = objTarget(p);
+    if (!hit) {
+      if (objSel != null && S.tool !== 'select') selectObj(null);
+      return false;
+    }
+    dropSelection();
+    selectObj(hit.o.id);
+    drag = { t: hit.h ? 'objsize' : 'objmove', h: hit.h, o: hit.o, p, before: objs };
+    return true;
+  }
+
   ov.addEventListener('pointerdown', (e) => {
     if (drag) return;
     if (e.button === 1 || (e.button === 0 && S.panKey)) {
@@ -1520,6 +1687,7 @@
     const color = right ? S.secondary : S.primary, alt = right ? S.primary : S.secondary;
     const t = S.tool;
     if (t !== 'select') dropSelection();
+    if (!right && objPointerDown(p)) { requestRender(); return; }
     switch (t) {
       case 'pencil': case 'eraser': {
         const c = t === 'eraser' ? S.secondary : color;
@@ -1544,6 +1712,7 @@
       case 'text': startText(ip, color); break;
       case 'select': {
         const rp = { x: clamp(Math.round(p.x), 0, img.width), y: clamp(Math.round(p.y), 0, img.height) };
+        if (objSel != null) selectObj(null);
         if (sel && inside(p, sel)) {
           // Lift on the first real movement, so a plain click inside the selection changes nothing.
           drag = { t: 'move', gx: p.x - sel.x, gy: p.y - sel.y, ox: sel.x, oy: sel.y, lifted: false };
@@ -1587,6 +1756,11 @@
       d.shift = e.shiftKey;
     } else if (d.t === 'select') {
       d.end = { x: clamp(Math.round(p.x), 0, img.width), y: clamp(Math.round(p.y), 0, img.height) };
+    } else if (d.t === 'objmove' || d.t === 'objsize') {
+      const dx = Math.round(p.x - d.p.x), dy = Math.round(p.y - d.p.y);
+      const o = d.t === 'objmove' ? Core.moveObj(d.o, dx, dy) : Core.resizeObj(d.o, d.h, dx, dy);
+      objs = d.before.map((x) => (x.id === o.id ? o : x)); // live; one undo step on release
+      objVer++;
     } else if (d.t === 'move') {
       if (!sel) { drag = null; return; }
       const nx = Math.round(p.x - d.gx), ny = Math.round(p.y - d.gy);
@@ -1621,6 +1795,7 @@
     if (d.t === 'canvas') { endCanvasDrag(false); return; }
     if (d.t === 'pan' || d.t === 'pencil' || d.t === 'eraser' || d.t === 'brush') return; // strokes finish normally
     drag = null;
+    if (d.t === 'objmove' || d.t === 'objsize') { objs = d.before; objVer++; }
     if (d.t === 'move' && sel) {
       if (d.lifted) { // undo the lift this drag made: restore the pixels, drop the float, no history entry
         dropOp(true);
@@ -1644,8 +1819,12 @@
       endOp();
     }
     else if (d.t === 'pencil' || d.t === 'eraser') endOp();
+    else if (d.t === 'objmove' || d.t === 'objsize') {
+      if (objs !== d.before) { const after = objs; objs = d.before; setObjs(after); }
+    }
     else if (SHAPES.has(d.t)) {
       if (d.t !== 'line' && d.start.x === d.end.x && d.start.y === d.end.y) { requestRender(); return; } // a click, not a shape
+      if (S.liveShapes) { addObj(shapeObj(d)); requestRender(); return; }
       beginOp();
       const b = shapeBox(d);
       touch(b.x, b.y, b.w, b.h);
@@ -1735,6 +1914,10 @@
         KeyC: () => copySel(false),
         KeyX: () => (e.shiftKey ? crop() : copySel(true)),
         Digit0: () => fitZoom(false),
+        KeyD: duplicateObj,
+        KeyE: flattenObjs,
+        BracketRight: () => reorderObj(1),
+        BracketLeft: () => reorderObj(-1),
         Equal: () => zoomStep(1),
         Minus: () => zoomStep(-1),
       }[k];
@@ -1756,17 +1939,17 @@
     if (k.startsWith('Arrow') && !onCanvas) return; // arrows on a focused control belong to that control
     switch (k) {
       case 'KeyX': swapColors(); break;
-      case 'Delete': case 'Backspace': if (!onCanvas) return; e.preventDefault(); deleteSelection(); break;
-      case 'Escape': dropSelection(); break;
-      case 'BracketLeft': setSize(Core.stepSize(S.sizes[S.tool], -1)); break;
-      case 'BracketRight': setSize(Core.stepSize(S.sizes[S.tool], 1)); break;
+      case 'Delete': case 'Backspace': if (!onCanvas) return; e.preventDefault(); if (!deleteObj()) deleteSelection(); break;
+      case 'Escape': if (objSel != null) selectObj(null); else dropSelection(); break;
+      case 'BracketLeft': setSize(Core.stepSize(S.sizes[S.tool], -1)); restyleObj(S.sizes[S.tool] != null ? { size: S.sizes[S.tool] } : {}); break;
+      case 'BracketRight': setSize(Core.stepSize(S.sizes[S.tool], 1)); restyleObj(S.sizes[S.tool] != null ? { size: S.sizes[S.tool] } : {}); break;
       case 'Equal': zoomStep(1); break;
       case 'Minus': zoomStep(-1); break;
       case 'Space': e.preventDefault(); S.panKey = true; ring.hidden = true; stage.classList.add('panning'); break;
-      case 'ArrowLeft': if (sel) { e.preventDefault(); nudge(-step, 0); } break;
-      case 'ArrowRight': if (sel) { e.preventDefault(); nudge(step, 0); } break;
-      case 'ArrowUp': if (sel) { e.preventDefault(); nudge(0, -step); } break;
-      case 'ArrowDown': if (sel) { e.preventDefault(); nudge(0, step); } break;
+      case 'ArrowLeft': if (selObj()) { e.preventDefault(); nudgeObj(-step, 0); } else if (sel) { e.preventDefault(); nudge(-step, 0); } break;
+      case 'ArrowRight': if (selObj()) { e.preventDefault(); nudgeObj(step, 0); } else if (sel) { e.preventDefault(); nudge(step, 0); } break;
+      case 'ArrowUp': if (selObj()) { e.preventDefault(); nudgeObj(0, -step); } else if (sel) { e.preventDefault(); nudge(0, -step); } break;
+      case 'ArrowDown': if (selObj()) { e.preventDefault(); nudgeObj(0, step); } else if (sel) { e.preventDefault(); nudge(0, step); } break;
     }
   });
   window.addEventListener('keyup', (e) => {
@@ -1864,9 +2047,11 @@
   }));
 
   $('#size').addEventListener('input', (e) => setSize(+e.target.value));
+  $('#size').addEventListener('change', () => restyleObj({ size: S.sizes[S.tool] })); // one undo step per drag
   $('#tolerance').addEventListener('input', (e) => { S.tolerance = +e.target.value; $('#tolOut').textContent = S.tolerance; });
   $('#smoothing').addEventListener('input', (e) => { S.smoothing = +e.target.value; $('#smoothOut').textContent = S.smoothing; });
-  document.querySelectorAll('input[name=fillMode]').forEach((r) => r.addEventListener('change', () => { S.fillMode = r.value; }));
+  document.querySelectorAll('input[name=fillMode]').forEach((r) => r.addEventListener('change', () => { S.fillMode = r.value; const o = selObj(); if (o && o.t !== 'line') restyleObj({ mode: r.value }); }));
+  $('#liveShapes').addEventListener('change', (e) => { S.liveShapes = e.target.checked; });
   $('#font').addEventListener('change', (e) => { S.font = e.target.value; if (textAt) placeTextBox(); });
   $('#fontSize').addEventListener('input', (e) => {
     const v = +e.target.value;
@@ -2081,5 +2266,5 @@
   if (window.requestIdleCallback) requestIdleCallback(preloadLibs, { timeout: 2000 }); else setTimeout(preloadLibs, 500);
 
   // Handle for scripted smoke tests in the console.
-  window.__paint = { S, hist, libState, used, decodeFile, get img() { return img; }, newDoc, flash, save, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, loadFile, setZoom, fitZoom, MAX_PIXELS, flushToData, get op() { return op; }, get pendingParts() { return [...pendingParts].filter((p) => p.cv).length; } };
+  window.__paint = { S, hist, libState, used, decodeFile, get img() { return img; }, newDoc, flash, save, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, loadFile, setZoom, fitZoom, MAX_PIXELS, flushToData, get op() { return op; }, get objs() { return objs; }, get objSel() { return objSel; }, flattenObjs, composite, get pendingParts() { return [...pendingParts].filter((p) => p.cv).length; } };
 })();
