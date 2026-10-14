@@ -36,7 +36,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       await page.mouse.up();
       await frame();
     }
-    const objs = () => P(() => window.__paint.objs.map(({ id, t, a, b, color, size, mode }) => ({ id, t, a, b, color, size, mode })));
+    const objs = () => P(() => window.__paint.objs.map(({ id, t, a, b, color, alt, size, mode }) => ({ id, t, a, b, color, alt, size, mode })));
     const objSel = () => P(() => window.__paint.objSel);
     const depth = () => P(() => window.__paint.hist.undoStack.length);
     // RGBA of what is seen at an image px: the pixels with the objects drawn over them.
@@ -180,7 +180,37 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.locator('#palette button[data-color="#22b14c"]').click();
     ok((await objs()).find((x) => x.id === line.id).color !== '#22b14c', 'so a colour picked for the next shape leaves it alone');
 
-    // ---- 12. new document clears objects ----
+    // ---- 12. streams of edits are one undo step, so they can't push pixel history out ----
+    await page.keyboard.press('KeyP');
+    await drag([[5, 190], [100, 190]]);
+    const strokeAt = await depth();
+    await page.keyboard.press('KeyS');
+    await page.mouse.click(...await at(150, 150));
+    ok(await objSel() === line.id, 'the line is picked again');
+    for (let i = 0; i < 150; i++) await page.keyboard.press('ArrowRight');
+    ok(await depth() === strokeAt + 1 && (await objs()).find((x) => x.id === line.id).a.x === 300, '150 arrow presses are one undo step');
+    await P(() => { const w = document.querySelector('#primary'); for (const c of ['#111111', '#222222', '#333333']) { w.value = c; w.dispatchEvent(new Event('input', { bubbles: true })); } });
+    ok(await depth() === strokeAt + 2 && (await objs()).find((x) => x.id === line.id).color === '#333333', 'a colour well drag (many input events) is one more step');
+    await page.keyboard.press('KeyX');
+    const sw = (await objs()).find((x) => x.id === line.id);
+    ok(await depth() === strokeAt + 3 && sw.color === '#ffffff' && sw.alt === '#333333', 'X swaps both colours of the object in one step');
+    await page.keyboard.press('Meta+KeyZ'); await page.keyboard.press('Meta+KeyZ'); await page.keyboard.press('Meta+KeyZ');
+    ok((await objs()).find((x) => x.id === line.id).a.x === 150, 'three undos undo swap, recolour and the whole nudge');
+    await page.keyboard.press('Meta+KeyZ');
+    ok(isWhite(await pixel(50, 190)), 'and the pencil stroke before them is still undoable');
+    // a nudge right after a save is a new step: the save point must not move with it
+    await P(() => window.__paint.hist.markSaved(window.__paint.hist.top()));
+    await page.keyboard.press('ArrowRight');
+    ok(await page.locator('#docDirty').isVisible(), 'a nudge after saving marks the document unsaved');
+
+    // ---- 13. with nothing to act on, ⌘D ⌘E ⌘[ ⌘] stay the browser's ----
+    await page.keyboard.press('Escape');
+    const prevented = (key) => P((key) => { const e = new KeyboardEvent('keydown', { key, metaKey: true, ctrlKey: true, bubbles: true, cancelable: true }); document.body.dispatchEvent(e); return e.defaultPrevented; }, key);
+    ok(!(await prevented('d')) && !(await prevented('[')) && !(await prevented(']')), '⌘D, ⌘[ and ⌘] pass through with no object selected');
+    await P(() => window.__paint.newDoc(100, 100));
+    ok(!(await prevented('e')), '⌘E passes through with no objects');
+
+    // ---- 14. new document clears objects ----
     await P(() => window.__paint.newDoc(100, 100));
     ok((await objs()).length === 0 && await objSel() === null, 'New clears the objects');
 

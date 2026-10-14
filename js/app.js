@@ -442,6 +442,7 @@
   // Each entry holds the pixels of the *other* state (before when on the undo stack, after when on
   // the redo stack); applying it swaps them with what's on the canvas, so one copy serves both ways.
   function applyHist(e) {
+    objRun = null;
     if (e.objs) { // obj entries, and a flatten's region entry
       const o = objs; objs = e.objs; e.objs = o; objVer++;
       if (!selObj()) objSel = null;
@@ -727,9 +728,10 @@
     $('#sizeOut').textContent = S.sizes[S.tool];
     $('#size').setAttribute('aria-valuetext', S.sizes[S.tool] + ' px');
   }
-  function setColor(which, hex) {
+  // key: as restyleObj's (a colour well streams input events); false leaves the selected object alone.
+  function setColor(which, hex, key) {
     S[which] = hex;
-    restyleObj(which === 'primary' ? { color: hex } : { alt: hex });
+    if (key !== false) restyleObj(which === 'primary' ? { color: hex } : { alt: hex }, key);
     $('#' + which).value = hex;
     if (textAt && which === 'primary') { textAt.color = hex; placeTextBox(); }
     document.querySelectorAll('#palette button').forEach((b) => {
@@ -953,8 +955,20 @@
   // ---------- objects ----------
   const selObj = () => (objSel == null ? null : objs.find((o) => o.id === objSel) || null);
   // Replace the object list as one undo step (the entry keeps the list before, and swaps on apply).
-  function setObjs(next) {
-    pushHist({ type: 'obj', objs, bytes: 128 * (objs.length + 1) });
+  // Edits that arrive as a stream (held arrows, a colour well being dragged, [ and ]) pass a key:
+  // while the newest entry is the one pushed with that key, they update in place, so a gesture is
+  // one step and can't push pixel history out. Not on the save point, or isDirty() would lie.
+  let objRun = null; // {key, entry} of the last keyed push
+  function setObjs(next, key) {
+    const top = hist.top();
+    if (key && objRun && objRun.key === key && objRun.entry === top && !hist.isClean()) {
+      objs = next; objVer++;
+      requestRender();
+      return;
+    }
+    const entry = { type: 'obj', objs, bytes: 128 * (objs.length + 1) };
+    pushHist(entry);
+    objRun = key ? { key, entry } : null;
     objs = next; objVer++;
     requestRender();
   }
@@ -976,11 +990,12 @@
     setObjs(objs.filter((x) => x !== o));
     return true;
   }
-  function nudgeObj(dx, dy) { const o = selObj(); if (o) setObjs(withObj(Core.moveObj(o, dx, dy))); }
-  function restyleObj(props) {
+  function nudgeObj(dx, dy) { const o = selObj(); if (o) setObjs(withObj(Core.moveObj(o, dx, dy)), 'nudge:' + o.id); }
+  // key: coalesce a stream of the same restyle (see setObjs).
+  function restyleObj(props, key) {
     const o = selObj();
     if (!o || Object.keys(props).every((k) => o[k] === props[k])) return;
-    setObjs(withObj({ ...o, ...props }));
+    setObjs(withObj({ ...o, ...props }), key && key + ':' + o.id);
   }
   function duplicateObj() {
     const o = selObj();
@@ -1914,10 +1929,11 @@
         KeyC: () => copySel(false),
         KeyX: () => (e.shiftKey ? crop() : copySel(true)),
         Digit0: () => fitZoom(false),
-        KeyD: duplicateObj,
-        KeyE: flattenObjs,
-        BracketRight: () => reorderObj(1),
-        BracketLeft: () => reorderObj(-1),
+        // Only with objects to act on; otherwise the browser keeps ⌘D (bookmark) and ⌘[ ⌘] (back, forward).
+        KeyD: selObj() && duplicateObj,
+        KeyE: objs.length && flattenObjs,
+        BracketRight: selObj() && (() => reorderObj(1)),
+        BracketLeft: selObj() && (() => reorderObj(-1)),
         Equal: () => zoomStep(1),
         Minus: () => zoomStep(-1),
       }[k];
@@ -1941,8 +1957,8 @@
       case 'KeyX': swapColors(); break;
       case 'Delete': case 'Backspace': if (!onCanvas) return; e.preventDefault(); if (!deleteObj()) deleteSelection(); break;
       case 'Escape': if (objSel != null) selectObj(null); else dropSelection(); break;
-      case 'BracketLeft': setSize(Core.stepSize(S.sizes[S.tool], -1)); restyleObj(S.sizes[S.tool] != null ? { size: S.sizes[S.tool] } : {}); break;
-      case 'BracketRight': setSize(Core.stepSize(S.sizes[S.tool], 1)); restyleObj(S.sizes[S.tool] != null ? { size: S.sizes[S.tool] } : {}); break;
+      case 'BracketLeft': setSize(Core.stepSize(S.sizes[S.tool], -1)); restyleObj(S.sizes[S.tool] != null ? { size: S.sizes[S.tool] } : {}, 'size'); break;
+      case 'BracketRight': setSize(Core.stepSize(S.sizes[S.tool], 1)); restyleObj(S.sizes[S.tool] != null ? { size: S.sizes[S.tool] } : {}, 'size'); break;
       case 'Equal': zoomStep(1); break;
       case 'Minus': zoomStep(-1); break;
       case 'Space': e.preventDefault(); S.panKey = true; ring.hidden = true; stage.classList.add('panning'); break;
@@ -2003,7 +2019,11 @@
   window.addEventListener('resize', () => updateStatus());
 
   // ---------- toolbar wiring ----------
-  function swapColors() { const p = S.primary; setColor('primary', S.secondary); setColor('secondary', p); }
+  function swapColors() {
+    const p = S.primary;
+    setColor('primary', S.secondary, false); setColor('secondary', p, false);
+    restyleObj({ color: S.primary, alt: S.secondary }); // one step
+  }
   const CMDS = {
     new: openNewDialog, open: openFile, save: () => save(false), saveAs: () => save(true),
     undo, redo, crop, resize: () => openResize('scale'), canvasSize: () => openResize('canvas'),
@@ -2047,7 +2067,7 @@
   }));
 
   $('#size').addEventListener('input', (e) => setSize(+e.target.value));
-  $('#size').addEventListener('change', () => restyleObj({ size: S.sizes[S.tool] })); // one undo step per drag
+  $('#size').addEventListener('change', () => restyleObj({ size: S.sizes[S.tool] }, 'size')); // on release; arrow keys coalesce
   $('#tolerance').addEventListener('input', (e) => { S.tolerance = +e.target.value; $('#tolOut').textContent = S.tolerance; });
   $('#smoothing').addEventListener('input', (e) => { S.smoothing = +e.target.value; $('#smoothOut').textContent = S.smoothing; });
   document.querySelectorAll('input[name=fillMode]').forEach((r) => r.addEventListener('change', () => { S.fillMode = r.value; const o = selObj(); if (o && o.t !== 'line') restyleObj({ mode: r.value }); }));
@@ -2058,8 +2078,8 @@
     if (v >= 1) { S.fontSize = clamp(Math.round(v), 6, 400); if (textAt) placeTextBox(); }
   });
   $('#fontSize').addEventListener('change', (e) => { e.target.value = S.fontSize; });
-  $('#primary').addEventListener('input', (e) => { setColor('primary', e.target.value); });
-  $('#secondary').addEventListener('input', (e) => { setColor('secondary', e.target.value); });
+  $('#primary').addEventListener('input', (e) => { setColor('primary', e.target.value, 'well1'); });
+  $('#secondary').addEventListener('input', (e) => { setColor('secondary', e.target.value, 'well2'); });
 
   const pal = $('#palette');
   for (const [c, name] of PALETTE) {

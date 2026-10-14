@@ -77,7 +77,10 @@ Everything is a node, including brush strokes (vector paths) and pasted bitmaps 
 2. **Document state:** `objs` (immutable objects, bottom→top) and `objSel` (an id). History gets an `obj` entry type, and the region entry gets an optional `objs`. Done.
 3. **Rendering:** objects drawn on `#preview` in `render()` (under shape previews and the brush tail, above a pixel float), keyed by a version counter, and an `#objsel` outline with 8 handles placed like `#ants`. Done.
 4. **Pointer:** the select tool hit-tests handles of the selected object, then objects, then falls back to the marquee. Shape tools edit the selected object when you press on it, and otherwise draw a new one. New `drag.t` values: `objmove`, `objsize`. Esc cancels both. Done.
-5. **Keyboard:** Delete, arrows (⇧ = 10), Esc to deselect, ⌘D duplicate, ⌘] / ⌘[ forward/backward, ⌘E flatten. Done in the spike, but not yet in `HELP`, `data-kbd` or the README.
+5. **Keyboard:** Delete, arrows (⇧ = 10), Esc to deselect, ⌘D duplicate, ⌘] / ⌘[ forward/backward, ⌘E flatten. Done, in the keydown handler and the README.
+   - The ⌘ keys act (and `preventDefault`) only when there is an object to act on, so with Editable off the browser keeps ⌘D (bookmark) and ⌘[ / ⌘] (back, forward).
+   - **Deliberate gap:** they aren't in the `?` dialog (`HELP`). It already fills 1280×800 exactly (smoke checks that it fits), and even one more row overflows. Shipping this needs a help-layout change, such as a third column.
+   - Streams of edits are coalesced into one undo step: held arrows, a colour-well drag, `[` `]` and X's swap. Otherwise holding an arrow would evict pixel undo steps through `History`'s 100-entry cap. Coalescing stops at the save point, so `isDirty()` stays true after a nudge.
 6. **Restyle:** colour 1 and 2, size and Outline/Fill/Both act on the selected object (Figma's properties panel, in the options bar). Done for the palette, colour wells, the size slider (one undo step per drag, on `change`) and the fill-mode radios.
 7. **Whole-image ops:** crop, resize, canvas size, rotate and flip flatten first. Done, but as two undo steps: flatten, then the op. Next: transform objects instead of flattening.
 8. **Export:** save, copy and the picker use the composite. Done; save builds a full-size composite only when objects exist.
@@ -86,6 +89,9 @@ Everything is a node, including brush strokes (vector paths) and pasted bitmaps 
 11. **Persistence chunk:** not done (see constraint 3).
 12. **Rotation, groups, multi-select, snapping, layers list:** not done. Multi-select (⇧-click, marquee over objects) is the next most useful step after text.
 13. **`task.md`:** "selection resize handles" is listed as out of scope for polish. Objects reopen it as feature work.
+
+14. **Keyboard access to objects:** objects can only be picked with the pointer. Tab-cycling through objects (Figma: Tab / ⇧Tab) is needed before this ships, given the accessibility work in `task.md`.
+15. **Turning Editable off** leaves existing objects live, and new shapes then bake into the pixels *under* them. That's consistent with the layer model, but worth a hint.
 
 ## The spike (`objects-spike` branch)
 
