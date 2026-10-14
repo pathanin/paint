@@ -278,6 +278,60 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     const t = (await objs()).at(-1);
     ok(Math.min(t.a.x, t.b.x) === 270 && Math.abs(t.b.x - t.a.x) === 4 && Math.abs(t.b.y - t.a.y) === 4, 'dragging its middle moves it, at the same size: ' + JSON.stringify([t.a, t.b]));
 
+    // ---- 18. Move tool hover: the shape a click would pick is outlined ----
+    await P(() => { const p = window.__paint; p.newDoc(300, 200); p.setZoom(2); });
+    await page.keyboard.press('KeyR');
+    await drag([[20, 20], [80, 60]]);
+    await page.keyboard.press('KeyO');
+    await drag([[120, 20], [180, 60]]);
+    await page.keyboard.press('KeyL');
+    await drag([[20, 120], [180, 160]]);
+    await page.keyboard.press('KeyV');
+    await page.keyboard.press('Escape');
+    const hov = () => P(() => { const h = document.querySelector('#objhover'); return h.hidden ? null : h.className; });
+    await page.mouse.move(...await at(35, 20)); await frame();
+    ok(await hov() === 'rect', 'hovering a rectangle with the Move tool outlines it');
+    await page.mouse.move(...await at(150, 20)); await frame();
+    ok(await hov() === 'ellipse', '...an ellipse gets a round outline');
+    await page.mouse.move(...await at(100, 140)); await frame();
+    ok(await hov() === 'line', '...a line a bar along it');
+    await page.mouse.move(...await at(250, 100)); await frame();
+    ok(await hov() === null, 'empty canvas: no outline');
+    await page.mouse.click(...await at(35, 20));
+    await page.mouse.move(...await at(35, 21)); await frame();
+    ok(await hov() === null, 'the selected shape is not outlined again (it has its handles)');
+    await page.keyboard.press('KeyR');
+    await page.mouse.move(...await at(150, 20)); await frame();
+    ok(await hov() === null, 'shape tools show no hover outline');
+
+    // ---- 19. ⌥-drag duplicates (Move tool); a ⌥-click doesn't ----
+    await page.keyboard.press('KeyV');
+    const n0 = (await objs()).length, d19 = await depth(), rectId = (await objs())[0].id;
+    await page.keyboard.down('Alt');
+    await page.mouse.move(...await at(35, 20)); await frame();
+    ok(await P(() => document.querySelector('#overlay').style.cursor) === 'copy', '⌥ over a shape shows the copy cursor');
+    await drag([[35, 20], [35, 90]]);
+    await page.keyboard.up('Alt');
+    o = await objs();
+    ok(o.length === n0 + 1 && o[1].t === 'rect' && o[1].a.y === 90 && o[0].a.y === 20, '⌥-drag leaves the original and moves a copy, just above it: ' + JSON.stringify(o.map((x) => [x.t, x.a])));
+    ok(await objSel() === o[1].id && await depth() === d19 + 1, 'the copy is selected; one undo step');
+    await page.keyboard.press('Meta+KeyZ');
+    ok((await objs()).length === n0, 'undo removes the copy');
+    await page.keyboard.down('Alt');
+    await page.mouse.click(...await at(35, 20));
+    await drag([[35, 20], [35, 90]], () => page.keyboard.press('Escape'));
+    await page.keyboard.up('Alt');
+    ok((await objs()).length === n0 && await objSel() === rectId && await depth() === d19, 'a ⌥-click and an Esc-cancelled ⌥-drag add nothing; the original stays selected');
+
+    // ---- 20. the help dialog lists the shape shortcuts, and still fits ----
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Shift+Slash');
+    await page.locator('#helpDlg[open]').waitFor();
+    const helpTxt = await page.locator('#helpBody').textContent();
+    ok(/Shapes/.test(helpTxt) && /Duplicate by dragging/.test(helpTxt) && /Flatten into pixels/.test(helpTxt) && /⌘E/.test(helpTxt), 'help has a Shapes section with ⌘D, ⌥-drag and ⌘E');
+    ok(await P(() => { const b = document.querySelector('#helpBody'); return b.scrollHeight <= b.clientHeight + 1 && b.children.length === 3; }), 'help fits at 1280×800 in three columns');
+    await page.keyboard.press('Escape');
+
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));
   } catch (e) {
     fails++; console.log('FAIL: threw', e);

@@ -23,6 +23,7 @@ A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, ann
 | ⌘C ⌘X ⌘V | Copy, cut, paste the selection. With nothing selected, ⌘C and ⌘X copy the whole image and leave it unchanged |
 | ⌘⇧X | Crop to selection |
 | ⌘D, ⌘] ⌘[, ⌘E | Shapes (line, rectangle, ellipse stay movable above your drawing): duplicate, bring forward / send backward, flatten all into pixels |
+| ⌥+drag (Move tool) | Duplicate a shape by dragging a copy off it |
 | Shift+R | Resize image (resample) |
 | Shift+C, or drag the handles on the right/bottom/corner | Canvas size (new area = color 2; Shift+drag corner keeps aspect; Esc cancels) |
 | ⌘O ⌘S ⌘⇧S Alt+N | Open, save, save as, new |

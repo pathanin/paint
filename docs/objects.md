@@ -82,7 +82,7 @@ Everything is a node, including brush strokes (vector paths) and pasted bitmaps 
 4. **Pointer:** the Move tool (V) hit-tests the handles of the selected object, then all objects (topmost first), and pans on empty canvas. The select tool is pixels only, so a marquee can start over a shape. Shape tools edit the selected object when you press on it, and otherwise draw a new one. New `drag.t` values: `objmove`, `objsize`. Esc cancels both. Done.
 5. **Keyboard:** Delete, arrows (⇧ = 10), Esc to deselect, ⌘D duplicate, ⌘] / ⌘[ forward/backward, ⌘E flatten. Done, in the keydown handler and the README.
    - The ⌘ keys act (and `preventDefault`) only when there is an object to act on, so with no shape selected the browser keeps ⌘D (bookmark) and ⌘[ / ⌘] (back, forward).
-   - **Deliberate gap:** they aren't in the `?` dialog (`HELP`). It already fills 1280×800 exactly (smoke checks that it fits), and even one more row overflows. Shipping this needs a help-layout change, such as a third column.
+   - The `?` dialog lists them in a Shapes section. It now has three columns (it filled 1280×800 exactly with two), and smoke still checks that it fits.
    - Streams of edits are coalesced into one undo step: held arrows, a colour-well drag, `[` `]` and X's swap. Otherwise holding an arrow would evict pixel undo steps through `History`'s 100-entry cap. Coalescing stops at the save point, so `isDirty()` stays true after a nudge.
 6. **Restyle:** colour 1 and 2, size and Outline/Fill/Both act on the selected object (Figma's properties panel, in the options bar). Done for the palette, colour wells, the size slider (one undo step per drag, on `change`) and the fill-mode radios.
 7. **Whole-image ops:** crop, resize, canvas size, rotate and flip flatten first. Done, but as two undo steps: flatten, then the op. Next: transform objects instead of flattening.
@@ -107,6 +107,8 @@ What works:
   - Nothing moves until the pointer has gone 3 screen px, so a click only selects, even at 25% where one screen px is 4 image px.
   - Shift (held from the start or pressed mid-drag) moves along one axis only, keeps a box's aspect ratio (a corner scales from the opposite corner, an edge about the middle) and snaps a line end to 0°, 45° or 90°.
   - A box side under 24 screen px drops its midpoint handles, and inside the shape a handle reaches at most a quarter of its short side, so the middle of a tiny box or a short line still moves it.
+- **Hover:** with the Move tool, the shape a click would pick is outlined (its box, its ellipse, or a bar along a line), as in Figma. The selected shape isn't, since it has its handles.
+- **⌥-drag** (Move tool) on a shape's body moves a copy, placed just above the original, as one undo step. A ⌥-click or an Esc-cancelled ⌥-drag adds nothing. ⌥ over a shape shows the copy cursor.
 - **Selecting:** with the Move tool (V), click any object. Dragging empty canvas pans, and a click there deselects. The select tool (S) only selects pixels, even on top of a shape.
 - **Keyboard:** Delete, arrows to nudge, Esc to deselect, ⌘D duplicate, ⌘] / ⌘[ to reorder, ⌘E to flatten all.
 - **Restyling:** palette, colour wells, size and Outline/Fill/Both act on the selected object.

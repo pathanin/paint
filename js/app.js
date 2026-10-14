@@ -122,7 +122,7 @@
 
   // Shortcut labels are written Mac-style in the markup; show Ctrl/Shift elsewhere.
   const MAC = /Mac|iPhone|iPad/.test(navigator.platform);
-  const keyLabel = (k) => (MAC ? k.replace(/Alt\+/g, '⌥')
+  const keyLabel = (k) => (MAC ? (k === 'Alt' ? '⌥' : k.replace(/Alt\+/g, '⌥'))
     : k === '⌘' ? 'Ctrl' : k === '⇧' ? 'Shift' : k === '⌫' ? 'Backspace'
     : k.replace(/⌘/g, 'Ctrl+').replace(/⇧([- ])/g, 'Shift$1').replace(/⇧/g, 'Shift+').replace(/\+\+$/, '+Plus').replace(/\+−$/, '+Minus'));
 
@@ -577,7 +577,10 @@
   function render() {
     rafPending = false;
     updateRing(hoverPt);
-    if (!drag) setProp(ov.style, 'cursor', objCursor(hoverPt) || (S.tool === 'move' ? 'grab' : '') || (S.tool === 'select' && sel && hoverPt && inside(hoverPt, sel) ? 'move' : ''));
+    const hit = !drag && hoverPt && objs.length ? objTarget(hoverPt) : null;
+    if (!drag) setProp(ov.style, 'cursor', objCursor(hit) || (S.tool === 'move' ? 'grab' : '') || (S.tool === 'select' && sel && hoverPt && inside(hoverPt, sel) ? 'move' : ''));
+    // The Move tool outlines the shape a click would pick (not the selected one: it has its own).
+    placeObjHover(hit && !hit.h && S.tool === 'move' && hit.o.id !== objSel ? hit.o : null);
     if (drag && drag.t === 'canvas') showGhost(drag);
     const shape = drag && SHAPES.has(drag.t);
     const marquee = drag && drag.t === 'select';
@@ -655,6 +658,27 @@
       el.hidden = !h;
       if (h) el.style.transform = `translate(${px(h.x) - x}px, ${px(h.y) - y}px)`;
     }
+  }
+
+  // Outline of the shape under the pointer (Move tool): its box, its ellipse, or a bar along a line.
+  const objHoverEl = $('#objhover');
+  let objHoverKey = '';
+  function placeObjHover(o) {
+    const z = S.zoom, d = devicePixelRatio, px = (v) => Math.round(v * z * d) / d;
+    const key = o ? [z, o.t, o.a.x, o.a.y, o.b.x, o.b.y].join() : '';
+    if (key === objHoverKey) return;
+    objHoverKey = key;
+    objHoverEl.hidden = !o;
+    if (!o) return;
+    objHoverEl.className = o.t;
+    if (o.t === 'line') {
+      const ax = o.a.x * z, ay = o.a.y * z, len = Math.hypot(o.b.x - o.a.x, o.b.y - o.a.y) * z;
+      Object.assign(objHoverEl.style, { left: ax + 'px', top: ay - 1 + 'px', width: len + 'px', height: '2px',
+        transform: `rotate(${Math.atan2(o.b.y - o.a.y, o.b.x - o.a.x)}rad)` });
+      return;
+    }
+    const r = Core.normRect(o.a, o.b), x = px(r.x), y = px(r.y);
+    Object.assign(objHoverEl.style, { left: x + 'px', top: y + 'px', width: px(r.x + r.w) - x + 'px', height: px(r.y + r.h) - y + 'px', transform: '' });
   }
 
   let cursor = null;  // integer image px under the pointer, for the status bar
@@ -1665,9 +1689,9 @@
     return i < 0 ? null : { o: objs[i], h: null };
   }
   const HANDLE_CURSORS = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', a: 'move', b: 'move' };
-  function objCursor(p) {
-    const hit = p && objs.length && objTarget(p);
-    return hit ? (hit.h ? HANDLE_CURSORS[hit.h] : 'move') : '';
+  let altHeld = false; // ⌥ over a shape with the Move tool: a drag duplicates it (copy cursor)
+  function objCursor(hit) {
+    return hit ? (hit.h ? HANDLE_CURSORS[hit.h] : altHeld && S.tool === 'move' ? 'copy' : 'move') : '';
   }
   function objPointerDown(p, e) {
     const hit = objTarget(p);
@@ -1678,7 +1702,9 @@
     dropSelection();
     selectObj(hit.o.id);
     // q: the pointer now. Nothing moves until it has gone 3 screen px (moved), so a click only selects.
-    drag = { t: hit.h ? 'objsize' : 'objmove', h: hit.h, o: hit.o, p, q: p, sx: e.clientX, sy: e.clientY, moved: false, shift: e.shiftKey, before: objs };
+    // ⌥-drag on the body (Move tool, as in Figma) moves a copy, put just above the original.
+    const dup = !hit.h && e.altKey && S.tool === 'move' ? { ...hit.o, id: nextObjId++ } : null;
+    drag = { t: hit.h ? 'objsize' : 'objmove', h: hit.h, o: dup || hit.o, src: hit.o, dup: !!dup, p, q: p, sx: e.clientX, sy: e.clientY, moved: false, shift: e.shiftKey, before: objs };
     return true;
   }
   // Apply an object drag: the live list (one undo step on release). Shift locks a move to its main
@@ -1688,7 +1714,11 @@
     let dx = Math.round(d.q.x - d.p.x), dy = Math.round(d.q.y - d.p.y);
     if (d.shift && d.t === 'objmove') { if (Math.abs(dx) >= Math.abs(dy)) dy = 0; else dx = 0; }
     const o = d.t === 'objmove' ? Core.moveObj(d.o, dx, dy) : Core.resizeObj(d.o, d.h, dx, dy, d.shift);
-    objs = d.before.map((x) => (x.id === o.id ? o : x));
+    if (d.dup) {
+      const i = d.before.indexOf(d.src) + 1;
+      objs = d.before.slice(0, i).concat(o, d.before.slice(i));
+      objSel = o.id;
+    } else objs = d.before.map((x) => (x.id === o.id ? o : x));
     objVer++;
   }
 
@@ -1757,6 +1787,7 @@
     const r = img.getBoundingClientRect();
     const p = imgPt(e, r);
     cursor = { x: Math.floor(p.x), y: Math.floor(p.y) };
+    altHeld = e.altKey;
     hoverPt = p;
     if (!drag) { requestRender(); return; }
     const d = drag;
@@ -1821,7 +1852,7 @@
     if (d.t === 'canvas') { endCanvasDrag(false); return; }
     if (d.t === 'pan' || d.t === 'pencil' || d.t === 'eraser' || d.t === 'brush') return; // strokes finish normally
     drag = null;
-    if (d.t === 'objmove' || d.t === 'objsize') { objs = d.before; objVer++; }
+    if (d.t === 'objmove' || d.t === 'objsize') { objs = d.before; objSel = d.src.id; objVer++; }
     if (d.t === 'move' && sel) {
       if (d.lifted) { // undo the lift this drag made: restore the pixels, drop the float, no history entry
         dropOp(true);
@@ -1913,6 +1944,7 @@
       hideTip();
       if (fromKeyboard) { e.preventDefault(); return; } // first Esc dismisses a focus tooltip (WCAG 1.4.13)
     }
+    if (e.key === 'Alt') { altHeld = true; requestRender(); }
     if (document.querySelector('dialog[open]') || isTyping(e.target)) return;
     if (drag) { // mid-gesture, only Esc (cancel) applies; other keys would pull state out from under it
       if (e.key === 'Escape') cancelDrag();
@@ -1976,6 +2008,7 @@
     }
   });
   window.addEventListener('keyup', (e) => {
+    if (e.key === 'Alt') { altHeld = false; requestRender(); }
     if (e.key === 'Shift' && drag && SHAPES.has(drag.t)) { drag.shift = false; requestRender(); }
     if (e.key === 'Shift' && drag && (drag.t === 'objmove' || drag.t === 'objsize')) { drag.shift = false; objDragUpdate(drag); requestRender(); }
     if (e.code === 'Space') { S.panKey = false; if (!drag || drag.t !== 'pan') stage.classList.remove('panning'); }
@@ -2199,13 +2232,14 @@
   function resetTransientKeys() {
     hideTip();
     S.panKey = false;
+    altHeld = false;
     if (!drag || drag.t !== 'pan') stage.classList.remove('panning');
   }
   window.addEventListener('blur', resetTransientKeys);
   document.addEventListener('visibilitychange', () => { if (document.hidden) resetTransientKeys(); });
 
   // ---------- help ----------
-  const HELP_COL = { Tools: 0, View: 0, File: 0, Edit: 1, Drawing: 1, Image: 1 }; // ~20 rows per column
+  const HELP_COL = { Tools: 0, View: 0, Edit: 1, File: 1, Image: 1, Drawing: 2, Shapes: 2 }; // ~17 rows per column
   const HELP = [
     ['Tools', [['Move shapes, pan', 'V'], ['Select', 'S'], ['Pencil', 'P'], ['Brush', 'B'], ['Eraser', 'E'], ['Fill', 'F'], ['Color picker', 'I'],
       ['Text', 'T'], ['Line', 'L'], ['Rectangle', 'R'], ['Ellipse', 'O']]],
@@ -2214,6 +2248,8 @@
     ['Drawing', [['Draw with color 1 / color 2', '~Left / right click'], ['Swap colors', 'X'], ['Smaller / bigger size', '[', ']'],
       ['Square, circle, 45° line', '⇧', '~drag'], ['Pick color 2 from a swatch', '~right-click / ⇧-click'],
       ['Apply text', 'Enter'], ['New line in text', '⇧Enter'], ['Cancel text', 'Esc']]],
+    ['Shapes', [['Duplicate', '⌘D'], ['Duplicate by dragging', 'Alt', '~drag'], ['Move straight, keep proportions', '⇧', '~drag'],
+      ['Bring forward / send backward', '⌘]', '⌘['], ['Flatten into pixels', '⌘E'], ['Delete', 'Delete', '⌫'], ['Nudge (⇧ = 10px)', '←', '↑', '→', '↓']]],
     ['Image', [['Resize image', '⇧R'], ['Canvas size', '⇧C'], ['Canvas: keep aspect', '⇧', '~drag corner'], ['Cancel canvas drag', 'Esc']]],
     ['File', [['New', 'Alt+N'], ['Open', '⌘O'], ['Save', '⌘S'], ['Save as', '⌘⇧S']]],
     ['View', [['Zoom in / out', '+', '−', '⌘+', '⌘−'], ['Zoom at pointer', '⌘', '~scroll'], ['Fit to window', '⇧1', '⌘0'], ['Actual size', '⇧0'],
@@ -2223,7 +2259,7 @@
     commitText();
     const body = $('#helpBody');
     if (!body.firstChild) {
-      const cols = [document.createElement('div'), document.createElement('div')];
+      const cols = [0, 1, 2].map(() => document.createElement('div'));
       body.append(...cols);
       HELP.forEach(([title, rows], i) => {
         const sec = document.createElement('section');
