@@ -381,7 +381,8 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.keyboard.press('Shift+Slash');
     await page.locator('#helpDlg[open]').waitFor();
     const helpTxt = await page.locator('#helpBody').textContent();
-    ok(/Shapes/.test(helpTxt) && /Duplicate by dragging/.test(helpTxt) && /Flatten into pixels/.test(helpTxt) && /⌘E/.test(helpTxt), 'help has a Shapes section with ⌘D, ⌥-drag and ⌘E');
+    const macHelp = await P(() => /Mac|iPhone|iPad/.test(navigator.platform)); // keyLabel(): Ctrl+ off a Mac (CI runs Linux)
+    ok(/Shapes/.test(helpTxt) && /Duplicate by dragging/.test(helpTxt) && /Flatten into pixels/.test(helpTxt) && (macHelp ? /⌘E/ : /Ctrl\+E/).test(helpTxt) && (macHelp ? /⌥/ : /Alt/).test(helpTxt), 'help has a Shapes section with ⌘D, ⌥-drag and ⌘E (platform key names)');
     ok(await P(() => { const b = document.querySelector('#helpBody'); return b.scrollHeight <= b.clientHeight + 1 && b.children.length === 3; }), 'help fits at 1280×800 in three columns');
     await page.keyboard.press('Escape');
 
