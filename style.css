@@ -331,6 +331,13 @@ button.labeled { padding: 0 9px 0 7px; }
   background: var(--panel); color: var(--text); font-size: 15px; font-weight: 500;
   box-shadow: var(--pop);
 }
+/* Entry only: on drop the image replaces it, so an exit would lag. */
+#dropZone { transition: opacity 150ms var(--ease-out); }
+@starting-style { #dropZone { opacity: 0; } }
+@media (prefers-reduced-motion: no-preference) {
+  #dropZone div { transition: transform 200ms var(--ease-out); }
+  @starting-style { #dropZone div { transform: scale(0.97); } }
+}
 #tip {
   position: fixed; z-index: 40; left: 0; top: 0;
   max-width: 260px;
