@@ -164,12 +164,64 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     ok((await objs()).length === 0 && isBlack(await pixel(80, 70)), 'redo flattens again');
     await page.keyboard.press('Meta+KeyZ');
 
-    // ---- 9. whole-image ops flatten first ----
-    await P(() => window.__paint.transformDoc('rotR'));
-    ok((await objs()).length === 0 && await P(() => document.querySelector('#image').width) === 200, 'rotate flattens, then rotates');
+    // ---- 9. whole-image ops carry the objects along: still objects, one undo step ----
+    const chash = () => P(() => {
+      const c = window.__paint.composite(), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let h = 2166136261;
+      for (let i = 0; i < d.length; i++) h = Math.imul(h ^ d[i], 16777619);
+      return `${c.width}x${c.height}:${h >>> 0}`;
+    });
+    // add an odd-width line and an even-width ellipse, so both pixel grids are covered
+    await P(() => { const p = window.__paint; p.S.sizes.line = 3; p.S.sizes.ellipse = 4; });
+    await page.keyboard.press('KeyL'); await drag([[150, 30], [250, 90]]);
+    await page.keyboard.press('KeyO'); await drag([[160, 110], [270, 180]]);
+    await page.keyboard.press('Escape');
+    const o9 = await objs(), seen9 = await chash(), pix9 = await hash();
+    for (const k of ['rotR', 'rotL', 'flipH', 'flipV']) {
+      await page.keyboard.press('Meta+KeyE');
+      await P((k) => { window.__paint.transformDoc(k); const c = window.__paint.composite(); window.__ref = c.getContext('2d').getImageData(0, 0, c.width, c.height); }, k);
+      await page.keyboard.press('Meta+KeyZ'); await page.keyboard.press('Meta+KeyZ');
+      const dk = await depth();
+      await P((k) => window.__paint.transformDoc(k), k);
+      ok((await objs()).length === 3 && await depth() === dk + 1, k + ' keeps the shapes as objects, in one undo step');
+      // What is seen vs flatten-then-transform. Not bit-exact: Chrome anti-aliases a shape's edge a
+      // little differently when it is drawn turned than when its pixels are turned (up to ~110 on a
+      // few edge pixels of the ellipse). A shape one pixel off would differ by 255 along the filled
+      // rectangle's crisp edges, so: no value differs by half the range, and the ink agrees.
+      const diff = await P(() => {
+        const c = window.__paint.composite(), A = window.__ref, B = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+        if (A.width !== B.width || A.height !== B.height) return { size: false };
+        let mx = 0, inkA = 0, inkB = 0;
+        for (let i = 0; i < A.data.length; i++) {
+          mx = Math.max(mx, Math.abs(A.data[i] - B.data[i]));
+          if ((i & 3) === 0) { inkA += 255 - A.data[i]; inkB += 255 - B.data[i]; }
+        }
+        return { size: true, mx, ink: Math.abs(inkA - inkB) / inkA };
+      });
+      ok(diff.size && diff.mx < 128 && diff.ink < 0.005, k + ': what is seen matches flatten-then-' + k + ' (same place, edges within anti-aliasing): ' + JSON.stringify(diff));
+      await page.keyboard.press('Meta+KeyZ');
+      ok(JSON.stringify(await objs()) === JSON.stringify(o9) && await hash() === pix9 && await chash() === seen9, 'undo puts the image and the shapes back');
+    }
+    await P(() => window.__paint.resizeDoc(400, 300, 'canvas', 'c'));
+    ok(JSON.stringify((await objs()).map((x) => x.a)) === JSON.stringify(o9.map((x) => ({ x: x.a.x + 50, y: x.a.y + 50 }))), 'canvas size (centred) shifts the shapes with the pixels');
     await page.keyboard.press('Meta+KeyZ');
+    await P(() => window.__paint.resizeDoc(150, 100, 'scale'));
+    await P(() => new Promise((r) => { const t = () => (window.__paint.img.width === 150 ? r() : setTimeout(t, 50)); t(); }));
+    o = await objs();
+    ok(o.length === 3 && o[0].a.x === 15 && o[0].size === 1 && o[2].size === 2, 'resize scales the shapes and their strokes (a 2 px edge at 31 is a 1 px one centred on 15.5): ' + JSON.stringify(o.map((x) => [x.a, x.size])));
     await page.keyboard.press('Meta+KeyZ');
-    ok((await objs()).length === 1 && await hash() === before, 'two undos: unrotated, then objects back');
+    ok(JSON.stringify(await objs()) === JSON.stringify(o9), 'undo restores them');
+    await page.keyboard.press('KeyS');
+    await drag([[140, 20], [299, 199]]);
+    await P(() => window.__paint.crop && document.querySelector('#cropBtn').click());
+    o = await objs();
+    ok(await P(() => window.__paint.img.width) === 159 && o.length === 2 && o.every((x) => x.t !== 'rect') && o[0].a.x === 9 && o[0].a.y === 9, 'crop (from 141, 21) shifts the shapes and drops one left wholly outside: ' + JSON.stringify(o.map((x) => [x.t, x.a])));
+    await page.keyboard.press('Meta+KeyZ');
+    ok(JSON.stringify(await objs()) === JSON.stringify(o9) && await hash() === pix9, 'one undo brings the crop and the dropped shape back');
+    // leave the rest of the run as it was: just the filled rectangle
+    await page.keyboard.press('Meta+KeyZ'); await page.keyboard.press('Meta+KeyZ');
+    await P(() => { const p = window.__paint; p.S.sizes.line = 2; p.S.sizes.ellipse = 2; });
+    ok((await objs()).length === 1 && await hash() === before, 'back to one shape');
 
     // ---- 10. a line object: two end handles ----
     await page.keyboard.press('KeyL');

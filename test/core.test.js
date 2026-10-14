@@ -819,3 +819,33 @@ test('resizeObj with keep: corners and edges keep the aspect ratio, line ends sn
   assert.deepEqual([l.a, l.b], [{ x: 0, y: 0 }, { x: 10, y: 10 }]);
   assert.deepEqual(Core.resizeObj(obj('line', { x: 0, y: 0 }, { x: 10, y: 0 }), 'a', 2, 1, true).a, { x: 2, y: 0 });
 });
+
+test('transformObj rotates and flips a shape with the image, on the pixel grid its stroke width uses', () => {
+  // 100 × 50 image. Odd widths draw on pixel centres (px x maps to W-1-x), even ones on pixel edges (W-x).
+  const odd = obj('rect', { x: 10, y: 5 }, { x: 30, y: 15 }, { size: 1 });
+  const even = { ...odd, size: 2 };
+  const box = (o) => Core.normRect(o.a, o.b);
+  assert.deepEqual(box(Core.transformObj(odd, 'flipH', 100, 50)), { x: 69, y: 5, w: 20, h: 10 });
+  assert.deepEqual(box(Core.transformObj(even, 'flipH', 100, 50)), { x: 70, y: 5, w: 20, h: 10 });
+  assert.deepEqual(box(Core.transformObj(odd, 'flipV', 100, 50)), { x: 10, y: 34, w: 20, h: 10 });
+  assert.deepEqual(box(Core.transformObj(odd, 'rotR', 100, 50)), { x: 34, y: 10, w: 10, h: 20 }); // into a 50 × 100 image
+  assert.deepEqual(box(Core.transformObj(even, 'rotL', 100, 50)), { x: 5, y: 70, w: 10, h: 20 });
+  for (const k of ['rotR', 'rotL', 'flipH', 'flipV']) { // four quarter turns, or two flips, are the identity
+    let o = odd, W = 100, H = 50;
+    for (let i = 0; i < (k.startsWith('rot') ? 4 : 2); i++) { o = Core.transformObj(o, k, W, H); if (k.startsWith('rot')) [W, H] = [H, W]; }
+    assert.deepEqual([o.a, o.b], [odd.a, odd.b], k);
+  }
+  const l = Core.transformObj(obj('line', { x: 0, y: 0 }, { x: 9, y: 0 }, { size: 3 }), 'rotR', 10, 10);
+  assert.deepEqual([l.a, l.b], [{ x: 9, y: 0 }, { x: 9, y: 9 }]); // a line keeps its direction (a to b)
+});
+
+test('scaleObj scales the geometry and the stroke width with a resize', () => {
+  const o = obj('rect', { x: 10, y: 10 }, { x: 30, y: 20 }, { size: 2 });
+  const s = Core.scaleObj(o, 2, 2);
+  assert.deepEqual([s.a, s.b, s.size], [{ x: 20, y: 20 }, { x: 60, y: 40 }, 4]);
+  const h = Core.scaleObj(o, 0.5, 0.5);
+  assert.deepEqual([h.a, h.b, h.size], [{ x: 5, y: 5 }, { x: 15, y: 10 }, 1]);
+  assert.equal(Core.scaleObj({ ...o, size: 1 }, 0.1, 0.1).size, 1); // never thinner than 1 px
+  assert.equal(Core.scaleObj(o, 3, 1).size, 3); // uneven scale: the geometric mean (√3 × 2)
+  assert.equal(o.a.x, 10); // o untouched
+});

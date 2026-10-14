@@ -547,9 +547,28 @@
     return { ...o, a: { x: x0, y: y0 }, b: { x: x1, y: y1 } };
   }
   const moveObj = (o, dx, dy) => ({ ...o, a: { x: o.a.x + dx, y: o.a.y + dy }, b: { x: o.b.x + dx, y: o.b.y + dy } });
+  // o after a whole-image rotate or flip of a W × H image (Core.rotateDims gives the new size). Odd
+  // stroke widths are drawn on pixel centres and even ones on pixel edges, so pixel x mirrors to
+  // W - 1 - x for the first and W - x for the second: the shape lands on the pixels the image's did.
+  function transformObj(o, kind, W, H) {
+    const k = o.size % 2 ? 1 : 0;
+    const f = kind === 'rotR' ? (p) => ({ x: H - k - p.y, y: p.x })
+      : kind === 'rotL' ? (p) => ({ x: p.y, y: W - k - p.x })
+      : kind === 'flipH' ? (p) => ({ x: W - k - p.x, y: p.y })
+      : (p) => ({ x: p.x, y: H - k - p.y });
+    return { ...o, a: f(o.a), b: f(o.b) };
+  }
+  // o after scaling the image by (sx, sy): the drawn geometry scales, and so does the stroke (by the
+  // geometric mean, at least 1 px), as it would have had the shape been pixels.
+  function scaleObj(o, sx, sy) {
+    const size = Math.max(1, Math.round(o.size * Math.sqrt(sx * sy)));
+    const off = o.size % 2 ? 0.5 : 0, off2 = size % 2 ? 0.5 : 0;
+    const f = (p) => ({ x: Math.round((p.x + off) * sx - off2), y: Math.round((p.y + off) * sy - off2) });
+    return { ...o, a: f(o.a), b: f(o.b), size };
+  }
 
   const Core = { rgbaToU32, colorDistance, floodMask, fillEdge, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History,
-    objBox, hitsObject, hitObject, objHandles, handleAt, resizeObj, moveObj };
+    objBox, hitsObject, hitObject, objHandles, handleAt, resizeObj, moveObj, transformObj, scaleObj };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core;
   else root.Core = Core;
 })(typeof window !== 'undefined' ? window : globalThis);

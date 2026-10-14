@@ -428,14 +428,22 @@
   }
   // Replace the whole document (crop/resize/rotate/...) as one undo step. The entry keeps the old
   // canvas element itself; undo and redo swap it with the live one. No pixels are copied.
-  function docOp(next) {
+  // map (crop, resize, rotate, flip): where each object goes in the new image. Objects stay objects;
+  // one left wholly outside the new image is dropped. The entry keeps the old list, so one undo
+  // restores both (applyHist swaps e.objs like an obj entry's).
+  function docOp(next, map) {
     commitText();
     commitSelection();
-    const before = img;
+    const before = img, objsBefore = objs;
     setDoc(next);
-    pushDocHist(before);
+    if (map && objs.length) {
+      objs = objs.map(map).filter((o) => { const b = Core.objBox(o); return b.x < img.width && b.y < img.height && b.x + b.w > 0 && b.y + b.h > 0; });
+      objVer++;
+      if (!selObj()) objSel = null;
+      pushDocHist(before, objsBefore);
+    } else pushDocHist(before);
   }
-  const pushDocHist = (before) => pushHist({ type: 'doc', canvas: before, bytes: before.width * before.height * 4 });
+  const pushDocHist = (before, objs) => pushHist({ type: 'doc', canvas: before, bytes: before.width * before.height * 4, ...(objs && { objs }) });
   function pushHist(e) {
     if (hist.push(e) && !S.trimWarned) {
       S.trimWarned = true;
@@ -448,7 +456,7 @@
   // the redo stack); applying it swaps them with what's on the canvas, so one copy serves both ways.
   function applyHist(e) {
     objRun = null;
-    if (e.objs) { // obj entries, and a flatten's region entry
+    if (e.objs) { // obj entries, a flatten's region entry, and a crop/resize/rotate/flip's doc entry
       const o = objs; objs = e.objs; e.objs = o; objVer++;
       if (!selObj()) objSel = null;
     }
@@ -1198,12 +1206,11 @@
   function crop() {
     if (!sel) { flash('Select an area to crop first'); return; }
     commitSelection();
-    flattenObjs();
     const r = Core.clampRect(sel, img.width, img.height);
     if (!r) { flash('Selection is outside the image'); return; }
     const c = makeCanvas(r.w, r.h);
     c.getContext('2d').drawImage(img, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
-    docOp(c);
+    docOp(c, (o) => Core.moveObj(o, -r.x, -r.y));
   }
 
   // ---------- clipboard ----------
@@ -1274,7 +1281,6 @@
   function transformDoc(kind) {
     commitText();
     dropSelection();
-    flattenObjs();
     const w = img.width, h = img.height;
     const dims = Core.rotateDims(w, h, kind === 'rotL' ? -90 : kind === 'rotR' ? 90 : 0);
     const c = makeCanvas(dims.w, dims.h), g = c.getContext('2d');
@@ -1283,7 +1289,7 @@
     else if (kind === 'flipH') { g.translate(w, 0); g.scale(-1, 1); }
     else if (kind === 'flipV') { g.translate(0, h); g.scale(1, -1); }
     g.drawImage(img, 0, 0);
-    docOp(c);
+    docOp(c, (o) => Core.transformObj(o, kind, w, h));
   }
   // Scale with pica's Lanczos-3 filter (in workers) when it loads; otherwise, or if it fails, the
   // built-in halving resampler. On a zone plate ÷3, Lanczos-3 had ~40% less moiré and kept low
@@ -1339,7 +1345,7 @@
         flash('Resize failed: the image changed while it ran', true);
         return;
       }
-      docOp(out);
+      docOp(out, (o) => Core.scaleObj(o, w / src.width, h / src.height));
       const note = fallbackNote(used.resizeMissed);
       if (note) flash(shown ? `Resized to ${w} × ${h} px. ${note}.` : note);
       else if (shown) flash(`Resized to ${w} × ${h} px`);
@@ -1354,14 +1360,13 @@
     if (w === img.width && h === img.height) { flash('Size unchanged'); return; }
     commitText();
     dropSelection();
-    flattenObjs();
     if (mode === 'scale') return scaleDoc(w, h);
     const c = makeCanvas(w, h), g = c.getContext('2d');
     g.fillStyle = S.secondary;
     g.fillRect(0, 0, w, h);
     const { dx, dy } = Core.anchorOffset(img.width, img.height, w, h, anchor);
     g.drawImage(img, dx, dy);
-    docOp(c);
+    docOp(c, (o) => Core.moveObj(o, dx, dy));
   }
 
   // ---------- file I/O ----------
