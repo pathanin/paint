@@ -222,6 +222,62 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await P(() => window.__paint.newDoc(100, 100));
     ok((await objs()).length === 0 && await objSel() === null, 'New clears the objects');
 
+    // ---- 15. a click doesn't move: a shape moves only once the pointer has gone 3 screen px ----
+    await P(() => { const p = window.__paint; p.newDoc(2000, 1500); p.setZoom(0.25); });
+    await page.keyboard.press('KeyR');
+    await drag([[200, 200], [1000, 800]]);
+    await page.keyboard.press('KeyV');
+    await page.keyboard.press('Escape');
+    const dj = await depth();
+    { const [x, y] = await at(200, 500); await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x + 1, y + 1); await page.mouse.up(); await frame(); }
+    o = await objs();
+    ok(o[0].a.x === 200 && o[0].a.y === 200 && await depth() === dj && await objSel() === o[0].id, 'at 25% a 1 px wobble while clicking selects the shape and leaves it put: ' + JSON.stringify(o[0].a));
+    await drag([[200, 500], [240, 500]]);
+    ok((await objs())[0].a.x === 240 && await depth() === dj + 1, 'a real drag still moves it, by the whole distance');
+
+    // ---- 16. Shift: axis-locked move, kept aspect ratio, 45° line ends; pressed or released mid-drag ----
+    await P(() => { const p = window.__paint; p.newDoc(300, 200); p.setZoom(2); });
+    await page.keyboard.press('KeyR');
+    await drag([[20, 20], [80, 60]]); // 60 × 40
+    await page.keyboard.press('KeyV');
+    await page.keyboard.down('Shift');
+    await drag([[20, 30], [60, 37]]); // on the outline, clear of the handles
+    await page.keyboard.up('Shift');
+    o = await objs();
+    ok(o[0].a.x === 60 && o[0].a.y === 20, '⇧-drag moves along the main axis only: ' + JSON.stringify(o[0].a));
+    await drag([[60, 30], [70, 42]], async () => {
+      await page.keyboard.down('Shift'); await frame();
+      const mid = (await objs())[0];
+      ok(mid.a.x === 60 && mid.a.y === 32, 'pressing ⇧ mid-drag locks the axis at once: ' + JSON.stringify(mid.a));
+      await page.keyboard.up('Shift'); await frame();
+      ok((await objs())[0].a.x === 70, 'releasing it frees the axis again');
+    });
+    o = await objs();
+    const box = () => ({ x: Math.min(o[0].a.x, o[0].b.x), y: Math.min(o[0].a.y, o[0].b.y), w: Math.abs(o[0].b.x - o[0].a.x), h: Math.abs(o[0].b.y - o[0].a.y) });
+    const b0 = box();
+    await page.keyboard.down('Shift');
+    await drag([[b0.x + b0.w, b0.y + b0.h], [b0.x + b0.w + 60, b0.y + b0.h + 5]]);
+    await page.keyboard.up('Shift');
+    o = await objs();
+    const b1 = box();
+    ok(b1.x === b0.x && b1.y === b0.y && b1.w === 120 && b1.h === 80, '⇧ on a corner handle keeps the aspect ratio: ' + JSON.stringify(b1));
+    await page.keyboard.press('KeyL');
+    await drag([[30, 180], [130, 180]]);
+    await page.keyboard.down('Shift');
+    await drag([[130, 180], [120, 95]]); // 40° from the other end
+    await page.keyboard.up('Shift');
+    const ln = (await objs()).at(-1);
+    ok(ln.t === 'line' && ln.b.x - ln.a.x === ln.a.y - ln.b.y, '⇧ on a line end snaps it to 45°: ' + JSON.stringify([ln.a, ln.b]));
+
+    // ---- 17. a tiny shape: corner handles only, and its middle moves it ----
+    await page.keyboard.press('KeyR');
+    await drag([[260, 20], [264, 24]]);
+    ok(await page.locator('#objsel .handle:not([hidden])').count() === 4, 'a tiny box shows only its 4 corner handles');
+    await page.keyboard.press('KeyV');
+    await drag([[262, 22], [272, 42]]);
+    const t = (await objs()).at(-1);
+    ok(Math.min(t.a.x, t.b.x) === 270 && Math.abs(t.b.x - t.a.x) === 4 && Math.abs(t.b.y - t.a.y) === 4, 'dragging its middle moves it, at the same size: ' + JSON.stringify([t.a, t.b]));
+
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));
   } catch (e) {
     fails++; console.log('FAIL: threw', e);

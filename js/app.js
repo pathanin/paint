@@ -641,7 +641,7 @@
   function placeObjSel(o) {
     const z = S.zoom, d = devicePixelRatio, px = (v) => Math.round(v * z * d) / d;
     const r = o && Core.normRect(o.a, o.b);
-    const key = o ? [o.t, px(r.x), px(r.y), px(r.x + r.w), px(r.y + r.h), px(o.a.x), px(o.a.y), px(o.b.x), px(o.b.y)].join() : '';
+    const key = o ? [z, o.t, px(r.x), px(r.y), px(r.x + r.w), px(r.y + r.h), px(o.a.x), px(o.a.y), px(o.b.x), px(o.b.y)].join() : '';
     if (key === objSelKey) return;
     objSelKey = key;
     objSelEl.hidden = !o;
@@ -649,7 +649,7 @@
     const x = px(r.x), y = px(r.y);
     Object.assign(objSelEl.style, { left: x + 'px', top: y + 'px', width: px(r.x + r.w) - x + 'px', height: px(r.y + r.h) - y + 'px' });
     objSelEl.classList.toggle('line', o.t === 'line');
-    const shown = new Map(Core.objHandles(o).map((h) => [h.h, h]));
+    const shown = new Map(Core.objHandles(o, objGap()).map((h) => [h.h, h]));
     for (const id of HANDLE_IDS) {
       const h = shown.get(id), el = handleEls[id];
       el.hidden = !h;
@@ -1651,11 +1651,12 @@
   // Object editing under the pointer, for the move tool (any object; elsewhere it pans) and the shape
   // tools (the selected one; elsewhere they draw a new shape). The select tool is for pixels only, so
   // a marquee can start over a shape. Tolerances are screen px.
-  const objTol = () => 4 / S.zoom;
+  // A box side shorter than objGap() shows no midpoint handle, so its corners stay apart.
+  const objTol = () => 4 / S.zoom, objGap = () => 24 / S.zoom;
   function objTarget(p) {
     const o = selObj();
     if (o && (S.tool === 'move' || SHAPES.has(S.tool))) {
-      const h = Core.handleAt(o, p, objTol() + 1 / S.zoom);
+      const h = Core.handleAt(o, p, objTol() + 1 / S.zoom, objGap());
       if (h) return { o, h };
       if (Core.hitsObject(o, p, objTol())) return { o, h: null };
     }
@@ -1668,7 +1669,7 @@
     const hit = p && objs.length && objTarget(p);
     return hit ? (hit.h ? HANDLE_CURSORS[hit.h] : 'move') : '';
   }
-  function objPointerDown(p) {
+  function objPointerDown(p, e) {
     const hit = objTarget(p);
     if (!hit) {
       if (objSel != null) selectObj(null);
@@ -1676,8 +1677,19 @@
     }
     dropSelection();
     selectObj(hit.o.id);
-    drag = { t: hit.h ? 'objsize' : 'objmove', h: hit.h, o: hit.o, p, before: objs };
+    // q: the pointer now. Nothing moves until it has gone 3 screen px (moved), so a click only selects.
+    drag = { t: hit.h ? 'objsize' : 'objmove', h: hit.h, o: hit.o, p, q: p, sx: e.clientX, sy: e.clientY, moved: false, shift: e.shiftKey, before: objs };
     return true;
+  }
+  // Apply an object drag: the live list (one undo step on release). Shift locks a move to its main
+  // axis, keeps a box's aspect ratio and snaps a line end to 45° (Core.resizeObj).
+  function objDragUpdate(d) {
+    if (!d.moved) return;
+    let dx = Math.round(d.q.x - d.p.x), dy = Math.round(d.q.y - d.p.y);
+    if (d.shift && d.t === 'objmove') { if (Math.abs(dx) >= Math.abs(dy)) dy = 0; else dx = 0; }
+    const o = d.t === 'objmove' ? Core.moveObj(d.o, dx, dy) : Core.resizeObj(d.o, d.h, dx, dy, d.shift);
+    objs = d.before.map((x) => (x.id === o.id ? o : x));
+    objVer++;
   }
 
   ov.addEventListener('pointerdown', (e) => {
@@ -1701,7 +1713,7 @@
     const color = right ? S.secondary : S.primary, alt = right ? S.primary : S.secondary;
     const t = S.tool;
     if (t !== 'select') dropSelection();
-    if (!right && objPointerDown(p)) { requestRender(); return; }
+    if (!right && objPointerDown(p, e)) { requestRender(); return; }
     switch (t) {
       case 'pencil': case 'eraser': {
         const c = t === 'eraser' ? S.secondary : color;
@@ -1772,10 +1784,9 @@
     } else if (d.t === 'select') {
       d.end = { x: clamp(Math.round(p.x), 0, img.width), y: clamp(Math.round(p.y), 0, img.height) };
     } else if (d.t === 'objmove' || d.t === 'objsize') {
-      const dx = Math.round(p.x - d.p.x), dy = Math.round(p.y - d.p.y);
-      const o = d.t === 'objmove' ? Core.moveObj(d.o, dx, dy) : Core.resizeObj(d.o, d.h, dx, dy);
-      objs = d.before.map((x) => (x.id === o.id ? o : x)); // live; one undo step on release
-      objVer++;
+      d.q = p; d.shift = e.shiftKey;
+      d.moved = d.moved || Math.hypot(e.clientX - d.sx, e.clientY - d.sy) >= 3;
+      objDragUpdate(d);
     } else if (d.t === 'move') {
       if (!sel) { drag = null; return; }
       const nx = Math.round(p.x - d.gx), ny = Math.round(p.y - d.gy);
@@ -1906,6 +1917,7 @@
     if (drag) { // mid-gesture, only Esc (cancel) applies; other keys would pull state out from under it
       if (e.key === 'Escape') cancelDrag();
       else if (e.key === 'Shift' && SHAPES.has(drag.t)) { drag.shift = true; requestRender(); }
+      else if (e.key === 'Shift' && (drag.t === 'objmove' || drag.t === 'objsize')) { drag.shift = true; objDragUpdate(drag); requestRender(); }
       if (e.code !== 'Space') e.preventDefault();
       return;
     }
@@ -1965,6 +1977,7 @@
   });
   window.addEventListener('keyup', (e) => {
     if (e.key === 'Shift' && drag && SHAPES.has(drag.t)) { drag.shift = false; requestRender(); }
+    if (e.key === 'Shift' && drag && (drag.t === 'objmove' || drag.t === 'objsize')) { drag.shift = false; objDragUpdate(drag); requestRender(); }
     if (e.code === 'Space') { S.panKey = false; if (!drag || drag.t !== 'pan') stage.classList.remove('panning'); }
   });
 

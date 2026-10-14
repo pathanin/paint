@@ -104,6 +104,9 @@ What works:
 
 - **Drawing:** a rectangle, ellipse or line becomes an object. It's selected right after drawing, with handles.
 - **Editing:** drag the body to move, drag a handle to resize (a line has two end handles), and Esc mid-drag cancels.
+  - Nothing moves until the pointer has gone 3 screen px, so a click only selects, even at 25% where one screen px is 4 image px.
+  - Shift (held from the start or pressed mid-drag) moves along one axis only, keeps a box's aspect ratio (a corner scales from the opposite corner, an edge about the middle) and snaps a line end to 0°, 45° or 90°.
+  - A box side under 24 screen px drops its midpoint handles, and inside the shape a handle reaches at most a quarter of its short side, so the middle of a tiny box or a short line still moves it.
 - **Selecting:** with the Move tool (V), click any object. Dragging empty canvas pans, and a click there deselects. The select tool (S) only selects pixels, even on top of a shape.
 - **Keyboard:** Delete, arrows to nudge, Esc to deselect, ⌘D duplicate, ⌘] / ⌘[ to reorder, ⌘E to flatten all.
 - **Restyling:** palette, colour wells, size and Outline/Fill/Both act on the selected object.

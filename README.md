@@ -15,7 +15,7 @@ A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, ann
 | Left / right click | Draw with color 1 / color 2 (right-click or Shift-click a swatch sets color 2) |
 | X | Swap colors |
 | [ ] | Smaller / bigger size |
-| Shift while dragging | Square / circle / 45° line |
+| Shift while dragging | Square / circle / 45° line. On a shape you move or resize: straight along one axis, same proportions, 45° line end |
 | ⌘Z / ⌘⇧Z (or ⌘Y) | Undo / redo |
 | ⌘A, Esc, Delete (or Backspace) | Select all, deselect (Esc also cancels a shape, selection, move or canvas drag, and dismisses an error message), clear selection to color 2 |
 | Enter, Shift+Enter, Esc (text tool) | Apply text, new line, cancel |

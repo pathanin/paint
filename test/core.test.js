@@ -786,3 +786,36 @@ test('resizeObj moves the dragged edges (and may flip); moveObj shifts both poin
   const m = Core.moveObj(o, -10, 5);
   assert.deepEqual([m.a, m.b, m.id, o.a.x], [{ x: 30, y: 35 }, { x: 0, y: 15 }, 1, 40]); // o untouched
 });
+
+test('a small box shows only its corner handles, and a press inside it moves rather than resizes', () => {
+  const tiny = obj('rect', { x: 0, y: 0 }, { x: 4, y: 4 });
+  assert.deepEqual(Core.objHandles(tiny, 6).map((h) => h.h), ['nw', 'ne', 'se', 'sw']);
+  assert.equal(Core.objHandles(obj('rect', { x: 0, y: 0 }, { x: 40, y: 4 }), 6).map((h) => h.h).join(), 'nw,ne,se,sw,n,s'); // wide: n and s fit
+  assert.equal(Core.objHandles(tiny).length, 8); // no gap: all of them
+  assert.equal(Core.handleAt(tiny, { x: 2, y: 2 }, 2.5, 6), null); // the middle: a move
+  assert.equal(Core.handleAt(tiny, { x: 3.5, y: 3.5 }, 2.5, 6), 'se'); // ...but its corner is still in reach
+  assert.equal(Core.handleAt(tiny, { x: 5, y: 5 }, 2.5, 6), 'se'); // outside: full reach
+  const small = obj('rect', { x: 0, y: 0 }, { x: 8, y: 8 });
+  assert.equal(Core.handleAt(small, { x: 4, y: -1 }, 2.5, 10), null); // a hidden n handle can't be hit
+  assert.equal(Core.handleAt(small, { x: 4, y: -1 }, 2.5), 'n');
+  const big = obj('rect', { x: 0, y: 0 }, { x: 100, y: 100 });
+  assert.equal(Core.handleAt(big, { x: 3, y: 3 }, 4, 6), 'nw'); // a big box keeps its full reach inward
+  const short = obj('line', { x: 0, y: 0 }, { x: 4, y: 0 });
+  assert.equal(Core.handleAt(short, { x: 2, y: 0 }, 2.5), null); // the middle of a short line moves it
+  assert.equal(Core.handleAt(short, { x: -2, y: 0 }, 2.5), 'a');
+});
+
+test('resizeObj with keep: corners and edges keep the aspect ratio, line ends snap to 45°', () => {
+  const o = obj('rect', { x: 10, y: 10 }, { x: 40, y: 30 }); // 30 × 20
+  const box = (x) => Core.normRect(x.a, x.b);
+  assert.deepEqual(box(Core.resizeObj(o, 'se', 30, 0, true)), { x: 10, y: 10, w: 60, h: 40 });
+  assert.deepEqual(box(Core.resizeObj(o, 'nw', 15, 15, true)), { x: 25, y: 20, w: 15, h: 10 });
+  assert.deepEqual(box(Core.resizeObj(o, 'se', -60, -40, true)), { x: -20, y: -10, w: 30, h: 20 }); // flipped past the anchor
+  assert.deepEqual(box(Core.resizeObj(o, 'e', 30, 7, true)), { x: 10, y: 0, w: 60, h: 40 }); // grows about the middle
+  assert.deepEqual(box(Core.resizeObj(o, 'n', 0, -20, true)), { x: -5, y: -10, w: 60, h: 40 });
+  const flat = obj('rect', { x: 0, y: 5 }, { x: 30, y: 5 });
+  assert.deepEqual(box(Core.resizeObj(flat, 'se', 10, 3, true)), { x: 0, y: 5, w: 40, h: 3 }); // no ratio to keep
+  const l = Core.resizeObj(obj('line', { x: 0, y: 0 }, { x: 10, y: 0 }), 'b', 0, 9, true);
+  assert.deepEqual([l.a, l.b], [{ x: 0, y: 0 }, { x: 10, y: 10 }]);
+  assert.deepEqual(Core.resizeObj(obj('line', { x: 0, y: 0 }, { x: 10, y: 0 }), 'a', 2, 1, true).a, { x: 2, y: 0 });
+});
