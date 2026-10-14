@@ -23,6 +23,7 @@
   --accent-fill: #2563eb; /* filled buttons: white text stays above 4.5:1 in both themes */
   --danger: #d92d20;
   --seg-on: #ffffff;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1); /* UI enter/exit */
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -340,6 +341,9 @@ button.labeled { padding: 0 9px 0 7px; }
   pointer-events: none;
 }
 #tip[hidden] { display: none; }
+/* Cold hover only (JS adds .fade); warm and keyboard tooltips stay instant. Opacity only: transform positions it. */
+#tip.fade { transition: opacity 125ms var(--ease-out); }
+@starting-style { #tip.fade { opacity: 0; } }
 #tip .hint { display: block; color: #b4b9c2; white-space: normal; }
 kbd {
   font: 500 11px/1 system-ui, -apple-system, sans-serif;

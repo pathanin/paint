@@ -168,6 +168,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.locator('[data-cmd="open"]').focus();
     await page.keyboard.press('ArrowLeft'); await page.waitForTimeout(50);
     ok(await page.locator('#tip').isVisible(), 'keyboard focus shows tooltip');
+    ok(await P(() => !document.querySelector('#tip').classList.contains('fade')), 'keyboard tooltip does not fade');
     await page.keyboard.press('Escape');
     ok(!(await page.locator('#tip').isVisible()), 'Esc hides tooltip');
     // undo via keyboard until disabled keeps focus in the toolbar
@@ -318,8 +319,13 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.locator('#size').click();
     ok(await P(() => document.activeElement === document.body), 'mouse on slider releases focus');
     // tooltip hides when pointer leaves the window
+    await page.waitForTimeout(450);
     await page.hover('[data-cmd="save"]'); await page.waitForTimeout(700);
     ok(await page.locator('#tip').isVisible(), 'hover tip shown');
+    ok(await P(() => document.querySelector('#tip').classList.contains('fade')), 'cold hover tip fades in');
+    await page.hover('[data-cmd="saveAs"]'); await page.waitForTimeout(50);
+    ok(await page.locator('#tip').isVisible(), 'warm hover tip shown at once');
+    ok(await P(() => !document.querySelector('#tip').classList.contains('fade')), 'warm hover tip does not fade');
     await page.evaluate(() => document.documentElement.dispatchEvent(new MouseEvent('mouseleave', { relatedTarget: null })));
     await page.mouse.move(640, -20);
     await page.waitForTimeout(50);
