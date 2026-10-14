@@ -197,7 +197,9 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     // download-save feedback
     await page.evaluate(() => { delete window.showSaveFilePicker; window.showSaveFilePicker = undefined; });
     await page.click('[data-cmd="save"]');
-    await page.waitForTimeout(150);
+    // Encoding is async and slower on CI runners: wait for the toast (a fixed 150 ms flaked there,
+    // and the late toast then failed the Save As check below too).
+    await page.waitForFunction(() => /Downloaded/.test(document.querySelector('#toast').textContent), null, { timeout: 5000 }).catch(() => {});
     ok(/Downloaded/.test(await page.locator('#toast').textContent()), 'download save shows toast');
     // round 11: Save As on the download path asks for a name; cancel downloads nothing
     {
