@@ -9,7 +9,10 @@ A thin spike of the recommended option is on branch `objects-spike`. See "The sp
 - Today every tool bakes pixels into `#image` at once, and undo stores pixels (tiles, fill masks, whole canvases). So "objects" can't be added to the select tool. It is a second document model next to the raster.
 - **Recommendation: an object layer above the raster (option B).** Rectangles, ellipses and lines (then text, then pasted images) become live objects drawn above the pixels. Pixel tools keep working on the raster underneath. Objects are flattened into pixels on an explicit Flatten (⌘E, as in Figma), and before any whole-image op.
 - **A full scene graph like Figma/OpenPencil (option C) is the wrong target here.** It would mean turning brush strokes into vector paths and dropping the raster model the app is built and tuned around. OpenPencil leans on CanvasKit (7 MB WASM) and Yoga WASM, and neither can load under the `file://`, no-build, no-`fetch` constraint.
-- **The open product questions** are what pixel tools do to objects (they draw *under* them), and whether objects should survive a save (that needs a native format; see Persistence).
+- **Decided (2026-10-14, by the user):**
+  - Pixel tools paint *under* objects, as built.
+  - Objects don't survive a save: the file holds the flattened picture, and reopening it gives plain pixels. No native format.
+  - Objects get their own tool: **Move (V)**. It picks, moves and resizes objects, and pans on empty canvas. The select tool is for pixels only.
 
 ## How Figma and OpenPencil model objects
 
@@ -40,7 +43,7 @@ The shape you just drew keeps handles until you click elsewhere or switch tools.
 
 ### B. Object layer above the raster (recommended)
 
-Objects persist in a z-ordered list drawn above `#image`. Any object can be selected at any time, with the select tool or by clicking the selected shape again with a shape tool.
+Objects persist in a z-ordered list drawn above `#image`. Any object can be selected at any time, with the Move tool or by clicking the selected shape again with a shape tool.
 
 - **Pixel tools** (pencil, brush, eraser, fill) act on the raster *under* the objects. The picker and copy sample what you see (raster + objects).
 - **Flatten** (⌘E) bakes every object into the raster as one undo step.
@@ -63,7 +66,7 @@ Everything is a node, including brush strokes (vector paths) and pasted bitmaps 
 
    B's rule is simple and predictable, and it needs a visible cue. Ideas: a one-time hint ("Shapes stay above your drawing · ⌘E to flatten"), and later a tiny layers list.
 2. **Fill** sees only the raster, so a fill can flow "under" a rectangle's outline. Following the composite would need a composite readback (400 MB at 100 MP) and would still write to the raster. Recommendation: keep fill raster-only, and say so in its hint.
-3. **Persistence.** PNG, JPEG and WebP can't hold objects. To keep them across a save, write a PNG whose pixels are the flattened composite (so every other app sees the right picture) plus a private ancillary chunk (`paNt`, or `iTXt` with a keyword) holding the object JSON and the raster *without* the objects (a nested PNG). On open, if the chunk is present, restore both. Costs and risks:
+3. **Persistence.** *Decided: not needed. Objects are gone on reopen.* What it would have taken, for the record: PNG, JPEG and WebP can't hold objects. To keep them across a save, write a PNG whose pixels are the flattened composite (so every other app sees the right picture) plus a private ancillary chunk (`paNt`, or `iTXt` with a keyword) holding the object JSON and the raster *without* the objects (a nested PNG). On open, if the chunk is present, restore both. Costs and risks:
    - The chunk must be spliced in after encoding (UPNG and `toBlob` both produce plain PNGs). That's ~40 lines of CRC32 and chunk splicing, which fits in `core.js` and is testable.
    - The file grows by the size of the base raster.
    - A file edited in another app keeps a stale chunk. Store a hash of the composite in the chunk, and ignore the chunk when the pixels no longer match.
@@ -76,7 +79,7 @@ Everything is a node, including brush strokes (vector paths) and pasted bitmaps 
 1. **`core.js`, test-first:** `objBox` (paint bounds), `hitObject` (topmost first; filled vs outline; tolerance), `objHandles` / `handleAt`, `moveObj`, `resizeObj` (a handle drag that may flip past the opposite edge). Done in the spike.
 2. **Document state:** `objs` (immutable objects, bottom→top) and `objSel` (an id). History gets an `obj` entry type, and the region entry gets an optional `objs`. Done.
 3. **Rendering:** objects drawn on `#preview` in `render()` (under shape previews and the brush tail, above a pixel float), keyed by a version counter, and an `#objsel` outline with 8 handles placed like `#ants`. Done.
-4. **Pointer:** the select tool hit-tests handles of the selected object, then objects, then falls back to the marquee. Shape tools edit the selected object when you press on it, and otherwise draw a new one. New `drag.t` values: `objmove`, `objsize`. Esc cancels both. Done.
+4. **Pointer:** the Move tool (V) hit-tests the handles of the selected object, then all objects (topmost first), and pans on empty canvas. The select tool is pixels only, so a marquee can start over a shape. Shape tools edit the selected object when you press on it, and otherwise draw a new one. New `drag.t` values: `objmove`, `objsize`. Esc cancels both. Done.
 5. **Keyboard:** Delete, arrows (⇧ = 10), Esc to deselect, ⌘D duplicate, ⌘] / ⌘[ forward/backward, ⌘E flatten. Done, in the keydown handler and the README.
    - The ⌘ keys act (and `preventDefault`) only when there is an object to act on, so with Editable off the browser keeps ⌘D (bookmark) and ⌘[ / ⌘] (back, forward).
    - **Deliberate gap:** they aren't in the `?` dialog (`HELP`). It already fills 1280×800 exactly (smoke checks that it fits), and even one more row overflows. Shipping this needs a help-layout change, such as a third column.
@@ -86,7 +89,7 @@ Everything is a node, including brush strokes (vector paths) and pasted bitmaps 
 8. **Export:** save, copy and the picker use the composite. Done; save builds a full-size composite only when objects exist.
 9. **Text as an object:** not done. `commitText()` would create a TEXT object (string, font, size, colour, position) instead of baking, and clicking it with the text tool would reopen the box. The baseline maths (`textBaseline()`) carries over unchanged.
 10. **Pasted images as objects:** not done. This would reuse `sel.float`'s canvas as an IMAGE object, so a paste could be moved and scaled later, which is the most Figma-like win for screenshots.
-11. **Persistence chunk:** not done (see constraint 3).
+11. **Persistence chunk:** dropped (decided: objects are gone on reopen).
 12. **Rotation, groups, multi-select, snapping, layers list:** not done. Multi-select (⇧-click, marquee over objects) is the next most useful step after text.
 13. **`task.md`:** "selection resize handles" is listed as out of scope for polish. Objects reopen it as feature work.
 
@@ -101,12 +104,12 @@ What works with Editable on:
 
 - **Drawing:** a rectangle, ellipse or line becomes an object. It's selected right after drawing, with handles.
 - **Editing:** drag the body to move, drag a handle to resize (a line has two end handles), and Esc mid-drag cancels.
-- **Selecting:** with the select tool, click any object. Clicking empty canvas falls back to the marquee.
+- **Selecting:** with the Move tool (V), click any object. Dragging empty canvas pans, and a click there deselects. The select tool (S) only selects pixels, even on top of a shape.
 - **Keyboard:** Delete, arrows to nudge, Esc to deselect, ⌘D duplicate, ⌘] / ⌘[ to reorder, ⌘E to flatten all.
 - **Restyling:** palette, colour wells, size and Outline/Fill/Both act on the selected object.
 - **Undo/redo:** every object edit is undoable. Flatten undoes as one step (pixels and objects together).
 - **Composite:** save, copy and the picker include objects. Crop, resize, rotate and flip flatten first.
 
-Found while building it: if the shape tools keep the last object selected, setting up the *next* shape (picking a colour or style) restyles the last one, and a drag that starts inside it moves it instead of drawing. So the selection now survives only the select tool and the object's own shape tool. Figma avoids this by switching back to Move after each shape. Paint keeps the tool, so this rule stands in for that switch.
+Found while building it: if the shape tools keep the last object selected, setting up the *next* shape (picking a colour or style) restyles the last one, and a drag that starts inside it moves it instead of drawing. So the selection now survives only the Move tool and the object's own shape tool. Figma avoids this by switching back to Move after each shape. Paint keeps the tool, so this rule stands in for that switch.
 
 Verification: unit tests in `test/core.test.js` (object geometry) and an e2e check, `test/e2e/objects.js`.

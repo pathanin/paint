@@ -33,7 +33,7 @@
   } });
   const SHAPES = new Set(['line', 'rect', 'ellipse']);
   const TOOL_KEYS = {
-    KeyS: 'select', KeyP: 'pencil', KeyB: 'brush', KeyE: 'eraser', KeyF: 'fill',
+    KeyV: 'move', KeyS: 'select', KeyP: 'pencil', KeyB: 'brush', KeyE: 'eraser', KeyF: 'fill',
     KeyI: 'picker', KeyT: 'text', KeyL: 'line', KeyR: 'rect', KeyO: 'ellipse',
   };
   const PALETTE = [
@@ -578,7 +578,7 @@
   function render() {
     rafPending = false;
     updateRing(hoverPt);
-    if (!drag) setProp(ov.style, 'cursor', objCursor(hoverPt) || (S.tool === 'select' && sel && hoverPt && inside(hoverPt, sel) ? 'move' : ''));
+    if (!drag) setProp(ov.style, 'cursor', objCursor(hoverPt) || (S.tool === 'move' ? 'grab' : '') || (S.tool === 'select' && sel && hoverPt && inside(hoverPt, sel) ? 'move' : ''));
     if (drag && drag.t === 'canvas') showGhost(drag);
     const shape = drag && SHAPES.has(drag.t);
     const marquee = drag && drag.t === 'select';
@@ -703,10 +703,10 @@
   function setTool(t) {
     commitText();
     if (t !== 'select') dropSelection();
-    // The selection stays only for tools that edit it: select, and the object's own shape tool (its
+    // The selection stays only for tools that edit it: move, and the object's own shape tool (its
     // size and style controls). Otherwise setting up the next shape would restyle the last one.
     const so = selObj();
-    if (so && t !== 'select' && t !== so.t) selectObj(null);
+    if (so && t !== 'move' && t !== so.t) selectObj(null);
     if (t === 'picker' && S.tool !== 'picker') S.prevTool = S.tool;
     S.tool = t;
     stage.dataset.tool = t;
@@ -1651,17 +1651,18 @@
   });
 
   // ---------- pointer ----------
-  // Object editing under the pointer, for the select tool (any object) and the shape tools (the
-  // selected one; elsewhere they draw a new shape). Tolerances are screen px.
+  // Object editing under the pointer, for the move tool (any object; elsewhere it pans) and the shape
+  // tools (the selected one; elsewhere they draw a new shape). The select tool is for pixels only, so
+  // a marquee can start over a shape. Tolerances are screen px.
   const objTol = () => 4 / S.zoom;
   function objTarget(p) {
     const o = selObj();
-    if (o && (S.tool === 'select' || SHAPES.has(S.tool))) {
+    if (o && (S.tool === 'move' || SHAPES.has(S.tool))) {
       const h = Core.handleAt(o, p, objTol() + 1 / S.zoom);
       if (h) return { o, h };
       if (Core.hitsObject(o, p, objTol())) return { o, h: null };
     }
-    if (S.tool !== 'select') return null;
+    if (S.tool !== 'move') return null;
     const i = Core.hitObject(objs, p, objTol());
     return i < 0 ? null : { o: objs[i], h: null };
   }
@@ -1673,7 +1674,7 @@
   function objPointerDown(p) {
     const hit = objTarget(p);
     if (!hit) {
-      if (objSel != null && S.tool !== 'select') selectObj(null);
+      if (objSel != null) selectObj(null);
       return false;
     }
     dropSelection();
@@ -1684,7 +1685,8 @@
 
   ov.addEventListener('pointerdown', (e) => {
     if (drag) return;
-    if (e.button === 1 || (e.button === 0 && S.panKey)) {
+    if (e.button === 1 || (e.button === 0 && S.panKey) || (e.button === 0 && S.tool === 'move' && !objTarget(imgPt(e)))) {
+      if (S.tool === 'move' && objSel != null) selectObj(null); // a click on empty canvas deselects
       e.preventDefault();
       ov.setPointerCapture(e.pointerId);
       drag = { t: 'pan', sx: e.clientX, sy: e.clientY, sl: vp.scrollLeft, st: vp.scrollTop };
@@ -1725,6 +1727,7 @@
         drag = { t, start: ip, end: ip, shift: e.shiftKey, color, alt };
         break;
       case 'text': startText(ip, color); break;
+      case 'move': break; // right button: nothing
       case 'select': {
         const rp = { x: clamp(Math.round(p.x), 0, img.width), y: clamp(Math.round(p.y), 0, img.height) };
         if (objSel != null) selectObj(null);
@@ -2200,7 +2203,7 @@
   // ---------- help ----------
   const HELP_COL = { Tools: 0, View: 0, File: 0, Edit: 1, Drawing: 1, Image: 1 }; // ~20 rows per column
   const HELP = [
-    ['Tools', [['Select', 'S'], ['Pencil', 'P'], ['Brush', 'B'], ['Eraser', 'E'], ['Fill', 'F'], ['Color picker', 'I'],
+    ['Tools', [['Move shapes, pan', 'V'], ['Select', 'S'], ['Pencil', 'P'], ['Brush', 'B'], ['Eraser', 'E'], ['Fill', 'F'], ['Color picker', 'I'],
       ['Text', 'T'], ['Line', 'L'], ['Rectangle', 'R'], ['Ellipse', 'O']]],
     ['Edit', [['Undo', '⌘Z'], ['Redo', '⌘⇧Z', '⌘Y'], ['Select all', '⌘A'], ['Deselect / dismiss error', 'Esc'], ['Cancel shape, selection or move drag', 'Esc'], ['Clear selection to color 2', 'Delete', '⌫'],
       ['Nudge selection (⇧ = 10px)', '←', '↑', '→', '↓'], ['Copy, cut, paste', '⌘C', '⌘X', '⌘V'], ['Crop to selection', '⌘⇧X']]],

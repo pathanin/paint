@@ -229,6 +229,7 @@ button.labeled { padding: 0 9px 0 7px; }
 #ants[hidden] { display: none; }
 #overlay { touch-action: none; cursor: crosshair; }
 #stage[data-tool=text] #overlay { cursor: text; }
+#stage[data-tool=move] #overlay { cursor: default; }
 #stage.panning #overlay { cursor: grab; }
 #stage.panning.dragging #overlay { cursor: grabbing; }
 #ring {

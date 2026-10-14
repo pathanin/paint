@@ -11,7 +11,7 @@ A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, ann
 
 | Keys | Action |
 |---|---|
-| S P B E F I T L R O | Select, Pencil, Brush, Eraser, Fill, Picker, Text, Line, Rect, Ellipse |
+| V S P B E F I T L R O | Move (editable shapes; drag empty canvas to pan), Select, Pencil, Brush, Eraser, Fill, Picker, Text, Line, Rect, Ellipse |
 | Left / right click | Draw with color 1 / color 2 (right-click or Shift-click a swatch sets color 2) |
 | X | Swap colors |
 | [ ] | Smaller / bigger size |
