@@ -477,7 +477,7 @@
       if (k < 1 && filled) return true;
       return k === 0 ? Math.min(rx, ry) <= half : Math.abs((k - 1) * c / k) <= half; // radial distance to the edge
     }
-    if (o.t === 'ellipse') return segDist(p, { x: r.x, y: r.y }, { x: r.x + r.w, y: r.y + r.h }); // flat: a line
+    if (o.t === 'ellipse') return segDist(p, { x: r.x, y: r.y }, { x: r.x + r.w, y: r.y + r.h }) <= half; // flat: a line
     const dx = Math.max(r.x - p.x, p.x - r.x - r.w), dy = Math.max(r.y - p.y, p.y - r.y - r.h);
     if (dx <= 0 && dy <= 0) return filled || -Math.max(dx, dy) <= half; // inside: distance to the nearest edge
     return Math.hypot(Math.max(dx, 0), Math.max(dy, 0)) <= half;

@@ -748,7 +748,10 @@ test('hitsObject: ellipse and line', () => {
   assert.ok(!Core.hitsObject(l, { x: 50, y: 60 }, 1));
   assert.ok(!Core.hitsObject(l, { x: 110, y: 110 }, 1)); // past the end
   assert.ok(Core.hitsObject(obj('line', { x: 5, y: 5 }, { x: 5, y: 5 }), { x: 6, y: 5 }, 0)); // a dot
-  assert.ok(Core.hitsObject(obj('ellipse', { x: 0, y: 10 }, { x: 40, y: 10 }), { x: 20, y: 11 }, 0)); // flat ellipse
+  const flat = obj('ellipse', { x: 0, y: 10 }, { x: 40, y: 10 });
+  assert.equal(Core.hitsObject(flat, { x: 20, y: 11 }, 0), true); // flat ellipse: a line
+  assert.equal(Core.hitsObject(flat, { x: 20, y: 300 }, 2), false); // ...not everything around it
+  assert.equal(Core.hitsObject(obj('ellipse', { x: 10, y: 0 }, { x: 10, y: 40 }), { x: 200, y: 20 }, 2), false);
 });
 
 test('hitObject returns the topmost hit (last in the list) or -1', () => {
