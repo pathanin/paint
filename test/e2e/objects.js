@@ -49,18 +49,8 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await frame();
     const blank = await hash();
 
-    // ---- Editable is off by default: a rectangle is pixels at once ----
-    await page.keyboard.press('KeyR');
-    ok(!(await page.locator('#liveShapes').isChecked()), 'Editable is off by default');
-    await drag([[10, 10], [40, 30]]);
-    ok((await objs()).length === 0 && isBlack(await pixel(10, 20)), 'with Editable off the rectangle is baked into the pixels');
-    await page.keyboard.press('Meta+KeyZ');
-    ok(await hash() === blank, 'undo removes it');
-
     // ---- 1. draw: an object, not pixels; selected, with handles ----
-    await page.locator('#liveShapes').check();
-    await frame();
-    ok(await P(() => window.__paint.S.liveShapes), 'the Editable checkbox turns live shapes on');
+    await page.keyboard.press('KeyR');
     const d0 = await depth();
     await drag([[20, 20], [100, 80]]);
     let o = await objs();

@@ -75,7 +75,10 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       await page.mouse.move(b.x + 1100 * z, b.y + 600 * z, { steps: 5 });
       ok(await colorAt(1500, 1000) === 'white', `${tag}: shrunk preview leaves nothing behind`);
       await page.mouse.up();
-      ok(await colorAt(1050, 550) === 'black', `${tag}: rect committed to the image`);
+      ok(await colorAt(1050, 550) === 'black', `${tag}: rect stays on screen after release (a shape object)`);
+      await P(() => window.__paint.flattenObjs());
+      await frame();
+      ok(await colorAt(1050, 550) === 'black', `${tag}: and in the image once flattened`);
       // the window grows with no scroll or pointer move: the newly visible part of a float is drawn
       await P(() => { const p = window.__paint; p.setTool('select'); p.newDoc(3000, 2000); p.S.pristine = false; p.setZoom(1);
         const c = document.createElement('canvas'); c.width = 3000; c.height = 2000; const g = c.getContext('2d'); g.fillStyle = 'red'; g.fillRect(0, 0, 3000, 2000); p.pasteImage(c); });

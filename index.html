@@ -90,7 +90,6 @@
       <label><input type="radio" name="fillMode" value="fill"><span>Fill</span></label>
       <label data-tip="Outline + fill" data-hint="Fills with color 2"><input type="radio" name="fillMode" value="both"><span>Both</span></label>
     </div>
-    <label data-for="line rect ellipse" data-tip="Editable shapes" data-hint="Shapes stay movable objects above the pixels · ⌘E flattens"><input type="checkbox" id="liveShapes"> Editable</label>
     <label data-for="brush" data-tip="Smoothing" data-hint="Steadies wobbly strokes · 0 follows the pointer exactly">Smoothing
       <input type="range" id="smoothing" min="0" max="10" value="2" aria-label="Smoothing"><output id="smoothOut">2</output></label>
     <label data-for="fill" data-tip="Tolerance" data-hint="How similar a color must be to get filled">Tolerance
@@ -108,7 +107,7 @@
     <span class="hint" data-for="fill">Click: color 1 · right-click: color 2</span>
     <span class="hint" data-for="picker">Click: color 1 · right-click: color 2</span>
     <span class="hint" data-for="text">Click where the text should start</span>
-    <span class="hint" data-for="line rect ellipse">Hold Shift to constrain</span>
+    <span class="hint" data-for="line rect ellipse">Shift constrains · shapes stay movable (V) until ⌘E flattens them</span>
   </div>
   <div class="colors">
     <div class="well">

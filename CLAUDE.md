@@ -43,9 +43,10 @@ When smoke fails, read the **first** `FAIL` line, because later failures often c
 - **`js/core.js`** holds pure, DOM-free helpers that are exported as `window.Core` and through `module.exports` for Node. They cover flood fill, Bresenham line, rect/resize/anchor math, the smoothed brush path (`Stroke`) and `History`. `History` is the bounded undo stack: it evicts by count and bytes and tracks a save point with `markSaved()`/`isClean()`. `push()` returns the number of entries it evicted. Anything testable without a canvas belongs here, test-first.
 - **`js/app.js`** is one IIFE organised into `// ---------- section ----------` blocks: document & history, view, tools, text, selection, clipboard, transforms, file I/O, dialogs, handles, pointer, keyboard, toolbar wiring, tooltips, help, boot. The core state lives in module locals:
   - `S` holds settings and the document (tool, colours, sizes, zoom, file handle and name, `pristine`).
-  - `drag` is the in-progress pointer gesture, keyed by `drag.t`: `pencil`, `brush`, `move`, `select`, `canvas`, `pan`, and so on.
+  - `drag` is the in-progress pointer gesture, keyed by `drag.t`: `pencil`, `brush`, `move`, `select`, `canvas`, `pan`, `objmove`, `objsize` (the Move tool, V, or a shape tool on its own selected shape), and so on.
   - `sel` is the selection; `sel.float` is a lifted or pasted canvas that hasn't been committed yet.
   - `textAt` is non-null while the text box is open.
+  - `objs` is the list of shape objects (line, rect, ellipse), bottom to top, drawn above `#image` on `#preview`; `objSel` is the selected one's id. Objects are immutable (edits make a new one with the same id) and become pixels only through `flattenObjs()` (⌘E, and before crop, resize, rotate and flip). Pixel tools paint under them; save, copy and the picker use `composite()`. See `docs/objects.md`.
 - **Rendering:**
   - `#image` is the document canvas. Whole-image ops swap in a new element (`adoptImage()`), so `img` and `ctx` are reassigned; never cache them.
   - `#overlay` is only the pointer target. It is never drawn on, so it has no backing store.
@@ -54,7 +55,7 @@ When smoke fails, read the **first** `FAIL` line, because later failures often c
   - `#ring` is a DOM brush-footprint cursor.
   - `render()` is rAF-throttled through `requestRender()`. It redraws the preview only when its inputs change (`ovKey`) and clears only the last drawn box (`ovBox`).
   - Pointer handlers only record state. All DOM writes happen in `render()`, through the write-if-changed setters (`setText`, `setAttr`, `setProp`). A DOM write inside `pointermove` forces a layout in Chrome's hit test.
-- **Undo** is copy-on-write and keeps one buffer per entry, which is swapped with the canvas on undo and redo. There are three entry types.
+- **Undo** is copy-on-write and keeps one buffer per entry, which is swapped with the canvas on undo and redo. There are four entry types.
   - `region` entries come from `beginOp()`, then `touch(rect)` called **before** each draw into `rect`, then `endOp()`. Only the touched part of each 256² tile is stored.
     - Tiles are snapshotted on the GPU (`drawImage`, no readback): strokes (`beginOp(true)`) one small canvas per tile as the stroke reaches it; other ops one canvas per contiguous block of each `touch()`. A stroke with more than 512 live tiles reads them back early, which bounds GPU memory.
     - Undo/redo (`swapParts()`) snapshots the current pixels the same way, then writes the stored ones. Nothing reads the document back; parts held on the GPU are read back to `ImageData` at idle, a second after the last history change, ~64 MB per callback (`queueToData()`; `__paint.flushToData()` forces it). An open op's tiles (e.g. under a floating selection) are queued too; only a pointer gesture postpones the readback. One copy per entry at all times.
@@ -63,6 +64,7 @@ When smoke fails, read the **first** `FAIL` line, because later failures often c
     - Never read back the document while a stroke is in progress; each readback stalls the next frame. `dropOp(true)` restores the tiles.
     - The brush (`brushCommit()`) draws each batch of segments by restoring its box from the op's tiles and stroking every segment that reaches it as one clipped path, so batches never ink an edge pixel twice. It `touch()`es the box first, so every tile it restores from exists.
   - `fill` entries store the before pixels, a bit mask and the new values of the anti-aliased ring around the region (`Core.fillEdge`, `ek`/`ev`), so neither undo nor redo reads the canvas. Redo paints the mask's runs as one `Path2D` fill (exact for the opaque fill colour), then the ring pixels one path per colour; masks with over 100k runs, or a ring that isn't opaque, fall back to recomputing and putting the pixels.
+  - `obj` entries hold the other object list and swap it on apply. Streams of edits (held arrows, a colour-well drag) coalesce into one entry via `setObjs(next, key)`, except across the save point. A flatten is a `region` entry that also carries the object list, so one undo un-bakes the pixels and brings the objects back.
   - `doc` entries hold the previous `#image` element itself (crop, resize, rotate, a paste that grows the canvas). `History`'s `onDrop` frees dropped canvases.
   - Unsaved state is `isDirty()` = `!hist.isClean()` OR a floating selection OR non-empty open text. Never keep a separate dirty flag.
 - **UI wiring** is mostly data-driven from attributes in `index.html`:

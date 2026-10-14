@@ -20,7 +20,6 @@
     primary: '#000000', secondary: '#ffffff',
     sizes: { pencil: 1, brush: 6, eraser: 12, line: 2, rect: 2, ellipse: 2 },
     fillMode: 'outline', tolerance: 10, smoothing: 2,
-    liveShapes: false, // shapes stay editable objects above the pixels (docs/objects.md)
     font: 'system-ui, sans-serif', fontSize: 24,
     zoom: 1,
     fileHandle: null, fileName: 'untitled.png',
@@ -949,8 +948,6 @@
     }
     c.restore();
   }
-  // Everything drawShape(d) can paint.
-  const shapeBox = (d) => Core.objBox(shapeObj(d));
 
   // ---------- objects ----------
   const selObj = () => (objSel == null ? null : objs.find((o) => o.id === objSel) || null);
@@ -1842,12 +1839,7 @@
     }
     else if (SHAPES.has(d.t)) {
       if (d.t !== 'line' && d.start.x === d.end.x && d.start.y === d.end.y) { requestRender(); return; } // a click, not a shape
-      if (S.liveShapes) { addObj(shapeObj(d)); requestRender(); return; }
-      beginOp();
-      const b = shapeBox(d);
-      touch(b.x, b.y, b.w, b.h);
-      drawShape(ctx, d);
-      endOp();
+      addObj(shapeObj(d)); // a live object above the pixels until flattened (docs/objects.md)
     } else if (d.t === 'select') {
       const r = Core.normRect(d.start, d.end);
       sel = r.w > 0 && r.h > 0 ? { ...r, float: null } : null;
@@ -2074,7 +2066,6 @@
   $('#tolerance').addEventListener('input', (e) => { S.tolerance = +e.target.value; $('#tolOut').textContent = S.tolerance; });
   $('#smoothing').addEventListener('input', (e) => { S.smoothing = +e.target.value; $('#smoothOut').textContent = S.smoothing; });
   document.querySelectorAll('input[name=fillMode]').forEach((r) => r.addEventListener('change', () => { S.fillMode = r.value; const o = selObj(); if (o && o.t !== 'line') restyleObj({ mode: r.value }); }));
-  $('#liveShapes').addEventListener('change', (e) => { S.liveShapes = e.target.checked; });
   $('#font').addEventListener('change', (e) => { S.font = e.target.value; if (textAt) placeTextBox(); });
   $('#fontSize').addEventListener('input', (e) => {
     const v = +e.target.value;

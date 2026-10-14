@@ -81,7 +81,7 @@ Everything is a node, including brush strokes (vector paths) and pasted bitmaps 
 3. **Rendering:** objects drawn on `#preview` in `render()` (under shape previews and the brush tail, above a pixel float), keyed by a version counter, and an `#objsel` outline with 8 handles placed like `#ants`. Done.
 4. **Pointer:** the Move tool (V) hit-tests the handles of the selected object, then all objects (topmost first), and pans on empty canvas. The select tool is pixels only, so a marquee can start over a shape. Shape tools edit the selected object when you press on it, and otherwise draw a new one. New `drag.t` values: `objmove`, `objsize`. Esc cancels both. Done.
 5. **Keyboard:** Delete, arrows (⇧ = 10), Esc to deselect, ⌘D duplicate, ⌘] / ⌘[ forward/backward, ⌘E flatten. Done, in the keydown handler and the README.
-   - The ⌘ keys act (and `preventDefault`) only when there is an object to act on, so with Editable off the browser keeps ⌘D (bookmark) and ⌘[ / ⌘] (back, forward).
+   - The ⌘ keys act (and `preventDefault`) only when there is an object to act on, so with no shape selected the browser keeps ⌘D (bookmark) and ⌘[ / ⌘] (back, forward).
    - **Deliberate gap:** they aren't in the `?` dialog (`HELP`). It already fills 1280×800 exactly (smoke checks that it fits), and even one more row overflows. Shipping this needs a help-layout change, such as a third column.
    - Streams of edits are coalesced into one undo step: held arrows, a colour-well drag, `[` `]` and X's swap. Otherwise holding an arrow would evict pixel undo steps through `History`'s 100-entry cap. Coalescing stops at the save point, so `isDirty()` stays true after a nudge.
 6. **Restyle:** colour 1 and 2, size and Outline/Fill/Both act on the selected object (Figma's properties panel, in the options bar). Done for the palette, colour wells, the size slider (one undo step per drag, on `change`) and the fill-mode radios.
@@ -94,13 +94,13 @@ Everything is a node, including brush strokes (vector paths) and pasted bitmaps 
 13. **`task.md`:** "selection resize handles" is listed as out of scope for polish. Objects reopen it as feature work.
 
 14. **Keyboard access to objects:** objects can only be picked with the pointer. Tab-cycling through objects (Figma: Tab / ⇧Tab) is needed before this ships, given the accessibility work in `task.md`.
-15. **Turning Editable off** leaves existing objects live, and new shapes then bake into the pixels *under* them. That's consistent with the layer model, but worth a hint.
+15. **The benchmark's `rect drag 200`** now measures drawing a shape object (preview only), not a pixel commit. Add a flatten scenario if flatten cost matters.
 
 ## The spike (`objects-spike` branch)
 
-**Behind a switch.** Shapes stay editable only when **Editable** is on in the Rectangle, Ellipse and Line options (`S.liveShapes`). It is off by default, so the existing behaviour and every existing test are unchanged. Turn it on to try it.
+**Always on** (decided 2026-10-14). The prototype first had an Editable switch, but moving a shape and then flattening it gives the same result as drawing straight into pixels, so the switch only added a setting. Tests that check shape *pixels* (history, preview, filledge) flatten first.
 
-What works with Editable on:
+What works:
 
 - **Drawing:** a rectangle, ellipse or line becomes an object. It's selected right after drawing, with handles.
 - **Editing:** drag the body to move, drag a handle to resize (a line has two end handles), and Esc mid-drag cancels.
