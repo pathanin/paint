@@ -1937,8 +1937,9 @@
   // ---------- tooltips ----------
   const tip = $('#tip');
   let tipTimer = 0, tipWarmUntil = 0, tipFor = null, tipByKey = false;
-  function showTip(el) {
+  function showTip(el, fade) {
     tipFor = el;
+    tip.classList.toggle('fade', !!fade);
     tip.textContent = el.dataset.tip;
     if (el.dataset.kbd) {
       const k = document.createElement('kbd');
@@ -1973,7 +1974,8 @@
     if (el === tipFor) return;
     hideTip();
     if (!el || e.pointerType === 'touch' || drag) return;
-    tipTimer = setTimeout(() => { showTip(el); tipByKey = false; }, performance.now() < tipWarmUntil ? 0 : 450);
+    const warm = performance.now() < tipWarmUntil;
+    tipTimer = setTimeout(() => { showTip(el, !warm); tipByKey = false; }, warm ? 0 : 450);
   });
   document.addEventListener('pointerdown', hideTip, true);
   document.documentElement.addEventListener('mouseleave', hideTip);

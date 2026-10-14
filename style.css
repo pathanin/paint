@@ -23,6 +23,7 @@
   --accent-fill: #2563eb; /* filled buttons: white text stays above 4.5:1 in both themes */
   --danger: #d92d20;
   --seg-on: #ffffff;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1); /* UI enter/exit */
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -330,6 +331,13 @@ button.labeled { padding: 0 9px 0 7px; }
   background: var(--panel); color: var(--text); font-size: 15px; font-weight: 500;
   box-shadow: var(--pop);
 }
+/* Entry only: on drop the image replaces it, so an exit would lag. */
+#dropZone { transition: opacity 150ms var(--ease-out); }
+@starting-style { #dropZone { opacity: 0; } }
+@media (prefers-reduced-motion: no-preference) {
+  #dropZone div { transition: transform 200ms var(--ease-out); }
+  @starting-style { #dropZone div { transform: scale(0.97); } }
+}
 #tip {
   position: fixed; z-index: 40; left: 0; top: 0;
   max-width: 260px;
@@ -340,6 +348,9 @@ button.labeled { padding: 0 9px 0 7px; }
   pointer-events: none;
 }
 #tip[hidden] { display: none; }
+/* Cold hover only (JS adds .fade); warm and keyboard tooltips stay instant. Opacity only: transform positions it. */
+#tip.fade { transition: opacity 125ms var(--ease-out); }
+@starting-style { #tip.fade { opacity: 0; } }
 #tip .hint { display: block; color: #b4b9c2; white-space: normal; }
 kbd {
   font: 500 11px/1 system-ui, -apple-system, sans-serif;
