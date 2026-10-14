@@ -465,9 +465,16 @@
     const t = n ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / n)) : 0;
     return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
   }
+  // o as drawn: an odd stroke width is drawn on pixel centres (+0.5, see drawObj in app.js) and an
+  // even one on the points themselves. Hit tests and handles use this, so they sit on the stroke.
+  function drawnObj(o) {
+    if (!(o.size % 2)) return o;
+    return { ...o, a: { x: o.a.x + 0.5, y: o.a.y + 0.5 }, b: { x: o.b.x + 0.5, y: o.b.y + 0.5 } };
+  }
   // Is p on o? tol is extra reach in image px (callers pass a few screen px over the zoom), so thin
   // outlines stay clickable at any zoom. Filled shapes hit inside; outlines only near their edge.
   function hitsObject(o, p, tol) {
+    o = drawnObj(o);
     const half = o.size / 2 + tol, filled = o.mode !== 'outline';
     if (o.t === 'line') return segDist(p, o.a, o.b) <= half;
     const r = normRect(o.a, o.b);
@@ -489,7 +496,8 @@
   }
   // Resize handles: the two ends of a line; the corners, then the edge midpoints, of a box. gap (image
   // px) leaves out the midpoints of a side shorter than it, where they'd crowd the corners.
-  function objHandles(o, gap = 0) {
+  const objHandles = (o, gap = 0) => handlesOf(drawnObj(o), gap);
+  function handlesOf(o, gap) { // o: as drawn
     if (o.t === 'line') return [{ h: 'a', x: o.a.x, y: o.a.y }, { h: 'b', x: o.b.x, y: o.b.y }];
     const r = normRect(o.a, o.b), x1 = r.x + r.w, y1 = r.y + r.h, mx = r.x + r.w / 2, my = r.y + r.h / 2;
     const hs = [{ h: 'nw', x: r.x, y: r.y }, { h: 'ne', x: x1, y: r.y }, { h: 'se', x: x1, y: y1 }, { h: 'sw', x: r.x, y: y1 }];
@@ -503,6 +511,7 @@
   // Inside the shape a handle reaches at most a quarter of its short side, so the middle of a small
   // box (or a short line) is left free for moving it.
   function handleAt(o, p, tol, gap = 0) {
+    o = drawnObj(o);
     let reach = tol;
     if (o.t === 'line') {
       const dx = o.b.x - o.a.x, dy = o.b.y - o.a.y, n = dx * dx + dy * dy;
@@ -513,7 +522,7 @@
       if (p.x > r.x && p.x < r.x + r.w && p.y > r.y && p.y < r.y + r.h) reach = Math.min(tol, Math.min(r.w, r.h) / 4);
     }
     let best = null, bd = Infinity;
-    for (const q of objHandles(o, gap)) {
+    for (const q of handlesOf(o, gap)) {
       const d = Math.max(Math.abs(q.x - p.x), Math.abs(q.y - p.y));
       if (d <= reach && d < bd) { best = q.h; bd = d; }
     }
@@ -568,7 +577,7 @@
   }
 
   const Core = { rgbaToU32, colorDistance, floodMask, fillEdge, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History,
-    objBox, hitsObject, hitObject, objHandles, handleAt, resizeObj, moveObj, transformObj, scaleObj };
+    objBox, drawnObj, hitsObject, hitObject, objHandles, handleAt, resizeObj, moveObj, transformObj, scaleObj };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core;
   else root.Core = Core;
 })(typeof window !== 'undefined' ? window : globalThis);

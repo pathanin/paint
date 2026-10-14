@@ -413,6 +413,23 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.keyboard.press('Tab');
     ok(await objSel() === null, 'other tools leave Tab alone');
 
+    // ---- 22. odd stroke widths: hit area, outline and handles sit on the drawn stroke (1600%) ----
+    await P(() => { const p = window.__paint; p.newDoc(60, 40); p.setZoom(16); p.S.sizes.line = 1; p.S.sizes.rect = 3; p.S.fillMode = 'outline'; });
+    await P(() => { const v = document.querySelector('#viewport'); v.scrollLeft = 0; v.scrollTop = 0; });
+    const at16 = async (ix, iy) => { const b = await page.locator('#overlay').boundingBox(); return [b.x + ix * 16, b.y + iy * 16]; };
+    const drag16 = async (a, b) => { await page.mouse.move(...await at16(...a)); await page.mouse.down(); await page.mouse.move(...await at16(...b), { steps: 5 }); await page.mouse.up(); await frame(); };
+    await page.keyboard.press('KeyL'); await drag16([5.5, 10.5], [35.5, 10.5]); // a 1 px line on pixel row 10 (y 10..11)
+    await page.keyboard.press('KeyR'); await drag16([5.5, 20.5], [25.5, 30.5]); // a 3 px rectangle
+    await page.keyboard.press('KeyV'); await page.keyboard.press('Escape');
+    await page.mouse.move(...await at16(20, 10.9)); await frame();
+    ok(await hov() === 'line', 'the bottom of a 1 px line\'s pixel row hits it');
+    await page.mouse.move(...await at16(20, 9.5)); await frame();
+    ok(await hov() === null, 'half a pixel above it does not');
+    await page.mouse.click(...await at16(5.5, 25)); await frame();
+    const selBox = await page.locator('#objsel').boundingBox(), [sx0, sy0] = await at16(5.5, 20.5), [sx1, sy1] = await at16(25.5, 30.5);
+    ok(Math.abs(selBox.x - sx0) <= 1 && Math.abs(selBox.y - sy0) <= 1 && Math.abs(selBox.x + selBox.width - sx1) <= 1 && Math.abs(selBox.y + selBox.height - sy1) <= 1,
+      'the outline of a 3 px rectangle runs along the middle of its stroke: ' + JSON.stringify([selBox, [sx0, sy0, sx1, sy1]]));
+
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));
   } catch (e) {
     fails++; console.log('FAIL: threw', e);

@@ -849,3 +849,16 @@ test('scaleObj scales the geometry and the stroke width with a resize', () => {
   assert.equal(Core.scaleObj(o, 3, 1).size, 3); // uneven scale: the geometric mean (√3 × 2)
   assert.equal(o.a.x, 10); // o untouched
 });
+
+test('odd stroke widths: hit tests and handles follow the drawn stroke, half a pixel off the stored points', () => {
+  // drawObj strokes an odd width on pixel centres (+0.5), so a 1 px line from (5,10) covers pixel row 10: y 10..11.
+  const l = obj('line', { x: 5, y: 10 }, { x: 35, y: 10 }, { size: 1 });
+  assert.deepEqual(Core.drawnObj(l).a, { x: 5.5, y: 10.5 });
+  assert.equal(Core.hitsObject(l, { x: 20, y: 10.95 }, 0.25), true); // the bottom of the drawn pixel
+  assert.equal(Core.hitsObject(l, { x: 20, y: 9.6 }, 0.25), false); // above it
+  const r = obj('rect', { x: 5, y: 20 }, { x: 25, y: 30 }, { size: 3 });
+  assert.deepEqual(Core.objHandles(r)[0], { h: 'nw', x: 5.5, y: 20.5 });
+  assert.equal(Core.handleAt(r, { x: 25.5, y: 30.5 }, 0.3), 'se');
+  const e = obj('rect', { x: 5, y: 20 }, { x: 25, y: 30 }, { size: 2 });
+  assert.equal(Core.drawnObj(e), e); // even widths are drawn on the points themselves
+});

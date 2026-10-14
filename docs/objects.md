@@ -110,6 +110,7 @@ What works:
   - Nothing moves until the pointer has gone 3 screen px, so a click only selects, even at 25% where one screen px is 4 image px.
   - Shift (held from the start or pressed mid-drag) moves along one axis only, keeps a box's aspect ratio (a corner scales from the opposite corner, an edge about the middle) and snaps a line end to 0°, 45° or 90°.
   - A box side under 24 screen px drops its midpoint handles, and inside the shape a handle reaches at most a quarter of its short side, so the middle of a tiny box or a short line still moves it.
+- **Odd stroke widths** are drawn on pixel centres (half a pixel off the stored points), so hit tests, handles and both outlines use `Core.drawnObj()`, the shape as drawn. Before that, at 1600% the outline sat 8 screen px off a 3 px stroke and the far half of a 1 px line missed.
 - **Hover:** with the Move tool, the shape a click would pick is outlined (its box, its ellipse, or a bar along a line), as in Figma. The selected shape isn't, since it has its handles.
 - **⌥-drag** (Move tool) on a shape's body moves a copy, placed just above the original, as one undo step. A ⌥-click or an Esc-cancelled ⌥-drag adds nothing. ⌥ over a shape shows the copy cursor.
 - **Selecting:** with the Move tool (V), click any object. Dragging empty canvas pans, and a click there deselects. The select tool (S) only selects pixels, even on top of a shape.

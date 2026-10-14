@@ -657,8 +657,9 @@
   let objSelKey = '';
   function placeObjSel(o) {
     const z = S.zoom, d = devicePixelRatio, px = (v) => Math.round(v * z * d) / d;
-    const r = o && Core.normRect(o.a, o.b);
-    const key = o ? [z, o.t, px(r.x), px(r.y), px(r.x + r.w), px(r.y + r.h), px(o.a.x), px(o.a.y), px(o.b.x), px(o.b.y)].join() : '';
+    const g = o && Core.drawnObj(o); // on the stroke, not half a pixel off it (odd widths)
+    const r = o && Core.normRect(g.a, g.b);
+    const key = o ? [z, o.t, px(r.x), px(r.y), px(r.x + r.w), px(r.y + r.h), px(g.a.x), px(g.a.y), px(g.b.x), px(g.b.y)].join() : '';
     if (key === objSelKey) return;
     objSelKey = key;
     objSelEl.hidden = !o;
@@ -679,11 +680,12 @@
   let objHoverKey = '';
   function placeObjHover(o) {
     const z = S.zoom, d = devicePixelRatio, px = (v) => Math.round(v * z * d) / d;
-    const key = o ? [z, o.t, o.a.x, o.a.y, o.b.x, o.b.y].join() : '';
+    const key = o ? [z, o.t, o.a.x, o.a.y, o.b.x, o.b.y, o.size % 2].join() : '';
     if (key === objHoverKey) return;
     objHoverKey = key;
     objHoverEl.hidden = !o;
     if (!o) return;
+    o = Core.drawnObj(o);
     objHoverEl.className = o.t;
     if (o.t === 'line') {
       const ax = o.a.x * z, ay = o.a.y * z, len = Math.hypot(o.b.x - o.a.x, o.b.y - o.a.y) * z;
