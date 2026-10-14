@@ -106,6 +106,12 @@
   const errText = (err, denied) => (err && (err.name === 'NotAllowedError' || err.name === 'SecurityError') ? denied
     : err && err.name === 'InvalidStateError' ? 'the file is busy or was changed elsewhere'
     : (err && err.message) || 'unknown error');
+  // Screen readers only (the polite live region), for changes the eye sees on the canvas.
+  function announce(msg) {
+    const live = $('#srStatus');
+    live.textContent = '';
+    setTimeout(() => { live.textContent = msg; }, 50);
+  }
   function flash(msg, isError) {
     const t = $('#toast');
     t.textContent = msg;
@@ -1003,6 +1009,17 @@
     if (objSel === id) return;
     objSel = id; objVer++;
     requestRender();
+  }
+  // Tab / ⇧Tab on the canvas with the Move tool: the next or previous shape, in drawing order. Past
+  // either end it deselects and returns false, so the key moves focus on as usual (no focus trap).
+  const OBJ_NAMES = { line: 'Line', rect: 'Rectangle', ellipse: 'Ellipse' };
+  function cycleObj(dir) {
+    const i = objs.findIndex((o) => o.id === objSel), j = i < 0 ? (dir > 0 ? 0 : -1) : i + dir;
+    if (j < 0 || j >= objs.length) { if (objSel != null) selectObj(null); return false; }
+    const o = objs[j], r = Core.normRect(o.a, o.b);
+    selectObj(o.id);
+    announce(`${OBJ_NAMES[o.t]}, ${r.w} × ${r.h} px at ${r.x}, ${r.y}. Shape ${j + 1} of ${objs.length}`);
+    return true;
   }
   function deleteObj() {
     const o = selObj();
@@ -1994,6 +2011,7 @@
     if (k.startsWith('Arrow') && !onCanvas) return; // arrows on a focused control belong to that control
     switch (k) {
       case 'KeyX': swapColors(); break;
+      case 'Tab': if (onCanvas && S.tool === 'move' && !e.altKey && cycleObj(e.shiftKey ? -1 : 1)) e.preventDefault(); break;
       case 'Delete': case 'Backspace': if (!onCanvas) return; e.preventDefault(); if (!deleteObj()) deleteSelection(); break;
       case 'Escape': if (objSel != null) selectObj(null); else dropSelection(); break;
       case 'BracketLeft': setSize(Core.stepSize(S.sizes[S.tool], -1)); restyleObj(S.sizes[S.tool] != null ? { size: S.sizes[S.tool] } : {}, 'size'); break;
@@ -2248,7 +2266,7 @@
     ['Drawing', [['Draw with color 1 / color 2', '~Left / right click'], ['Swap colors', 'X'], ['Smaller / bigger size', '[', ']'],
       ['Square, circle, 45° line', '⇧', '~drag'], ['Pick color 2 from a swatch', '~right-click / ⇧-click'],
       ['Apply text', 'Enter'], ['New line in text', '⇧Enter'], ['Cancel text', 'Esc']]],
-    ['Shapes', [['Duplicate', '⌘D'], ['Duplicate by dragging', 'Alt', '~drag'], ['Move straight, keep proportions', '⇧', '~drag'],
+    ['Shapes', [['Next / previous shape (Move tool)', 'Tab', '⇧Tab'], ['Duplicate', '⌘D'], ['Duplicate by dragging', 'Alt', '~drag'], ['Move straight, keep proportions', '⇧', '~drag'],
       ['Bring forward / send backward', '⌘]', '⌘['], ['Flatten into pixels', '⌘E'], ['Delete', 'Delete', '⌫'], ['Nudge (⇧ = 10px)', '←', '↑', '→', '↓']]],
     ['Image', [['Resize image', '⇧R'], ['Canvas size', '⇧C'], ['Canvas: keep aspect', '⇧', '~drag corner'], ['Cancel canvas drag', 'Esc']]],
     ['File', [['New', 'Alt+N'], ['Open', '⌘O'], ['Save', '⌘S'], ['Save as', '⌘⇧S']]],

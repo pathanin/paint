@@ -332,6 +332,34 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     ok(await P(() => { const b = document.querySelector('#helpBody'); return b.scrollHeight <= b.clientHeight + 1 && b.children.length === 3; }), 'help fits at 1280×800 in three columns');
     await page.keyboard.press('Escape');
 
+    // ---- 21. Tab / ⇧Tab cycle through the shapes (Move tool, canvas focused), then let focus move on ----
+    await P(() => { const p = window.__paint; p.newDoc(300, 200); p.setZoom(2); });
+    await page.keyboard.press('KeyR'); await drag([[20, 20], [80, 60]]);
+    await page.keyboard.press('KeyO'); await drag([[120, 20], [180, 60]]);
+    await page.keyboard.press('KeyV');
+    await page.keyboard.press('Escape');
+    await P(() => document.querySelector('#viewport').focus());
+    o = await objs();
+    await page.keyboard.press('Tab');
+    ok(await objSel() === o[0].id && await P(() => document.activeElement.id) === 'viewport', 'Tab selects the first shape; focus stays on the canvas');
+    await page.waitForTimeout(100);
+    ok(/Rectangle, 60 × 40 px at 20, 20\. Shape 1 of 2/.test(await P(() => document.querySelector('#srStatus').textContent)), 'and announces it to screen readers');
+    await page.keyboard.press('Tab');
+    ok(await objSel() === o[1].id, 'Tab again: the next shape');
+    await page.keyboard.press('ArrowRight');
+    ok((await objs())[1].a.x === 121, 'arrows nudge the shape picked with Tab');
+    await page.keyboard.press('Shift+Tab');
+    ok(await objSel() === o[0].id, '⇧Tab: the previous one');
+    await page.keyboard.press('Shift+Tab');
+    ok(await objSel() === null && await P(() => document.activeElement.id) !== 'viewport', '⇧Tab past the first deselects and moves focus out (no trap)');
+    await P(() => document.querySelector('#viewport').focus());
+    await page.keyboard.press('Tab'); await page.keyboard.press('Tab'); await page.keyboard.press('Tab');
+    ok(await objSel() === null && await P(() => document.activeElement.id) !== 'viewport', 'Tab past the last does the same');
+    await page.keyboard.press('KeyP');
+    await P(() => document.querySelector('#viewport').focus());
+    await page.keyboard.press('Tab');
+    ok(await objSel() === null, 'other tools leave Tab alone');
+
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));
   } catch (e) {
     fails++; console.log('FAIL: threw', e);

@@ -93,7 +93,7 @@ Everything is a node, including brush strokes (vector paths) and pasted bitmaps 
 12. **Rotation, groups, multi-select, snapping, layers list:** not done. Multi-select (⇧-click, marquee over objects) is the next most useful step after text.
 13. **`task.md`:** "selection resize handles" is listed as out of scope for polish. Objects reopen it as feature work.
 
-14. **Keyboard access to objects:** objects can only be picked with the pointer. Tab-cycling through objects (Figma: Tab / ⇧Tab) is needed before this ships, given the accessibility work in `task.md`.
+14. **Keyboard access to objects:** done. With the Move tool and the canvas focused (`#viewport` is a Tab stop), Tab / ⇧Tab select the next / previous shape in drawing order, and a screen reader hears its kind, size, position and index. Past either end the shape is deselected and the key moves focus on as usual, so focus is never trapped.
 15. **The benchmark's `rect drag 200`** now measures drawing a shape object (preview only), not a pixel commit. Add a flatten scenario if flatten cost matters.
 
 ## The spike (`objects-spike` branch)
