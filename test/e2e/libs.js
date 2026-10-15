@@ -268,6 +268,23 @@ function hugeTiff() {
       return { running, px: [...p.img.getContext('2d').getImageData(0, 0, 1, 1).data].join(), undo: p.hist.undoStack.length, redo: p.hist.redoStack.length, toast: document.querySelector('#toast').textContent };
     });
     ok(race.running, 'the 24 MP fill was still running when undo came');
+    // ...but panning around while it runs changes no pixels: the fill lands
+    await P(() => { window.__paint.S.primary = '#00ff00'; document.querySelector('#toast').textContent = ''; }); // the race's toast may still show
+    await page.mouse.click(ob.x + 3, ob.y + 3);
+    await page.mouse.move(ob.x + 200, ob.y + 200);
+    await page.keyboard.down('Space');
+    await page.mouse.down();
+    await page.mouse.move(ob.x + 150, ob.y + 170, { steps: 3 });
+    const pan = await P(async () => {
+      const p = window.__paint, running = !!p.filling, during = p.drag && p.drag.t;
+      await p.filling;
+      return { running, during, steps: p.hist.undoStack.length, toast: document.querySelector('#toast').textContent };
+    });
+    await page.mouse.up();
+    await page.keyboard.up('Space');
+    const panPx = await P(() => [...window.__paint.img.getContext('2d').getImageData(0, 0, 1, 1).data].join());
+    ok(pan.running && pan.during === 'pan', 'the fill was still running during the pan: ' + JSON.stringify(pan));
+    ok(pan.steps === 1 && panPx === '0,255,0,255' && !/cancelled/.test(pan.toast), 'a fill lands under a pan: ' + JSON.stringify({ ...pan, panPx }));
     ok(race.px === '255,255,255,255' && race.undo === 0 && race.redo === 1 && /Fill cancelled: the image changed/.test(race.toast), 'a fill whose image changed meanwhile is dropped: ' + JSON.stringify(race));
 
     ok(remote.length === 0, 'no requests leave the machine: ' + remote.slice(0, 3).join(' '));

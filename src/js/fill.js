@@ -2,7 +2,7 @@ import Core from './core.js';
 import { ctx, hist, img, pushHist } from './doc.js';
 import { hexToU32 } from './dom.js';
 import { startWorker, used, workerCall } from './libs.js';
-import { S, drag, sel } from './state.js';
+import { S, sel } from './state.js';
 import { op } from './tiles.js';
 import { flash } from './toast.js';
 
@@ -25,7 +25,10 @@ function doFill(p, color) {
 async function runFill(p, c, tolerance) {
   const src = img, top = hist.top(), openOp = op, float = sel && sel.float;
   const W = src.width, H = src.height;
-  const changed = () => img !== src || hist.top() !== top || op !== openOp || (sel && sel.float) !== float || !!drag;
+  // Every way pixels change shows here: a stroke opens an op, a lift makes a float, crop/resize/New
+  // swap img, everything else commits to history. Drags that write no pixels (pan, marquee, a shape
+  // before release) don't count, so panning around while a big fill runs keeps it.
+  const changed = () => img !== src || hist.top() !== top || op !== openOp || (sel && sel.float) !== float;
   const job = (buf) => ({ buf, w: W, h: H, x: p.x, y: p.y, color: c, tolerance });
   let shown = false; // say so only if it takes a noticeable time
   const slow = setTimeout(() => { shown = true; flash('Filling…'); }, 300);
