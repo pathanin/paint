@@ -137,6 +137,9 @@
         if (Math.abs(v - (ch(ink, c) + a * (T[c] - ch(ink, c)))) > 12) on = false;
         out |= Math.max(0, Math.min(255, Math.round(v + a * (F[c] - T[c])))) << (c * 8);
       }
+      // Clearing (a transparent fill): a straight-RGBA lerp toward 0,0,0,0 would darken the ink, so
+      // keep the ink's colour and only fade its alpha (the premultiplied blend).
+      if (on && F[3] === 0) out = (out >>> 24) ? (ink & 0xffffff) | (out & 0xff000000) : 0;
       out >>>= 0;
       if (!on || out === p) continue;
       idx.push(i); val.push(out);
@@ -203,6 +206,13 @@
     edge.idx.forEach((i, k) => { u32[i] = edge.val[k]; ek[k] = ((i / w | 0) - box.y) * box.w + i % w - box.x; });
     if (!changed && !ek.length) return null;
     return { box, before, bits, ek, ev: edge.val };
+  }
+
+  // A colour as the app stores it ('#rrggbb', or 'transparent') as an ImageData u32.
+  function colorToU32(c) {
+    if (c === 'transparent') return 0;
+    const n = parseInt(c.slice(1), 16);
+    return rgbaToU32((n >> 16) & 255, (n >> 8) & 255, n & 255, 255);
   }
 
   // Bresenham integer line, inclusive of both ends.
@@ -606,7 +616,7 @@
     return { ...o, a: f(o.a), b: f(o.b), size };
   }
 
-  const Core = { rgbaToU32, colorDistance, floodMask, fillEdge, floodFill, fillPlan, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History,
+  const Core = { rgbaToU32, colorToU32, colorDistance, floodMask, fillEdge, floodFill, fillPlan, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History,
     objBox, drawnObj, hitsObject, hitObject, objHandles, handleAt, resizeObj, moveObj, transformObj, scaleObj };
   module.exports = Core;
 })();

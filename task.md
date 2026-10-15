@@ -47,8 +47,8 @@ All of this is done and merged to `master`:
 - Crop uses `aria-disabled`, not `disabled`, so its explanation stays reachable.
 
 **Layout and look**
-- ≤820px: file name hidden; unsaved = dot on Save.
-- Palette: 24px targets with 18px chips (WCAG 2.5.8); colours 1 and 2 marked by rings only, no badges. "Size" label hidden ≤640px.
+- ≤844px: file name hidden; unsaved = dot on Save. (Breakpoints moved up 24px for the palette's Transparent column: 760 → 784, 820 → 844, compact options 640 → 724.)
+- Palette: 24px targets with 18px chips (WCAG 2.5.8); colours 1 and 2 marked by rings only, no badges. "Size" and "Smoothing" labels hidden ≤724px (each slider keeps its aria-label and tooltip).
 - Toasts bottom-centre, `pointer-events: none` except errors. One sentence = no period; errors read "X failed: <plain reason>".
 - Smooth rendering when zoom × DPR < 1, pixelated from there up.
 - No refit after paste/rotate/flip, no auto-scroll during handle drags, no touch pan, no backdrop-click close. Desktop-first.
@@ -58,6 +58,10 @@ All of this is done and merged to `master`:
 - Brush smoothing: lazy-brush radius (screen px) + midpoint quadratic curves, live tail on the overlay, ends exactly at release. Default 2, 0 = off. Pencil and eraser stay pixel-exact.
 - Brush stays anti-aliased; each batch is redrawn from the stroke's undo tiles as one clipped path, so edge pixels are never inked twice (`test/e2e/filledge.js`).
 - Fill recolours the anti-aliased ring around the region (`Core.fillEdge`, up to 8 px) so no fringe is left. Pixels that aren't a clean blend are left untouched.
+- Transparent is a colour value (`CLEAR`) either slot can hold, from a tall checkered chip in an 11th palette column (user's call, 2026-10-16, over a per-document mode or always erasing like Paint.NET). Pixel tools clear with it; Delete, a lift and a grown canvas leave it; shapes and text refuse it; a shape fill in it is no fill. Default colour 2 stays white.
+  - Never written into `<input type=color>` (Chrome shows black); the well keeps its last colour under a checkerboard. Swap never makes a selected shape's line transparent.
+  - Fill to transparent keeps the ink colour on the soft edge and fades its alpha; a straight-RGBA lerp darkened it.
+  - An erasing brush tail can't cut a hole in `#preview`, so it's drawn with the stage's checkerboard.
 
 **Shapes (objects)**
 - Always editable, no on/off switch. Pixel tools paint under them. Flattened on save; not kept in the file.
