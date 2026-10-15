@@ -1,15 +1,34 @@
 # Paint
 
-A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, annotate. Plain HTML/CSS/JS, bundled by esbuild; served over http(s), and works offline once loaded.
+A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, annotate. Runs in the browser and works offline.
 
-**Use it online:** https://pathanin.github.io/paint/ (published from master by CI). Chrome can install it as an app (the install icon in the address bar): it then has its own window and Dock icon, works offline, and appears under "Open with" for images, saving back to the file you opened.
+**Use it online:** https://pathanin.github.io/paint/
 
-**Run locally:** `npm ci && npm run build && npm run serve`, then open http://localhost:8765/ in Chrome, or `npm run dev` for the same URL with rebuild on change. (Opening `dist/index.html` from `file://` doesn't work: browsers don't load ES modules there.) Drop an image on the window, paste one with ⌘V, or ⌘O.
-⌘S writes back to the file you opened (Chrome asks for write permission once).
+In Chrome you can install it as an app (install icon in the address bar). It then opens in its own window, works offline, and shows up under "Open with" for images.
+
+## Features
+
+- Pencil, brush (smoothed), eraser, fill, colour picker, text
+- Line, rectangle and ellipse stay editable shapes until you flatten them (⌘E)
+- Select, crop, resize, canvas size, rotate, flip
+- Open, paste or drop images, including TIFF; ⌘S saves back to the file you opened
+- Transparency: PNGs open and save with it. The checkered Transparent swatch erases: with color 2 set to it, the eraser, Delete, moving a selection and a bigger canvas leave transparent pixels, and pencil, brush and fill drawing with it clear
+- Saves PNG, JPEG or WebP by file extension (JPEG is flattened onto white). Other formats (GIF, BMP, TIFF) are saved as a PNG copy, never overwritten
+
+## Run locally
+
+```bash
+npm ci && npm run build && npm run serve
+```
+
+Then open http://localhost:8765/ in Chrome. Use `npm run dev` to rebuild on change. Opening `dist/index.html` directly from disk doesn't work.
 
 ## Shortcuts
 
-⌘ is Ctrl and ⌥ is Alt on Windows/Linux; the app's tooltips and help show the right keys for your platform.
+Press `?` in the app for the full list. ⌘ is Ctrl and ⌥ is Alt on Windows/Linux.
+
+<details>
+<summary>All shortcuts</summary>
 
 | Keys | Action |
 |---|---|
@@ -34,33 +53,19 @@ A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, ann
 | Space+drag, middle drag | Pan |
 | ? | Shortcut help |
 
-The brush smooths strokes: it trails the pointer by a short lazy radius (Smoothing, 2 px per step; 0 turns it off), draws quadratic curves rather than straight segments, and always ends exactly where you release. Pencil and eraser stay pixel-exact. Fill also recolours the soft edge of brush strokes, ellipses and text next to the area it fills, so no light fringe is left around them.
+</details>
 
-**Transparency.** PNGs open with their transparency, shown as a checkerboard. The last swatch, Transparent, is a colour that clears. With color 2 set to it, the eraser, Delete, moving a selection, Canvas size and a paste that grows the canvas leave transparent pixels instead of color 2. Pencil, brush and fill drawing with it erase. Shapes and text can't be drawn in it, and a shape's fill in it is no fill.
+## Development
 
-Save format follows the file extension (PNG, JPEG, WebP); PNG and WebP keep transparency, JPEG is flattened onto white. Files opened in other formats (GIF, BMP, TIFF) are saved as a PNG copy, never overwritten.
+Plain HTML/CSS/JS as ES modules in `src/`, bundled by esbuild into `dist/`. Libraries (pica, UTIF, UPNG) come from npm and load on first use.
 
-### Libraries
+```bash
+npm test                 # unit tests
+node test/e2e/smoke.js   # browser smoke test (needs a build served on :8765 and Google Chrome)
+```
 
-Bundled into the app (versions pinned in `package.json`), so they work offline too:
+More docs:
 
-| Feature | Library | Built-in path |
-|---|---|---|
-| Resize image | [pica](https://github.com/nodeca/pica), Lanczos-3: less moiré, sharper (up to 50 MP, before plus after) | Halving resampler, for larger images |
-| Open TIFF | [UTIF](https://github.com/photopea/UTIF.js): first page, any compression it supports | None (Chrome can't decode TIFF) |
-| Save PNG | [UPNG](https://github.com/photopea/UPNG.js), lossless: about 40–60% smaller for screenshots and drawings, 13–16% for photos. Used up to 3840 × 2160, and only when its estimated time is under ¾ s | The browser's PNG encoder; the smaller file wins |
-
-## Layout
-
-- `src/index.html`, `src/style.css` — the page; `src/manifest.webmanifest`, `src/sw.js`, `src/icon.svg` — the installable app
-- `src/js/core.js` — pure helpers (flood fill, Bresenham, rect/resize math, smoothed brush path, bounded undo history)
-- `src/js/*.js` — UI, tools, file I/O, one ES module per area; `main.js` boots the app; `fill-worker.js` and `png-worker.js` run the paint bucket and the PNG encoder off the main thread
-- `build.mjs` — bundles `src/` into `dist/` (`npm run build`; `npm run dev` watches and serves)
-- `test/core.test.js` — `npm test`
-- `test/e2e/smoke.js` — browser smoke test (about 290 checks) of the built app. Needs `npm ci` (Playwright) and Google Chrome.
-  Build, serve `dist/` (`npm run serve`, or `npm run dev`), then `node test/e2e/smoke.js [url]`
-  (url defaults to `http://localhost:8765/`). `test/e2e/shots.js PREFIX` saves screenshots.
-- `test/e2e/libs.js` — the bundled libraries: none loads at boot, which path ran, pixel-exact TIFF and PNG round trips, the built-in paths past each budget, the fill worker, each fallback when a chunk or worker won't load, and no requests to other servers. Fixtures are in `test/fixtures/`.
-- `test/e2e/pwa.js` — the installable app over http: manifest and install criteria, offline reload through the service worker, the lazy parts (chunks, workers) offline, the previous build's cache, files handed to the installed app; and the message `file://` shows.
-- `test/e2e/history.js` (pixel-exact undo/redo of every edit kind, undo depth on a 12 MP image) and `test/e2e/preview.js` (selection and shape previews on screen at several zooms) — same setup and `[url]` argument as the smoke test.
-- `test/e2e/bench.js [url] [--runs N] [--only substr] [--json out.json]` — performance benchmark: main-thread time, frame times and memory per scenario, median of N runs. `test/e2e/bench-compare.js before.json after.json` prints the deltas and exits 1 on a regression.
+- [CLAUDE.md](CLAUDE.md): architecture, all test commands, conventions
+- [task.md](task.md): design decisions and open backlog
+- [docs/objects.md](docs/objects.md): editable shapes
