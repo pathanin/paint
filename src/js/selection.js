@@ -2,7 +2,7 @@ import Core from './core.js';
 import { ctx, docOp, img, pushDocHist } from './doc.js';
 import { makeCanvas } from './dom.js';
 import { selectObj } from './objects.js';
-import { S, sel, setSel } from './state.js';
+import { S, isClear, sel, setSel } from './state.js';
 import { commitText } from './text.js';
 import { beginOp, dropOp, endOp, touch } from './tiles.js';
 import { flash } from './toast.js';
@@ -11,13 +11,18 @@ import { requestRender, updateChrome } from './view.js';
 
 // ---------- selection ----------
 const inside = (p, r) => p.x >= r.x && p.y >= r.y && p.x < r.x + r.w && p.y < r.y + r.h;
+// What a lift or Delete leaves behind: colour 2, or transparency.
+function clearTo2(r) {
+  if (isClear(S.secondary)) { ctx.clearRect(r.x, r.y, r.w, r.h); return; }
+  ctx.fillStyle = S.secondary;
+  ctx.fillRect(r.x, r.y, r.w, r.h);
+}
 function liftSelection() {
   beginOp();
   const f = makeCanvas(sel.w, sel.h);
   f.getContext('2d').drawImage(img, sel.x, sel.y, sel.w, sel.h, 0, 0, sel.w, sel.h);
   touch(sel.x, sel.y, sel.w, sel.h);
-  ctx.fillStyle = S.secondary;
-  ctx.fillRect(sel.x, sel.y, sel.w, sel.h);
+  clearTo2(sel);
   sel.float = f;
   updateChrome();
 }
@@ -48,8 +53,7 @@ function deleteSelection() {
   else {
     beginOp();
     touch(sel.x, sel.y, sel.w, sel.h);
-    ctx.fillStyle = S.secondary;
-    ctx.fillRect(sel.x, sel.y, sel.w, sel.h);
+    clearTo2(sel);
     endOp();
   }
   setSel(null);

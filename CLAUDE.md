@@ -29,13 +29,14 @@ node test/e2e/history.js                    # pixel-exact undo/redo, undo depth
 node test/e2e/preview.js                    # previews on screen at several zooms
 node test/e2e/filledge.js                   # brush = one path; fill leaves no fringe at soft edges
 node test/e2e/objects.js                    # live shapes: draw, move, resize, restyle, flatten (docs/objects.md)
+node test/e2e/alpha.js                      # Transparent colour: tools clear, shapes refuse it, PNG keeps alpha
 node test/e2e/libs.js                       # libraries: lazy, each path runs, round trips, fallbacks when a chunk won't load
 node test/e2e/pwa.js                        # installable app: manifest, offline reload + lazy parts, launched files, file:// notice
 node test/e2e/bench.js --json /tmp/pw/a.json   # perf benchmark (3 runs, medians)
 node test/e2e/bench-compare.js /tmp/pw/before.json /tmp/pw/a.json   # deltas; exit 1 on a regression
 ```
 
-CI (`.github/workflows/ci.yml`, GitHub Actions) runs the unit tests, builds, and runs smoke, history, preview, filledge, objects, libs and pwa on every push to master and every PR, in the runner's installed Chrome. The benchmark isn't in CI: shared runners are too noisy to gate on. After a push to master that passes, CI's `deploy` job publishes `dist/` to GitHub Pages (https://pathanin.github.io/paint/). The repo's Settings → Pages → Source is "GitHub Actions"; the deploy fails without it.
+CI (`.github/workflows/ci.yml`, GitHub Actions) runs the unit tests, builds, and runs smoke, history, preview, filledge, objects, alpha, libs and pwa on every push to master and every PR, in the runner's installed Chrome. The benchmark isn't in CI: shared runners are too noisy to gate on. After a push to master that passes, CI's `deploy` job publishes `dist/` to GitHub Pages (https://pathanin.github.io/paint/). The repo's Settings → Pages → Source is "GitHub Actions"; the deploy fails without it.
 
 The benchmark's `task` (CDP main-thread time) varies by about ±15% between runs. For sub-millisecond per-frame changes, compare Chrome traces instead.
 

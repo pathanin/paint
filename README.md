@@ -14,12 +14,12 @@ A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, ann
 | Keys | Action |
 |---|---|
 | V S P B E F I T L R O | Move (editable shapes; drag empty canvas to pan), Select, Pencil, Brush, Eraser, Fill, Picker, Text, Line, Rect, Ellipse |
-| Left / right click | Draw with color 1 / color 2 (right-click or Shift-click a swatch sets color 2) |
+| Left / right click | Draw with color 1 / color 2 (right-click or Shift-click a swatch sets color 2; the checkered swatch is Transparent) |
 | X | Swap colors |
 | [ ] | Smaller / bigger size |
 | Shift while dragging | Square / circle / 45° line. On a shape you move or resize: straight along one axis, same proportions, 45° line end |
 | ⌘Z / ⌘⇧Z (or ⌘Y) | Undo / redo |
-| ⌘A, Esc, Delete (or Backspace) | Select all, deselect (Esc also cancels a shape, selection, move or canvas drag, and dismisses an error message), clear selection to color 2 |
+| ⌘A, Esc, Delete (or Backspace) | Select all, deselect (Esc also cancels a shape, selection, move or canvas drag, and dismisses an error message), clear selection to color 2 (or to transparent) |
 | Enter, Shift+Enter, Esc (text tool) | Apply text, new line, cancel |
 | Arrows (Shift = 10px) | Nudge selection |
 | ⌘C ⌘X ⌘V | Copy, cut, paste the selection. With nothing selected, ⌘C and ⌘X copy the whole image and leave it unchanged |
@@ -28,7 +28,7 @@ A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, ann
 | ⌥+drag (Move tool) | Duplicate a shape by dragging a copy off it |
 | Tab / Shift+Tab (Move tool, canvas focused) | Select the next / previous shape in drawing order; past the last one, focus moves on |
 | Shift+R | Resize image (resample) |
-| Shift+C, or drag the handles on the right/bottom/corner | Canvas size (new area = color 2; Shift+drag corner keeps aspect; Esc cancels) |
+| Shift+C, or drag the handles on the right/bottom/corner | Canvas size (new area = color 2, or transparent; Shift+drag corner keeps aspect; Esc cancels) |
 | ⌘O ⌘S ⌘⇧S Alt+N | Open, save, save as, new |
 | + − (or ⌘+ ⌘−), ⌘+wheel / pinch | Zoom; ⇧1 (or ⌘0) fit, ⇧0 100% |
 | Space+drag, middle drag | Pan |
@@ -36,7 +36,9 @@ A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, ann
 
 The brush smooths strokes: it trails the pointer by a short lazy radius (Smoothing, 2 px per step; 0 turns it off), draws quadratic curves rather than straight segments, and always ends exactly where you release. Pencil and eraser stay pixel-exact. Fill also recolours the soft edge of brush strokes, ellipses and text next to the area it fills, so no light fringe is left around them.
 
-Save format follows the file extension (PNG, JPEG, WebP); JPEG is flattened onto white. Files opened in other formats (GIF, BMP, TIFF) are saved as a PNG copy, never overwritten.
+**Transparency.** PNGs open with their transparency, shown as a checkerboard. The last swatch, Transparent, is a colour that clears. With color 2 set to it, the eraser, Delete, moving a selection, Canvas size and a paste that grows the canvas leave transparent pixels instead of color 2. Pencil, brush and fill drawing with it erase. Shapes and text can't be drawn in it, and a shape's fill in it is no fill.
+
+Save format follows the file extension (PNG, JPEG, WebP); PNG and WebP keep transparency, JPEG is flattened onto white. Files opened in other formats (GIF, BMP, TIFF) are saved as a PNG copy, never overwritten.
 
 ### Libraries
 

@@ -181,6 +181,19 @@ test('fillEdge over a transparent background composites the ink onto the fill co
   assert.deepEqual(rgba(g.u32[1]), [127, 0, 0, 255]);
 });
 
+test('fillEdge to transparent keeps the ink colour and fades its alpha (no dark fringe)', () => {
+  const W = Core.rgbaToU32(255, 255, 255, 255), R = Core.rgbaToU32(255, 0, 0, 255), K = Core.rgbaToU32(0, 0, 0, 255);
+  const pink = Core.rgbaToU32(255, 128, 128, 255), g50 = Core.rgbaToU32(128, 128, 128, 255); // half white over red / black
+  const a = grid(['..hRR', '..hRR'], { '.': W, h: pink, R });
+  fillWithEdge(a, 0, 0, 0, 10);
+  assert.deepEqual(rgba(a.u32[2]), [255, 0, 0, 127]); // red at half alpha, not dark red
+  assert.equal(a.u32[0], 0);
+  assert.equal(a.u32[3], R);
+  const b = grid(['..gKK'], { '.': W, g: g50, K });
+  fillWithEdge(b, 0, 0, 0, 10);
+  assert.deepEqual(rgba(b.u32[2]), [0, 0, 0, 127]);
+});
+
 test('fillEdge clamps its box to the image', () => {
   const W = Core.rgbaToU32(255, 255, 255, 255), K = Core.rgbaToU32(0, 0, 0, 255), R = Core.rgbaToU32(255, 0, 0, 255);
   const g40 = Core.rgbaToU32(102, 102, 102, 255);
@@ -225,6 +238,21 @@ test('fillPlan returns null and leaves the pixels alone when nothing changes', (
   assert.equal(Core.fillPlan(g.u32, g.w, g.h, 0, 0, W, 10), null);
   assert.equal(Core.fillPlan(g.u32, g.w, g.h, 9, 0, K, 0), null); // outside the image
   assert.deepEqual([...g.u32], [...orig]);
+});
+
+test('fillPlan with colour 0 clears the region to transparent', () => {
+  const W = Core.rgbaToU32(255, 255, 255, 255), K = Core.rgbaToU32(0, 0, 0, 255);
+  const g = grid(['..#', '..#', '###'], { '.': W, '#': K });
+  const p = Core.fillPlan(g.u32, g.w, g.h, 0, 0, 0, 0);
+  assert.ok(p);
+  assert.deepEqual([...g.u32], [0, 0, K, 0, 0, K, K, K, K]);
+  assert.equal(Core.fillPlan(g.u32, g.w, g.h, 0, 0, 0, 0), null); // already transparent
+});
+
+test('colorToU32: hex colours are opaque, transparent is 0', () => {
+  assert.equal(Core.colorToU32('#ff8000'), Core.rgbaToU32(255, 128, 0, 255));
+  assert.equal(Core.colorToU32('#000000'), Core.rgbaToU32(0, 0, 0, 255));
+  assert.equal(Core.colorToU32('transparent'), 0);
 });
 
 test('line produces contiguous Bresenham points', () => {

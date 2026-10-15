@@ -15,10 +15,7 @@ function cloneCanvas(src) {
   c.getContext('2d').drawImage(src, 0, 0);
   return c;
 }
-function hexToU32(hex) {
-  const n = parseInt(hex.slice(1), 16);
-  return Core.rgbaToU32((n >> 16) & 255, (n >> 8) & 255, n & 255, 255);
-}
+const hexToU32 = (c) => Core.colorToU32(c); // '#rrggbb' or transparent (0)
 // Write-if-changed DOM setters for paths that run on every pointermove or frame. Rewriting an
 // identical value isn't free: textContent replaces the text node (layout), and attribute or
 // `disabled` writes queue mutation records (the topbar's MutationObserver then forces a layout).

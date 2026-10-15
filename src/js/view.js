@@ -1,12 +1,12 @@
 import Core from './core.js';
 import { hist, img, redo, undo } from './doc.js';
-import { $, antsEl, clamp, ov, setAttr, setData, setProp, setText, stage, vp } from './dom.js';
+import { $, antsEl, clamp, makeCanvas, ov, setAttr, setData, setProp, setText, stage, vp } from './dom.js';
 import { isDirty, save } from './fileio.js';
 import { showGhost } from './handles.js';
 import { objSel, objVer, objs, selObj } from './objects.js';
 import { objCursor, objGap, objTarget, updateRing } from './pointer.js';
 import { crop, inside } from './selection.js';
-import { S, SHAPES, drag, sel } from './state.js';
+import { S, SHAPES, drag, isClear, sel } from './state.js';
 import { placeTextBox, textAt } from './text.js';
 import { brushPath, drawObj, drawShape, segsBox } from './tools.js';
 
@@ -101,6 +101,20 @@ new ResizeObserver(() => requestRender()).observe(vp);
 const floatIds = new WeakMap(); // canvas -> id, so a new float with the same geometry still redraws
 let nFloats = 0;
 const floatId = (c) => { if (!floatIds.has(c)) floatIds.set(c, ++nFloats); return floatIds.get(c); };
+// The brush tail of an erasing (Transparent) stroke can't cut a hole in the preview, so it's
+// painted with what the hole will show: #stage's checkerboard, at the same 16 CSS px period.
+let checker = null;
+function checkerInk() {
+  const cs = getComputedStyle(stage), a = cs.getPropertyValue('--check-a').trim(), b = cs.getPropertyValue('--check-b').trim();
+  if (!checker || checker.key !== a + b) {
+    const c = makeCanvas(16, 16), g = c.getContext('2d');
+    g.fillStyle = a; g.fillRect(0, 0, 16, 16);
+    g.fillStyle = b; g.fillRect(8, 0, 8, 8); g.fillRect(0, 8, 8, 8); // as repeating-conic-gradient(b 0 25%, a 0 50%)
+    checker = { key: a + b, pat: octx.createPattern(c, 'repeat') };
+  }
+  checker.pat.setTransform(new DOMMatrix().scale(1 / S.zoom)); // image px -> CSS px
+  return checker.pat;
+}
 function requestRender() {
   if (rafPending) return;
   rafPending = true;
@@ -145,7 +159,7 @@ function render() {
     };
     // Pixels-to-be (a floating selection, the brush tail) under the objects; a shape being drawn on top.
     if (sel && sel.float) { octx.drawImage(sel.float, sel.x, sel.y); add(sel); }
-    if (tail && tail.length) { brushPath(octx, tail, drag.color, drag.size); add(segsBox(tail, drag.size / 2 + 1)); }
+    if (tail && tail.length) { brushPath(octx, tail, isClear(drag.color) ? checkerInk() : drag.color, drag.size); add(segsBox(tail, drag.size / 2 + 1)); }
     for (const o of objs) { drawObj(octx, o); add(Core.objBox(o)); }
     if (shape) add(drawShape(octx, drag));
     ovBox = box;

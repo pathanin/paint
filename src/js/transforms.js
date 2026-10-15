@@ -3,7 +3,7 @@ import { docOp, hist, img } from './doc.js';
 import { $, makeCanvas } from './dom.js';
 import { loadPica, used } from './libs.js';
 import { dropSelection } from './selection.js';
-import { S, drag, sel, sizeProblem } from './state.js';
+import { S, drag, isClear, sel, sizeProblem } from './state.js';
 import { commitText, textAt } from './text.js';
 import { flash } from './toast.js';
 
@@ -88,8 +88,7 @@ function resizeDoc(w, h, mode, anchor) {
   dropSelection();
   if (mode === 'scale') return scaleDoc(w, h);
   const c = makeCanvas(w, h), g = c.getContext('2d');
-  g.fillStyle = S.secondary;
-  g.fillRect(0, 0, w, h);
+  if (!isClear(S.secondary)) { g.fillStyle = S.secondary; g.fillRect(0, 0, w, h); } // else the new area stays transparent
   const { dx, dy } = Core.anchorOffset(img.width, img.height, w, h, anchor);
   g.drawImage(img, dx, dy);
   docOp(c, (o) => Core.moveObj(o, dx, dy));

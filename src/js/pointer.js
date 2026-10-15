@@ -5,9 +5,10 @@ import { doFill } from './fill.js';
 import { endCanvasDrag } from './handles.js';
 import { addObj, commitObjDrag, newObjId, objSel, objs, selObj, selectObj, showObjs } from './objects.js';
 import { dropSelection, inside, liftSelection } from './selection.js';
-import { S, SHAPES, drag, sel, setDrag, setSel } from './state.js';
+import { S, SHAPES, drag, isClear, sel, setDrag, setSel } from './state.js';
 import { commitText, startText } from './text.js';
 import { beginOp, dropOp, endOp } from './tiles.js';
+import { flash } from './toast.js';
 import { brushCommit, pick, shapeObj, stampLine } from './tools.js';
 import { imgPt, requestRender, setCursor, setHover, setZoom, updateChrome, updateStatus } from './view.js';
 
@@ -82,6 +83,10 @@ ov.addEventListener('pointerdown', (e) => {
   const t = S.tool;
   if (t !== 'select') dropSelection();
   if (!right && objPointerDown(p, e)) { requestRender(); return; }
+  if ((SHAPES.has(t) || t === 'text') && isClear(color)) { // nothing to see: the pixel tools erase with it instead
+    flash(`Color ${right ? 2 : 1} is Transparent: pick a color to draw ${t === 'text' ? 'text' : 'shapes'}`);
+    return;
+  }
   switch (t) {
     case 'pencil': case 'eraser': {
       const c = t === 'eraser' ? S.secondary : color;

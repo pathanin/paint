@@ -3,7 +3,7 @@ import { docOp, img, setDoc } from './doc.js';
 import { $, clamp, cloneCanvas, makeCanvas, vp } from './dom.js';
 import { composite, deleteObj, objs, selObj, selectObj } from './objects.js';
 import { deleteSelection, dropSelection } from './selection.js';
-import { S, sel, setSel, sizeProblem } from './state.js';
+import { S, isClear, sel, setSel, sizeProblem } from './state.js';
 import { commitText } from './text.js';
 import { beginOp } from './tiles.js';
 import { errText, flash } from './toast.js';
@@ -57,8 +57,7 @@ function pasteImage(bmp) {
     growFrom = img; // kept as is for the undo entry; the grown canvas replaces it
     const c = makeCanvas(Math.max(img.width, bmp.width), Math.max(img.height, bmp.height));
     const g = c.getContext('2d');
-    g.fillStyle = S.secondary;
-    g.fillRect(0, 0, c.width, c.height);
+    if (!isClear(S.secondary)) { g.fillStyle = S.secondary; g.fillRect(0, 0, c.width, c.height); }
     g.drawImage(img, 0, 0);
     setDoc(c);
   }

@@ -5,7 +5,7 @@ import { openFile, save } from './fileio.js';
 import { openHelp } from './help.js';
 import { restyleObj, selObj } from './objects.js';
 import { crop } from './selection.js';
-import { PALETTE, S, sel } from './state.js';
+import { CLEAR, PALETTE, S, isClear, sel } from './state.js';
 import { commitText, placeTextBox, textAt } from './text.js';
 import { setColor, setSize, setTool } from './tools.js';
 import { hideTip } from './tooltips.js';
@@ -16,7 +16,7 @@ import { fitZoom, setZoom, zoomStep } from './view.js';
 function swapColors() {
   const p = S.primary;
   setColor('primary', S.secondary, false); setColor('secondary', p, false);
-  restyleObj({ color: S.primary, alt: S.secondary }); // one step
+  restyleObj(isClear(S.primary) ? { alt: S.secondary } : { color: S.primary, alt: S.secondary }); // one step; a line can't be transparent
 }
 const CMDS = {
   new: openNewDialog, open: openFile, save: () => save(false), saveAs: () => save(true),
@@ -75,12 +75,14 @@ $('#primary').addEventListener('input', (e) => { setColor('primary', e.target.va
 $('#secondary').addEventListener('input', (e) => { setColor('secondary', e.target.value, 'well2'); });
 
 const pal = $('#palette');
-for (const [c, name] of PALETTE) {
+for (const [c, name] of [...PALETTE, [CLEAR, 'Transparent']]) {
   const b = document.createElement('button');
-  b.style.setProperty('--c', c);
+  if (c === CLEAR) b.className = 'clear'; // a tall chip at the end, drawn as a checkerboard
+  else b.style.setProperty('--c', c);
   b.dataset.color = c;
   b.dataset.name = b.dataset.tip = name;
-  b.dataset.hint = 'Right-click or Shift-click for color 2';
+  b.dataset.hint = c === CLEAR ? 'Clears pixels instead of painting · right-click or Shift-click for color 2'
+    : 'Right-click or Shift-click for color 2';
   b.setAttribute('aria-label', name);
   pal.appendChild(b);
 }

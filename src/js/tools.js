@@ -3,7 +3,7 @@ import { ctx, img } from './doc.js';
 import { $, clamp, makeCanvas, ring, setAttr, setData, stage, toHex } from './dom.js';
 import { objs, restyleObj, selObj, selectObj } from './objects.js';
 import { dropSelection } from './selection.js';
-import { S } from './state.js';
+import { S, isClear } from './state.js';
 import { commitText, placeTextBox, textAt } from './text.js';
 import { TILE, op, touch } from './tiles.js';
 import { flash } from './toast.js';
@@ -40,11 +40,18 @@ function setSize(v) {
   $('#size').setAttribute('aria-valuetext', S.sizes[S.tool] + ' px');
 }
 // key: as restyleObj's (a colour well streams input events); false leaves the selected object alone.
+// Transparent never goes into the <input type=color> (Chrome would turn it into black): the well
+// keeps its last colour and shows a checkerboard over it. A shape's line or text can't be
+// transparent, so it then restyles only a shape's fill (colour 2).
 function setColor(which, hex, key) {
   S[which] = hex;
-  if (key !== false) restyleObj(which === 'primary' ? { color: hex } : { alt: hex }, key);
-  $('#' + which).value = hex;
-  if (textAt && which === 'primary') { textAt.color = hex; placeTextBox(); }
+  const clear = isClear(hex), well = $('#' + which), label = which === 'primary' ? 'Color 1' : 'Color 2';
+  if (key !== false && !(clear && which === 'primary')) restyleObj(which === 'primary' ? { color: hex } : { alt: hex }, key);
+  if (!clear) well.value = hex;
+  well.classList.toggle('clear', clear);
+  setAttr(well, 'aria-label', clear ? label + ': Transparent' : label);
+  setData(well, 'tip', clear ? label + ': Transparent' : label);
+  if (textAt && which === 'primary' && !clear) { textAt.color = hex; placeTextBox(); }
   document.querySelectorAll('#palette button').forEach((b) => {
     b.classList.toggle('is1', b.dataset.color === S.primary);
     b.classList.toggle('is2', b.dataset.color === S.secondary);
@@ -57,10 +64,13 @@ function setColor(which, hex, key) {
 function stampLine(a, b, color, size) {
   const off = Math.floor(size / 2);
   touch(Math.min(a.x, b.x) - off, Math.min(a.y, b.y) - off, Math.abs(b.x - a.x) + size, Math.abs(b.y - a.y) + size);
+  ctx.save();
+  if (isClear(color)) { ctx.globalCompositeOperation = 'destination-out'; color = '#000'; } // whole pixels: cleared exactly
   ctx.fillStyle = color;
   ctx.beginPath();
   for (const [x, y] of Core.line(a.x, a.y, b.x, b.y)) ctx.rect(x - off, y - off, size, size);
   ctx.fill();
+  ctx.restore();
 }
 // Brush: Core.Stroke segments ({a, c, b}, c = quadratic control or null) as one path, so joins blend
 // once; a segment that doesn't start where the last one ended starts a new subpath (same shape:
@@ -68,6 +78,7 @@ function stampLine(a, b, color, size) {
 function brushPath(c, segs, color, size) {
   if (!segs.length) return;
   c.save();
+  if (isClear(color)) { c.globalCompositeOperation = 'destination-out'; color = '#000'; } // erases, soft edge and all
   c.strokeStyle = color;
   c.lineWidth = size;
   c.lineCap = c.lineJoin = 'round';
