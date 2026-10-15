@@ -234,6 +234,23 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.mouse.up({ button: 'right' });
     ok(tailInk > 0, 'the live tail of an erasing brush stroke is drawn on the preview');
 
+    // ---- 11. the wider palette (Transparent column) leaves every tool's options unclipped ----
+    // Just above each breakpoint is the tightest spot; this runs in CI's fonts, not just macOS's.
+    // Hints are left out: they ellipsize by design.
+    for (const w of [600, 725, 785, 845, 961, 1280]) {
+      await page.setViewportSize({ width: w, height: 700 }); await page.waitForTimeout(60);
+      for (const t of ['KeyR', 'KeyB', 'KeyF', 'KeyT', 'KeyE', 'KeyI', 'KeyS', 'KeyV', 'KeyP', 'KeyL']) {
+        await page.keyboard.press(t); await frame();
+        const room = await P(() => {
+          const o = document.querySelector('.opts').getBoundingClientRect(), bar = document.querySelector('#optbar').getBoundingClientRect();
+          const opts = [...document.querySelectorAll('.opts > :not([hidden]):not(.hint)')].map((k) => o.right - k.getBoundingClientRect().right);
+          return Math.min(bar.right - document.querySelector('.colors').getBoundingClientRect().right, ...opts);
+        });
+        ok(room >= 0, `${t.slice(3)} tool's options fit at ${w}px (${Math.round(room)} px spare)`);
+      }
+    }
+    await page.setViewportSize({ width: 1280, height: 800 });
+
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));
   } finally {
     await browser.close();

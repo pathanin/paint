@@ -103,17 +103,18 @@ let nFloats = 0;
 const floatId = (c) => { if (!floatIds.has(c)) floatIds.set(c, ++nFloats); return floatIds.get(c); };
 // The brush tail of an erasing (Transparent) stroke can't cut a hole in the preview, so it's
 // painted with what the hole will show: #stage's checkerboard, at the same 16 CSS px period.
+// Built once per colour scheme: reading the colours each frame would force a style recalc.
 let checker = null;
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { checker = null; });
 function checkerInk() {
-  const cs = getComputedStyle(stage), a = cs.getPropertyValue('--check-a').trim(), b = cs.getPropertyValue('--check-b').trim();
-  if (!checker || checker.key !== a + b) {
-    const c = makeCanvas(16, 16), g = c.getContext('2d');
-    g.fillStyle = a; g.fillRect(0, 0, 16, 16);
-    g.fillStyle = b; g.fillRect(8, 0, 8, 8); g.fillRect(0, 8, 8, 8); // as repeating-conic-gradient(b 0 25%, a 0 50%)
-    checker = { key: a + b, pat: octx.createPattern(c, 'repeat') };
+  if (!checker) {
+    const cs = getComputedStyle(stage), c = makeCanvas(16, 16), g = c.getContext('2d');
+    g.fillStyle = cs.getPropertyValue('--check-a').trim(); g.fillRect(0, 0, 16, 16);
+    g.fillStyle = cs.getPropertyValue('--check-b').trim(); g.fillRect(8, 0, 8, 8); g.fillRect(0, 8, 8, 8); // as repeating-conic-gradient(b 0 25%, a 0 50%)
+    checker = octx.createPattern(c, 'repeat');
   }
-  checker.pat.setTransform(new DOMMatrix().scale(1 / S.zoom)); // image px -> CSS px
-  return checker.pat;
+  checker.setTransform(new DOMMatrix().scale(1 / S.zoom)); // image px -> CSS px
+  return checker;
 }
 function requestRender() {
   if (rafPending) return;
