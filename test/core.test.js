@@ -786,3 +786,79 @@ test('resizeObj moves the dragged edges (and may flip); moveObj shifts both poin
   const m = Core.moveObj(o, -10, 5);
   assert.deepEqual([m.a, m.b, m.id, o.a.x], [{ x: 30, y: 35 }, { x: 0, y: 15 }, 1, 40]); // o untouched
 });
+
+test('a small box shows only its corner handles, and a press inside it moves rather than resizes', () => {
+  const tiny = obj('rect', { x: 0, y: 0 }, { x: 4, y: 4 });
+  assert.deepEqual(Core.objHandles(tiny, 6).map((h) => h.h), ['nw', 'ne', 'se', 'sw']);
+  assert.equal(Core.objHandles(obj('rect', { x: 0, y: 0 }, { x: 40, y: 4 }), 6).map((h) => h.h).join(), 'nw,ne,se,sw,n,s'); // wide: n and s fit
+  assert.equal(Core.objHandles(tiny).length, 8); // no gap: all of them
+  assert.equal(Core.handleAt(tiny, { x: 2, y: 2 }, 2.5, 6), null); // the middle: a move
+  assert.equal(Core.handleAt(tiny, { x: 3.5, y: 3.5 }, 2.5, 6), 'se'); // ...but its corner is still in reach
+  assert.equal(Core.handleAt(tiny, { x: 5, y: 5 }, 2.5, 6), 'se'); // outside: full reach
+  const small = obj('rect', { x: 0, y: 0 }, { x: 8, y: 8 });
+  assert.equal(Core.handleAt(small, { x: 4, y: -1 }, 2.5, 10), null); // a hidden n handle can't be hit
+  assert.equal(Core.handleAt(small, { x: 4, y: -1 }, 2.5), 'n');
+  const big = obj('rect', { x: 0, y: 0 }, { x: 100, y: 100 });
+  assert.equal(Core.handleAt(big, { x: 3, y: 3 }, 4, 6), 'nw'); // a big box keeps its full reach inward
+  const short = obj('line', { x: 0, y: 0 }, { x: 4, y: 0 });
+  assert.equal(Core.handleAt(short, { x: 2, y: 0 }, 2.5), null); // the middle of a short line moves it
+  assert.equal(Core.handleAt(short, { x: -2, y: 0 }, 2.5), 'a');
+});
+
+test('resizeObj with keep: corners and edges keep the aspect ratio, line ends snap to 45°', () => {
+  const o = obj('rect', { x: 10, y: 10 }, { x: 40, y: 30 }); // 30 × 20
+  const box = (x) => Core.normRect(x.a, x.b);
+  assert.deepEqual(box(Core.resizeObj(o, 'se', 30, 0, true)), { x: 10, y: 10, w: 60, h: 40 });
+  assert.deepEqual(box(Core.resizeObj(o, 'nw', 15, 15, true)), { x: 25, y: 20, w: 15, h: 10 });
+  assert.deepEqual(box(Core.resizeObj(o, 'se', -60, -40, true)), { x: -20, y: -10, w: 30, h: 20 }); // flipped past the anchor
+  assert.deepEqual(box(Core.resizeObj(o, 'e', 30, 7, true)), { x: 10, y: 0, w: 60, h: 40 }); // grows about the middle
+  assert.deepEqual(box(Core.resizeObj(o, 'n', 0, -20, true)), { x: -5, y: -10, w: 60, h: 40 });
+  const flat = obj('rect', { x: 0, y: 5 }, { x: 30, y: 5 });
+  assert.deepEqual(box(Core.resizeObj(flat, 'se', 10, 3, true)), { x: 0, y: 5, w: 40, h: 3 }); // no ratio to keep
+  const l = Core.resizeObj(obj('line', { x: 0, y: 0 }, { x: 10, y: 0 }), 'b', 0, 9, true);
+  assert.deepEqual([l.a, l.b], [{ x: 0, y: 0 }, { x: 10, y: 10 }]);
+  assert.deepEqual(Core.resizeObj(obj('line', { x: 0, y: 0 }, { x: 10, y: 0 }), 'a', 2, 1, true).a, { x: 2, y: 0 });
+});
+
+test('transformObj rotates and flips a shape with the image, on the pixel grid its stroke width uses', () => {
+  // 100 × 50 image. Odd widths draw on pixel centres (px x maps to W-1-x), even ones on pixel edges (W-x).
+  const odd = obj('rect', { x: 10, y: 5 }, { x: 30, y: 15 }, { size: 1 });
+  const even = { ...odd, size: 2 };
+  const box = (o) => Core.normRect(o.a, o.b);
+  assert.deepEqual(box(Core.transformObj(odd, 'flipH', 100, 50)), { x: 69, y: 5, w: 20, h: 10 });
+  assert.deepEqual(box(Core.transformObj(even, 'flipH', 100, 50)), { x: 70, y: 5, w: 20, h: 10 });
+  assert.deepEqual(box(Core.transformObj(odd, 'flipV', 100, 50)), { x: 10, y: 34, w: 20, h: 10 });
+  assert.deepEqual(box(Core.transformObj(odd, 'rotR', 100, 50)), { x: 34, y: 10, w: 10, h: 20 }); // into a 50 × 100 image
+  assert.deepEqual(box(Core.transformObj(even, 'rotL', 100, 50)), { x: 5, y: 70, w: 10, h: 20 });
+  for (const k of ['rotR', 'rotL', 'flipH', 'flipV']) { // four quarter turns, or two flips, are the identity
+    let o = odd, W = 100, H = 50;
+    for (let i = 0; i < (k.startsWith('rot') ? 4 : 2); i++) { o = Core.transformObj(o, k, W, H); if (k.startsWith('rot')) [W, H] = [H, W]; }
+    assert.deepEqual([o.a, o.b], [odd.a, odd.b], k);
+  }
+  const l = Core.transformObj(obj('line', { x: 0, y: 0 }, { x: 9, y: 0 }, { size: 3 }), 'rotR', 10, 10);
+  assert.deepEqual([l.a, l.b], [{ x: 9, y: 0 }, { x: 9, y: 9 }]); // a line keeps its direction (a to b)
+});
+
+test('scaleObj scales the geometry and the stroke width with a resize', () => {
+  const o = obj('rect', { x: 10, y: 10 }, { x: 30, y: 20 }, { size: 2 });
+  const s = Core.scaleObj(o, 2, 2);
+  assert.deepEqual([s.a, s.b, s.size], [{ x: 20, y: 20 }, { x: 60, y: 40 }, 4]);
+  const h = Core.scaleObj(o, 0.5, 0.5);
+  assert.deepEqual([h.a, h.b, h.size], [{ x: 5, y: 5 }, { x: 15, y: 10 }, 1]);
+  assert.equal(Core.scaleObj({ ...o, size: 1 }, 0.1, 0.1).size, 1); // never thinner than 1 px
+  assert.equal(Core.scaleObj(o, 3, 1).size, 3); // uneven scale: the geometric mean (√3 × 2)
+  assert.equal(o.a.x, 10); // o untouched
+});
+
+test('odd stroke widths: hit tests and handles follow the drawn stroke, half a pixel off the stored points', () => {
+  // drawObj strokes an odd width on pixel centres (+0.5), so a 1 px line from (5,10) covers pixel row 10: y 10..11.
+  const l = obj('line', { x: 5, y: 10 }, { x: 35, y: 10 }, { size: 1 });
+  assert.deepEqual(Core.drawnObj(l).a, { x: 5.5, y: 10.5 });
+  assert.equal(Core.hitsObject(l, { x: 20, y: 10.95 }, 0.25), true); // the bottom of the drawn pixel
+  assert.equal(Core.hitsObject(l, { x: 20, y: 9.6 }, 0.25), false); // above it
+  const r = obj('rect', { x: 5, y: 20 }, { x: 25, y: 30 }, { size: 3 });
+  assert.deepEqual(Core.objHandles(r)[0], { h: 'nw', x: 5.5, y: 20.5 });
+  assert.equal(Core.handleAt(r, { x: 25.5, y: 30.5 }, 0.3), 'se');
+  const e = obj('rect', { x: 5, y: 20 }, { x: 25, y: 30 }, { size: 2 });
+  assert.equal(Core.drawnObj(e), e); // even widths are drawn on the points themselves
+});

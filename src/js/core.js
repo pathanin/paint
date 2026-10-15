@@ -466,9 +466,16 @@
     const t = n ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / n)) : 0;
     return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
   }
+  // o as drawn: an odd stroke width is drawn on pixel centres (+0.5, see drawObj in objects.js) and an
+  // even one on the points themselves. Hit tests and handles use this, so they sit on the stroke.
+  function drawnObj(o) {
+    if (!(o.size % 2)) return o;
+    return { ...o, a: { x: o.a.x + 0.5, y: o.a.y + 0.5 }, b: { x: o.b.x + 0.5, y: o.b.y + 0.5 } };
+  }
   // Is p on o? tol is extra reach in image px (callers pass a few screen px over the zoom), so thin
   // outlines stay clickable at any zoom. Filled shapes hit inside; outlines only near their edge.
   function hitsObject(o, p, tol) {
+    o = drawnObj(o);
     const half = o.size / 2 + tol, filled = o.mode !== 'outline';
     if (o.t === 'line') return segDist(p, o.a, o.b) <= half;
     const r = normRect(o.a, o.b);
@@ -488,36 +495,89 @@
     for (let i = objs.length - 1; i >= 0; i--) if (hitsObject(objs[i], p, tol)) return i;
     return -1;
   }
-  // Resize handles: the two ends of a line; the corners, then the edge midpoints, of a box.
-  function objHandles(o) {
+  // Resize handles: the two ends of a line; the corners, then the edge midpoints, of a box. gap (image
+  // px) leaves out the midpoints of a side shorter than it, where they'd crowd the corners.
+  const objHandles = (o, gap = 0) => handlesOf(drawnObj(o), gap);
+  function handlesOf(o, gap) { // o: as drawn
     if (o.t === 'line') return [{ h: 'a', x: o.a.x, y: o.a.y }, { h: 'b', x: o.b.x, y: o.b.y }];
     const r = normRect(o.a, o.b), x1 = r.x + r.w, y1 = r.y + r.h, mx = r.x + r.w / 2, my = r.y + r.h / 2;
-    return [{ h: 'nw', x: r.x, y: r.y }, { h: 'ne', x: x1, y: r.y }, { h: 'se', x: x1, y: y1 }, { h: 'sw', x: r.x, y: y1 },
-      { h: 'n', x: mx, y: r.y }, { h: 'e', x: x1, y: my }, { h: 's', x: mx, y: y1 }, { h: 'w', x: r.x, y: my }];
+    const hs = [{ h: 'nw', x: r.x, y: r.y }, { h: 'ne', x: x1, y: r.y }, { h: 'se', x: x1, y: y1 }, { h: 'sw', x: r.x, y: y1 }];
+    if (r.w >= gap) hs.push({ h: 'n', x: mx, y: r.y });
+    if (r.h >= gap) hs.push({ h: 'e', x: x1, y: my });
+    if (r.w >= gap) hs.push({ h: 's', x: mx, y: y1 });
+    if (r.h >= gap) hs.push({ h: 'w', x: r.x, y: my });
+    return hs;
   }
   // The nearest handle within tol of p (on a tie a corner, so a tiny box stays resizable), or null.
-  function handleAt(o, p, tol) {
+  // Inside the shape a handle reaches at most a quarter of its short side, so the middle of a small
+  // box (or a short line) is left free for moving it.
+  function handleAt(o, p, tol, gap = 0) {
+    o = drawnObj(o);
+    let reach = tol;
+    if (o.t === 'line') {
+      const dx = o.b.x - o.a.x, dy = o.b.y - o.a.y, n = dx * dx + dy * dy;
+      const t = n ? ((p.x - o.a.x) * dx + (p.y - o.a.y) * dy) / n : -1;
+      if (t > 0 && t < 1) reach = Math.min(tol, Math.sqrt(n) / 4);
+    } else {
+      const r = normRect(o.a, o.b);
+      if (p.x > r.x && p.x < r.x + r.w && p.y > r.y && p.y < r.y + r.h) reach = Math.min(tol, Math.min(r.w, r.h) / 4);
+    }
     let best = null, bd = Infinity;
-    for (const q of objHandles(o)) {
+    for (const q of handlesOf(o, gap)) {
       const d = Math.max(Math.abs(q.x - p.x), Math.abs(q.y - p.y));
-      if (d <= tol && d < bd) { best = q.h; bd = d; }
+      if (d <= reach && d < bd) { best = q.h; bd = d; }
     }
     return best;
   }
   // o with handle h dragged by (dx, dy). A box keeps its other edges, so it can flip past them.
-  function resizeObj(o, h, dx, dy) {
-    if (h === 'a' || h === 'b') return { ...o, [h]: { x: o[h].x + dx, y: o[h].y + dy } };
+  // keep (Shift): a corner scales the box from the opposite corner and an edge scales it about its
+  // middle, both keeping the aspect ratio; a line end snaps to 0°, 45° or 90° from the other end.
+  function resizeObj(o, h, dx, dy, keep = false) {
+    if (h === 'a' || h === 'b') {
+      const q = { x: o[h].x + dx, y: o[h].y + dy };
+      return { ...o, [h]: keep ? constrainShape(o[h === 'a' ? 'b' : 'a'], q, true, 'line') : q };
+    }
     const r = normRect(o.a, o.b);
     let x0 = r.x, y0 = r.y, x1 = r.x + r.w, y1 = r.y + r.h;
     if (h.includes('w')) x0 += dx;
     if (h.includes('e')) x1 += dx;
     if (h.includes('n')) y0 += dy;
     if (h.includes('s')) y1 += dy;
+    if (keep && r.w > 0 && r.h > 0) {
+      const sx = (x1 - x0) / r.w, sy = (y1 - y0) / r.h; // signed: negative once flipped
+      const corner = h.length === 2;
+      const s = corner ? Math.max(Math.abs(sx), Math.abs(sy)) : Math.abs(h === 'e' || h === 'w' ? sx : sy);
+      const w = Math.round(s * r.w), ht = Math.round(s * r.h);
+      const fx = (h === 'n' || h === 's' ? 1 : sx) < 0 ? -1 : 1, fy = (h === 'e' || h === 'w' ? 1 : sy) < 0 ? -1 : 1;
+      if (h.includes('w')) x0 = x1 - fx * w; else if (h.includes('e')) x1 = x0 + fx * w;
+      else { x0 = Math.round(r.x + r.w / 2 - w / 2); x1 = x0 + w; }
+      if (h.includes('n')) y0 = y1 - fy * ht; else if (h.includes('s')) y1 = y0 + fy * ht;
+      else { y0 = Math.round(r.y + r.h / 2 - ht / 2); y1 = y0 + ht; }
+    }
     return { ...o, a: { x: x0, y: y0 }, b: { x: x1, y: y1 } };
   }
   const moveObj = (o, dx, dy) => ({ ...o, a: { x: o.a.x + dx, y: o.a.y + dy }, b: { x: o.b.x + dx, y: o.b.y + dy } });
+  // o after a whole-image rotate or flip of a W × H image (Core.rotateDims gives the new size). Odd
+  // stroke widths are drawn on pixel centres and even ones on pixel edges, so pixel x mirrors to
+  // W - 1 - x for the first and W - x for the second: the shape lands on the pixels the image's did.
+  function transformObj(o, kind, W, H) {
+    const k = o.size % 2 ? 1 : 0;
+    const f = kind === 'rotR' ? (p) => ({ x: H - k - p.y, y: p.x })
+      : kind === 'rotL' ? (p) => ({ x: p.y, y: W - k - p.x })
+      : kind === 'flipH' ? (p) => ({ x: W - k - p.x, y: p.y })
+      : (p) => ({ x: p.x, y: H - k - p.y });
+    return { ...o, a: f(o.a), b: f(o.b) };
+  }
+  // o after scaling the image by (sx, sy): the drawn geometry scales, and so does the stroke (by the
+  // geometric mean, at least 1 px), as it would have had the shape been pixels.
+  function scaleObj(o, sx, sy) {
+    const size = Math.max(1, Math.round(o.size * Math.sqrt(sx * sy)));
+    const off = o.size % 2 ? 0.5 : 0, off2 = size % 2 ? 0.5 : 0;
+    const f = (p) => ({ x: Math.round((p.x + off) * sx - off2), y: Math.round((p.y + off) * sy - off2) });
+    return { ...o, a: f(o.a), b: f(o.b), size };
+  }
 
   const Core = { rgbaToU32, colorDistance, floodMask, fillEdge, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History,
-    objBox, hitsObject, hitObject, objHandles, handleAt, resizeObj, moveObj };
+    objBox, drawnObj, hitsObject, hitObject, objHandles, handleAt, resizeObj, moveObj, transformObj, scaleObj };
   module.exports = Core;
 })();

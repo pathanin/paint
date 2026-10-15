@@ -2,7 +2,6 @@ import Core from './core.js';
 import { docOp, hist, img } from './doc.js';
 import { $, makeCanvas } from './dom.js';
 import { pica, used } from './libs.js';
-import { flattenObjs } from './objects.js';
 import { dropSelection } from './selection.js';
 import { S, drag, sel, sizeProblem } from './state.js';
 import { commitText, textAt } from './text.js';
@@ -12,7 +11,6 @@ import { flash } from './toast.js';
 function transformDoc(kind) {
   commitText();
   dropSelection();
-  flattenObjs();
   const w = img.width, h = img.height;
   const dims = Core.rotateDims(w, h, kind === 'rotL' ? -90 : kind === 'rotR' ? 90 : 0);
   const c = makeCanvas(dims.w, dims.h), g = c.getContext('2d');
@@ -21,7 +19,7 @@ function transformDoc(kind) {
   else if (kind === 'flipH') { g.translate(w, 0); g.scale(-1, 1); }
   else if (kind === 'flipV') { g.translate(0, h); g.scale(1, -1); }
   g.drawImage(img, 0, 0);
-  docOp(c);
+  docOp(c, (o) => Core.transformObj(o, kind, w, h));
 }
 // Scale with pica's Lanczos-3 filter (in workers); past its budget, or if it fails, the built-in
 // halving resampler. On a zone plate ÷3, Lanczos-3 had ~40% less moiré and kept low
@@ -75,7 +73,7 @@ async function scaleDoc(w, h) {
       flash('Resize failed: the image changed while it ran', true);
       return;
     }
-    docOp(out);
+    docOp(out, (o) => Core.scaleObj(o, w / src.width, h / src.height));
     if (shown) flash(`Resized to ${w} × ${h} px`);
   } finally {
     clearTimeout(slow);
@@ -88,14 +86,13 @@ function resizeDoc(w, h, mode, anchor) {
   if (w === img.width && h === img.height) { flash('Size unchanged'); return; }
   commitText();
   dropSelection();
-  flattenObjs();
   if (mode === 'scale') return scaleDoc(w, h);
   const c = makeCanvas(w, h), g = c.getContext('2d');
   g.fillStyle = S.secondary;
   g.fillRect(0, 0, w, h);
   const { dx, dy } = Core.anchorOffset(img.width, img.height, w, h, anchor);
   g.drawImage(img, dx, dy);
-  docOp(c);
+  docOp(c, (o) => Core.moveObj(o, dx, dy));
 }
 
 export { resample, resizeDoc, scaleImage, transformDoc };

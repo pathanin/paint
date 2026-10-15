@@ -5,9 +5,9 @@ import { redo, undo } from './doc.js';
 import { $, ring, stage, textBox } from './dom.js';
 import { openFile, save } from './fileio.js';
 import { openHelp } from './help.js';
-import { deleteObj, duplicateObj, flattenObjs, nudgeObj, objSel, objs, reorderObj, restyleObj, selObj, selectObj } from './objects.js';
+import { cycleObj, deleteObj, duplicateObj, flattenObjs, nudgeObj, objSel, objs, reorderObj, restyleObj, selObj, selectObj } from './objects.js';
 import { modalOpen } from './paste.js';
-import { cancelDrag } from './pointer.js';
+import { cancelDrag, objDragUpdate } from './pointer.js';
 import { crop, deleteSelection, dropSelection, nudge, selectAll } from './selection.js';
 import { S, SHAPES, TOOL_KEYS, drag, sel } from './state.js';
 import { cancelText, commitText } from './text.js';
@@ -61,10 +61,12 @@ window.addEventListener('keydown', (e) => {
     hideTip();
     if (fromKeyboard) { e.preventDefault(); return; } // first Esc dismisses a focus tooltip (WCAG 1.4.13)
   }
+  if (e.key === 'Alt') { S.altKey = true; requestRender(); }
   if (document.querySelector('dialog[open]') || isTyping(e.target)) return;
   if (drag) { // mid-gesture, only Esc (cancel) applies; other keys would pull state out from under it
     if (e.key === 'Escape') cancelDrag();
     else if (e.key === 'Shift' && SHAPES.has(drag.t)) { drag.shift = true; requestRender(); }
+    else if (e.key === 'Shift' && (drag.t === 'objmove' || drag.t === 'objsize')) { drag.shift = true; objDragUpdate(drag); requestRender(); }
     if (e.code !== 'Space') e.preventDefault();
     return;
   }
@@ -109,6 +111,7 @@ window.addEventListener('keydown', (e) => {
   if (k.startsWith('Arrow') && !onCanvas) return; // arrows on a focused control belong to that control
   switch (k) {
     case 'KeyX': swapColors(); break;
+    case 'Tab': if (onCanvas && S.tool === 'move' && !e.altKey && cycleObj(e.shiftKey ? -1 : 1)) e.preventDefault(); break;
     case 'Delete': case 'Backspace': if (!onCanvas) return; e.preventDefault(); if (!deleteObj()) deleteSelection(); break;
     case 'Escape': if (objSel != null) selectObj(null); else dropSelection(); break;
     case 'BracketLeft': setSize(Core.stepSize(S.sizes[S.tool], -1)); restyleObj(S.sizes[S.tool] != null ? { size: S.sizes[S.tool] } : {}, 'size'); break;
@@ -123,7 +126,9 @@ window.addEventListener('keydown', (e) => {
   }
 });
 window.addEventListener('keyup', (e) => {
+  if (e.key === 'Alt') { S.altKey = false; requestRender(); }
   if (e.key === 'Shift' && drag && SHAPES.has(drag.t)) { drag.shift = false; requestRender(); }
+  if (e.key === 'Shift' && drag && (drag.t === 'objmove' || drag.t === 'objsize')) { drag.shift = false; objDragUpdate(drag); requestRender(); }
   if (e.code === 'Space') { S.panKey = false; if (!drag || drag.t !== 'pan') stage.classList.remove('panning'); }
 });
 

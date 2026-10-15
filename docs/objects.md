@@ -7,7 +7,7 @@ A thin spike of the recommended option is on branch `objects-spike`. See "The sp
 ## TL;DR
 
 - Today every tool bakes pixels into `#image` at once, and undo stores pixels (tiles, fill masks, whole canvases). So "objects" can't be added to the select tool. It is a second document model next to the raster.
-- **Recommendation: an object layer above the raster (option B).** Rectangles, ellipses and lines (then text, then pasted images) become live objects drawn above the pixels. Pixel tools keep working on the raster underneath. Objects are flattened into pixels on an explicit Flatten (⌘E, as in Figma), and before any whole-image op.
+- **Recommendation: an object layer above the raster (option B).** Rectangles, ellipses and lines (then text, then pasted images) become live objects drawn above the pixels. Pixel tools keep working on the raster underneath. Objects are flattened into pixels only on an explicit Flatten (⌘E, as in Figma). Whole-image ops carry them along.
 - **A full scene graph like Figma/OpenPencil (option C) is the wrong target here.** It would mean turning brush strokes into vector paths and dropping the raster model the app is built and tuned around. OpenPencil leans on CanvasKit (7 MB WASM) and Yoga WASM, and neither can load under the `file://`, no-`fetch` constraint.
 - **Decided (2026-10-14, by the user):**
   - Pixel tools paint *under* objects, as built.
@@ -47,7 +47,7 @@ Objects persist in a z-ordered list drawn above `#image`. Any object can be sele
 
 - **Pixel tools** (pencil, brush, eraser, fill) act on the raster *under* the objects. The picker and copy sample what you see (raster + objects).
 - **Flatten** (⌘E) bakes every object into the raster as one undo step.
-- **Before whole-image ops** (crop, resize, canvas size, rotate, flip), objects are flattened first. A later step could transform the objects instead (rotate their coordinates, scale them with Resize) rather than flatten them.
+- **Whole-image ops** (crop, resize, canvas size, rotate, flip) transform the objects with the pixels: crop and canvas size shift them, Resize scales their geometry and stroke, rotate and flip map their points. They stay objects, as one undo step.
 - **Saving to PNG, JPEG or WebP** writes the flattened composite. The objects stay live in the session.
 - **Cost:** medium. See the touch list.
 
@@ -82,10 +82,13 @@ Everything is a node, including brush strokes (vector paths) and pasted bitmaps 
 4. **Pointer:** the Move tool (V) hit-tests the handles of the selected object, then all objects (topmost first), and pans on empty canvas. The select tool is pixels only, so a marquee can start over a shape. Shape tools edit the selected object when you press on it, and otherwise draw a new one. New `drag.t` values: `objmove`, `objsize`. Esc cancels both. Done.
 5. **Keyboard:** Delete, arrows (⇧ = 10), Esc to deselect, ⌘D duplicate, ⌘] / ⌘[ forward/backward, ⌘E flatten. Done, in the keydown handler and the README.
    - The ⌘ keys act (and `preventDefault`) only when there is an object to act on, so with no shape selected the browser keeps ⌘D (bookmark) and ⌘[ / ⌘] (back, forward).
-   - **Deliberate gap:** they aren't in the `?` dialog (`HELP`). It already fills 1280×800 exactly (smoke checks that it fits), and even one more row overflows. Shipping this needs a help-layout change, such as a third column.
+   - The `?` dialog lists them in a Shapes section. It now has three columns (it filled 1280×800 exactly with two), and smoke still checks that it fits.
    - Streams of edits are coalesced into one undo step: held arrows, a colour-well drag, `[` `]` and X's swap. Otherwise holding an arrow would evict pixel undo steps through `History`'s 100-entry cap. Coalescing stops at the save point, so `isDirty()` stays true after a nudge.
 6. **Restyle:** colour 1 and 2, size and Outline/Fill/Both act on the selected object (Figma's properties panel, in the options bar). Done for the palette, colour wells, the size slider (one undo step per drag, on `change`) and the fill-mode radios.
-7. **Whole-image ops:** crop, resize, canvas size, rotate and flip flatten first. Done, but as two undo steps: flatten, then the op. Next: transform objects instead of flattening.
+7. **Whole-image ops:** done. Crop, resize, canvas size, rotate and flip transform the objects (`Core.moveObj`, `scaleObj`, `transformObj`) instead of flattening them, in one `doc` undo entry that also keeps the old object list. An object left wholly outside the new image (a crop) is dropped, and undo brings it back.
+   - Odd stroke widths are drawn on pixel centres and even ones on pixel edges, so a flip maps pixel x to W − 1 − x for the first and W − x for the second. The shape then lands on the pixels it would have covered had it been flattened first.
+   - It isn't bit-exact with flatten-then-transform: Chrome anti-aliases an edge a little differently when a shape is drawn turned than when its pixels are turned (up to ~110 of 255 on a few edge pixels of an ellipse, the round cap of a line). `objects.js` checks that no value differs by half the range and the ink agrees within 0.5%; one pixel off fails that.
+   - Resize scales the stroke width by the geometric mean of the two scales, rounded, at least 1 px. The shapes stay crisp vectors, unlike pixels that were resampled.
 8. **Export:** save, copy and the picker use the composite. Done; save builds a full-size composite only when objects exist.
 9. **Text as an object:** not done. `commitText()` would create a TEXT object (string, font, size, colour, position) instead of baking, and clicking it with the text tool would reopen the box. The baseline maths (`textBaseline()`) carries over unchanged.
 10. **Pasted images as objects:** not done. This would reuse `sel.float`'s canvas as an IMAGE object, so a paste could be moved and scaled later, which is the most Figma-like win for screenshots.
@@ -93,7 +96,7 @@ Everything is a node, including brush strokes (vector paths) and pasted bitmaps 
 12. **Rotation, groups, multi-select, snapping, layers list:** not done. Multi-select (⇧-click, marquee over objects) is the next most useful step after text.
 13. **`task.md`:** "selection resize handles" is listed as out of scope for polish. Objects reopen it as feature work.
 
-14. **Keyboard access to objects:** objects can only be picked with the pointer. Tab-cycling through objects (Figma: Tab / ⇧Tab) is needed before this ships, given the accessibility work in `task.md`.
+14. **Keyboard access to objects:** done. With the Move tool and the canvas focused (`#viewport` is a Tab stop), Tab / ⇧Tab select the next / previous shape in drawing order, and a screen reader hears its kind, size, position and index. Past either end the shape is deselected and the key moves focus on as usual, so focus is never trapped.
 15. **The benchmark's `rect drag 200`** now measures drawing a shape object (preview only), not a pixel commit. Add a flatten scenario if flatten cost matters.
 
 ## The spike (`objects-spike` branch)
@@ -104,11 +107,17 @@ What works:
 
 - **Drawing:** a rectangle, ellipse or line becomes an object. It's selected right after drawing, with handles.
 - **Editing:** drag the body to move, drag a handle to resize (a line has two end handles), and Esc mid-drag cancels.
+  - Nothing moves until the pointer has gone 3 screen px, so a click only selects, even at 25% where one screen px is 4 image px.
+  - Shift (held from the start or pressed mid-drag) moves along one axis only, keeps a box's aspect ratio (a corner scales from the opposite corner, an edge about the middle) and snaps a line end to 0°, 45° or 90°.
+  - A box side under 24 screen px drops its midpoint handles, and inside the shape a handle reaches at most a quarter of its short side, so the middle of a tiny box or a short line still moves it.
+- **Odd stroke widths** are drawn on pixel centres (half a pixel off the stored points), so hit tests, handles and both outlines use `Core.drawnObj()`, the shape as drawn. Before that, at 1600% the outline sat 8 screen px off a 3 px stroke and the far half of a 1 px line missed.
+- **Hover:** with the Move tool, the shape a click would pick is outlined (its box, its ellipse, or a bar along a line), as in Figma. The selected shape isn't, since it has its handles.
+- **⌥-drag** (Move tool) on a shape's body moves a copy, placed just above the original, as one undo step. A ⌥-click or an Esc-cancelled ⌥-drag adds nothing. ⌥ over a shape shows the copy cursor.
 - **Selecting:** with the Move tool (V), click any object. Dragging empty canvas pans, and a click there deselects. The select tool (S) only selects pixels, even on top of a shape.
 - **Keyboard:** Delete, arrows to nudge, Esc to deselect, ⌘D duplicate, ⌘] / ⌘[ to reorder, ⌘E to flatten all.
 - **Restyling:** palette, colour wells, size and Outline/Fill/Both act on the selected object.
 - **Undo/redo:** every object edit is undoable. Flatten undoes as one step (pixels and objects together).
-- **Composite:** save, copy and the picker include objects. Crop, resize, rotate and flip flatten first.
+- **Composite:** save, copy and the picker include objects. Crop, resize, canvas size, rotate and flip carry the objects along (one undo step).
 
 Found while building it: if the shape tools keep the last object selected, setting up the *next* shape (picking a colour or style) restyles the last one, and a drag that starts inside it moves it instead of drawing. So the selection now survives only the Move tool and the object's own shape tool. Figma avoids this by switching back to Move after each shape. Paint keeps the tool, so this rule stands in for that switch.
 

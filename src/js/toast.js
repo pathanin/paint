@@ -18,6 +18,12 @@ $('#toast').addEventListener('pointerleave', () => {
 const errText = (err, denied) => (err && (err.name === 'NotAllowedError' || err.name === 'SecurityError') ? denied
   : err && err.name === 'InvalidStateError' ? 'the file is busy or was changed elsewhere'
   : (err && err.message) || 'unknown error');
+// Screen readers only (the polite live region), for changes the eye sees on the canvas.
+function announce(msg) {
+  const live = $('#srStatus');
+  live.textContent = '';
+  setTimeout(() => { live.textContent = msg; }, 50);
+}
 function flash(msg, isError) {
   const t = $('#toast');
   t.textContent = msg;
@@ -32,4 +38,4 @@ function flash(msg, isError) {
   msgTimer = setTimeout(() => t.classList.remove('show'), isError ? 5000 : 2200);
 }
 
-export { errText, flash, msgTimer };
+export { announce, errText, flash, msgTimer };

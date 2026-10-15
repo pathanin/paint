@@ -5,6 +5,7 @@ import { commitSelection } from './selection.js';
 import { commitText } from './text.js';
 import { beginOp, endOp, touch } from './tiles.js';
 import { drawObj } from './tools.js';
+import { announce } from './toast.js';
 import { requestRender } from './view.js';
 
 // ---------- objects ----------
@@ -30,8 +31,19 @@ function setObjs(next, key) {
   objs = next; objVer++;
   requestRender();
 }
-// The list changed under a gesture or an Esc (no history entry of its own).
-function showObjs(next) { objs = next; objVer++; }
+// The list changed under a gesture or an Esc (no history entry of its own). sel: the id to select.
+function showObjs(next, sel) { objs = next; if (sel !== undefined) objSel = sel; objVer++; }
+const newObjId = () => nextObjId++;
+// A whole-image op (crop, resize, rotate, flip): map every object to its place in the new w × h image.
+// One left wholly outside is dropped. Returns the list before (for the doc entry), or null if empty.
+function mapObjs(map, w, h) {
+  if (!objs.length) return null;
+  const before = objs;
+  objs = objs.map(map).filter((o) => { const b = Core.objBox(o); return b.x < w && b.y < h && b.x + b.w > 0 && b.y + b.h > 0; });
+  objVer++;
+  if (!selObj()) objSel = null;
+  return before;
+}
 function resetObjs() { objs = []; objSel = null; objVer++; }
 // Undo/redo of an obj entry, or of a flatten's region entry: swap in the list the entry keeps.
 function applyObjHist(e) {
@@ -55,6 +67,17 @@ function selectObj(id) {
   if (objSel === id) return;
   objSel = id; objVer++;
   requestRender();
+}
+// Tab / ⇧Tab on the canvas with the Move tool: the next or previous shape, in drawing order. Past
+// either end it deselects and returns false, so the key moves focus on as usual (no focus trap).
+const OBJ_NAMES = { line: 'Line', rect: 'Rectangle', ellipse: 'Ellipse' };
+function cycleObj(dir) {
+  const i = objs.findIndex((o) => o.id === objSel), j = i < 0 ? (dir > 0 ? 0 : -1) : i + dir;
+  if (j < 0 || j >= objs.length) { if (objSel != null) selectObj(null); return false; }
+  const o = objs[j], r = Core.normRect(o.a, o.b);
+  selectObj(o.id);
+  announce(`${OBJ_NAMES[o.t]}, ${r.w} × ${r.h} px at ${r.x}, ${r.y}. Shape ${j + 1} of ${objs.length}`);
+  return true;
 }
 function deleteObj() {
   const o = selObj();
@@ -105,4 +128,4 @@ function composite() {
   return c;
 }
 
-export { addObj, applyObjHist, commitObjDrag, composite, deleteObj, duplicateObj, flattenObjs, nudgeObj, objs, objSel, objVer, reorderObj, resetObjs, restyleObj, selectObj, selObj, showObjs };
+export { addObj, applyObjHist, commitObjDrag, composite, cycleObj, deleteObj, duplicateObj, flattenObjs, mapObjs, newObjId, nudgeObj, objs, objSel, objVer, reorderObj, resetObjs, restyleObj, selectObj, selObj, showObjs };

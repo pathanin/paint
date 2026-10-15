@@ -7,6 +7,7 @@ import { S } from './state.js';
 import { commitText, placeTextBox, textAt } from './text.js';
 import { TILE, op, touch } from './tiles.js';
 import { flash } from './toast.js';
+import { requestRender } from './view.js';
 
 // ---------- tools ----------
 function setTool(t) {
@@ -28,6 +29,7 @@ function setTool(t) {
   });
   document.querySelectorAll('.opts [data-for]').forEach((l) => { l.hidden = !l.dataset.for.split(' ').includes(t); });
   ring.hidden = true;
+  requestRender(); // cursor and hover outline follow the tool even if the pointer doesn't move
   if (S.sizes[t] != null) { $('#size').value = S.sizes[t]; $('#sizeOut').textContent = S.sizes[t]; $('#size').setAttribute('aria-valuetext', S.sizes[t] + ' px'); }
 }
 function setSize(v) {

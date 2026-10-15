@@ -1,7 +1,7 @@
 import Core from './core.js';
 import { $ } from './dom.js';
 import { applyFill } from './fill.js';
-import { applyObjHist, resetObjs } from './objects.js';
+import { applyObjHist, mapObjs, resetObjs } from './objects.js';
 import { commitSelection } from './selection.js';
 import { S, drag, sel, setDrag, setSel } from './state.js';
 import { commitText } from './text.js';
@@ -49,14 +49,18 @@ function setDoc(source, w, h) {
 
 // Replace the whole document (crop/resize/rotate/...) as one undo step. The entry keeps the old
 // canvas element itself; undo and redo swap it with the live one. No pixels are copied.
-function docOp(next) {
+// map (crop, resize, rotate, flip): where each object goes in the new image. Objects stay objects;
+// one left wholly outside the new image is dropped. The entry keeps the old list, so one undo
+// restores both (applyObjHist swaps e.objs like an obj entry's).
+function docOp(next, map) {
   commitText();
   commitSelection();
   const before = img;
   setDoc(next);
-  pushDocHist(before);
+  const objsBefore = map ? mapObjs(map, img.width, img.height) : null;
+  pushDocHist(before, objsBefore);
 }
-const pushDocHist = (before) => pushHist({ type: 'doc', canvas: before, bytes: before.width * before.height * 4 });
+const pushDocHist = (before, objs) => pushHist({ type: 'doc', canvas: before, bytes: before.width * before.height * 4, ...(objs && { objs }) });
 function pushHist(e) {
   if (hist.push(e) && !S.trimWarned) {
     S.trimWarned = true;
@@ -68,7 +72,7 @@ function pushHist(e) {
 // Each entry holds the pixels of the *other* state (before when on the undo stack, after when on
 // the redo stack); applying it swaps them with what's on the canvas, so one copy serves both ways.
 function applyHist(e) {
-  applyObjHist(e); // obj entries, and a flatten's region entry
+  applyObjHist(e); // obj entries, a flatten's region entry, and a crop/resize/rotate/flip's doc entry
   if (e.type === 'region') swapParts(e.parts);
   else if (e.type === 'fill') applyFill(e);
   else if (e.type === 'doc') {

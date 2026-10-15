@@ -3,8 +3,8 @@ import { hist, img, redo, undo } from './doc.js';
 import { $, antsEl, clamp, ov, setAttr, setData, setProp, setText, stage, vp } from './dom.js';
 import { isDirty, save } from './fileio.js';
 import { showGhost } from './handles.js';
-import { objVer, objs, selObj } from './objects.js';
-import { objCursor, updateRing } from './pointer.js';
+import { objSel, objVer, objs, selObj } from './objects.js';
+import { objCursor, objGap, objTarget, updateRing } from './pointer.js';
 import { crop, inside } from './selection.js';
 import { S, SHAPES, drag, sel } from './state.js';
 import { placeTextBox, textAt } from './text.js';
@@ -111,7 +111,10 @@ function requestRender() {
 function render() {
   rafPending = false;
   updateRing(hoverPt);
-  if (!drag) setProp(ov.style, 'cursor', objCursor(hoverPt) || (S.tool === 'move' ? 'grab' : '') || (S.tool === 'select' && sel && hoverPt && inside(hoverPt, sel) ? 'move' : ''));
+  const hit = !drag && hoverPt && objs.length ? objTarget(hoverPt) : null;
+  if (!drag) setProp(ov.style, 'cursor', objCursor(hit) || (S.tool === 'move' ? 'grab' : '') || (S.tool === 'select' && sel && hoverPt && inside(hoverPt, sel) ? 'move' : ''));
+  // The Move tool outlines the shape a click would pick (not the selected one: it has its own).
+  placeObjHover(hit && !hit.h && S.tool === 'move' && hit.o.id !== objSel ? hit.o : null);
   if (drag && drag.t === 'canvas') showGhost(drag);
   const shape = drag && SHAPES.has(drag.t);
   const marquee = drag && drag.t === 'select';
@@ -174,8 +177,9 @@ const handleEls = Object.fromEntries(HANDLE_IDS.map((h) => {
 let objSelKey = '';
 function placeObjSel(o) {
   const z = S.zoom, d = devicePixelRatio, px = (v) => Math.round(v * z * d) / d;
-  const r = o && Core.normRect(o.a, o.b);
-  const key = o ? [o.t, px(r.x), px(r.y), px(r.x + r.w), px(r.y + r.h), px(o.a.x), px(o.a.y), px(o.b.x), px(o.b.y)].join() : '';
+  const g = o && Core.drawnObj(o); // on the stroke, not half a pixel off it (odd widths)
+  const r = o && Core.normRect(g.a, g.b);
+  const key = o ? [z, o.t, px(r.x), px(r.y), px(r.x + r.w), px(r.y + r.h), px(g.a.x), px(g.a.y), px(g.b.x), px(g.b.y)].join() : '';
   if (key === objSelKey) return;
   objSelKey = key;
   objSelEl.hidden = !o;
@@ -183,12 +187,34 @@ function placeObjSel(o) {
   const x = px(r.x), y = px(r.y);
   Object.assign(objSelEl.style, { left: x + 'px', top: y + 'px', width: px(r.x + r.w) - x + 'px', height: px(r.y + r.h) - y + 'px' });
   objSelEl.classList.toggle('line', o.t === 'line');
-  const shown = new Map(Core.objHandles(o).map((h) => [h.h, h]));
+  const shown = new Map(Core.objHandles(o, objGap()).map((h) => [h.h, h]));
   for (const id of HANDLE_IDS) {
     const h = shown.get(id), el = handleEls[id];
     el.hidden = !h;
     if (h) el.style.transform = `translate(${px(h.x) - x}px, ${px(h.y) - y}px)`;
   }
+}
+
+// Outline of the shape under the pointer (Move tool): its box, its ellipse, or a bar along a line.
+const objHoverEl = $('#objhover');
+let objHoverKey = '';
+function placeObjHover(o) {
+  const z = S.zoom, d = devicePixelRatio, px = (v) => Math.round(v * z * d) / d;
+  const key = o ? [z, o.t, o.a.x, o.a.y, o.b.x, o.b.y, o.size % 2].join() : '';
+  if (key === objHoverKey) return;
+  objHoverKey = key;
+  objHoverEl.hidden = !o;
+  if (!o) return;
+  o = Core.drawnObj(o);
+  objHoverEl.className = o.t;
+  if (o.t === 'line') {
+    const ax = o.a.x * z, ay = o.a.y * z, len = Math.hypot(o.b.x - o.a.x, o.b.y - o.a.y) * z;
+    Object.assign(objHoverEl.style, { left: ax + 'px', top: ay - 1 + 'px', width: len + 'px', height: '2px',
+      transform: `rotate(${Math.atan2(o.b.y - o.a.y, o.b.x - o.a.x)}rad)` });
+    return;
+  }
+  const r = Core.normRect(o.a, o.b), x = px(r.x), y = px(r.y);
+  Object.assign(objHoverEl.style, { left: x + 'px', top: y + 'px', width: px(r.x + r.w) - x + 'px', height: px(r.y + r.h) - y + 'px', transform: '' });
 }
 
 let cursor = null;  // integer image px under the pointer, for the status bar

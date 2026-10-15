@@ -11,6 +11,7 @@ const S = {
   zoom: 1,
   fileHandle: null, fileName: 'untitled.png',
   pristine: true, panKey: false,
+  altKey: false, // ⌥ held: a Move-tool drag on a shape duplicates it (copy cursor)
 };
 // Gesture and selection state, read everywhere. Other modules read these live bindings and change
 // them only through the setters (an ES module can't assign another module's binding).

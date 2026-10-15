@@ -55,6 +55,7 @@ document.addEventListener('focusout', () => { if (tipFor) hideTip(); });
 function resetTransientKeys() {
   hideTip();
   S.panKey = false;
+  S.altKey = false;
   if (!drag || drag.t !== 'pan') stage.classList.remove('panning');
 }
 window.addEventListener('blur', resetTransientKeys);

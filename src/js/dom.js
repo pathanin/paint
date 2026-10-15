@@ -35,7 +35,7 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 // Shortcut labels are written Mac-style in the markup; show Ctrl/Shift elsewhere.
 const MAC = /Mac|iPhone|iPad/.test(navigator.platform);
-const keyLabel = (k) => (MAC ? k.replace(/Alt\+/g, '⌥')
+const keyLabel = (k) => (MAC ? (k === 'Alt' ? '⌥' : k.replace(/Alt\+/g, '⌥'))
   : k === '⌘' ? 'Ctrl' : k === '⇧' ? 'Shift' : k === '⌫' ? 'Backspace'
   : k.replace(/⌘/g, 'Ctrl+').replace(/⇧([- ])/g, 'Shift$1').replace(/⇧/g, 'Shift+').replace(/\+\+$/, '+Plus').replace(/\+−$/, '+Minus'));
 

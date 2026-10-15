@@ -3,7 +3,7 @@ import { img } from './doc.js';
 import { $, clamp, ov, ring, setProp, stage, textBox, vp } from './dom.js';
 import { doFill } from './fill.js';
 import { endCanvasDrag } from './handles.js';
-import { addObj, commitObjDrag, objSel, objs, selObj, selectObj, showObjs } from './objects.js';
+import { addObj, commitObjDrag, newObjId, objSel, objs, selObj, selectObj, showObjs } from './objects.js';
 import { dropSelection, inside, liftSelection } from './selection.js';
 import { S, SHAPES, drag, sel, setDrag, setSel } from './state.js';
 import { commitText, startText } from './text.js';
@@ -15,11 +15,12 @@ import { imgPt, requestRender, setCursor, setHover, setZoom, updateChrome, updat
 // Object editing under the pointer, for the move tool (any object; elsewhere it pans) and the shape
 // tools (the selected one; elsewhere they draw a new shape). The select tool is for pixels only, so
 // a marquee can start over a shape. Tolerances are screen px.
-const objTol = () => 4 / S.zoom;
+// A box side shorter than objGap() shows no midpoint handle, so its corners stay apart.
+const objTol = () => 4 / S.zoom, objGap = () => 24 / S.zoom;
 function objTarget(p) {
   const o = selObj();
   if (o && (S.tool === 'move' || SHAPES.has(S.tool))) {
-    const h = Core.handleAt(o, p, objTol() + 1 / S.zoom);
+    const h = Core.handleAt(o, p, objTol() + 1 / S.zoom, objGap());
     if (h) return { o, h };
     if (Core.hitsObject(o, p, objTol())) return { o, h: null };
   }
@@ -28,11 +29,11 @@ function objTarget(p) {
   return i < 0 ? null : { o: objs[i], h: null };
 }
 const HANDLE_CURSORS = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', a: 'move', b: 'move' };
-function objCursor(p) {
-  const hit = p && objs.length && objTarget(p);
-  return hit ? (hit.h ? HANDLE_CURSORS[hit.h] : 'move') : '';
+// ⌥ over a shape with the Move tool: a drag duplicates it (copy cursor).
+function objCursor(hit) {
+  return hit ? (hit.h ? HANDLE_CURSORS[hit.h] : S.altKey && S.tool === 'move' ? 'copy' : 'move') : '';
 }
-function objPointerDown(p) {
+function objPointerDown(p, e) {
   const hit = objTarget(p);
   if (!hit) {
     if (objSel != null) selectObj(null);
@@ -40,8 +41,23 @@ function objPointerDown(p) {
   }
   dropSelection();
   selectObj(hit.o.id);
-  setDrag({ t: hit.h ? 'objsize' : 'objmove', h: hit.h, o: hit.o, p, before: objs });
+  // q: the pointer now. Nothing moves until it has gone 3 screen px (moved), so a click only selects.
+  // ⌥-drag on the body (Move tool, as in Figma) moves a copy, put just above the original.
+  const dup = !hit.h && e.altKey && S.tool === 'move' ? { ...hit.o, id: newObjId() } : null;
+  setDrag({ t: hit.h ? 'objsize' : 'objmove', h: hit.h, o: dup || hit.o, src: hit.o, dup: !!dup, p, q: p, sx: e.clientX, sy: e.clientY, moved: false, shift: e.shiftKey, before: objs });
   return true;
+}
+// Apply an object drag: the live list (one undo step on release). Shift locks a move to its main
+// axis, keeps a box's aspect ratio and snaps a line end to 45° (Core.resizeObj).
+function objDragUpdate(d) {
+  if (!d.moved) return;
+  let dx = Math.round(d.q.x - d.p.x), dy = Math.round(d.q.y - d.p.y);
+  if (d.shift && d.t === 'objmove') { if (Math.abs(dx) >= Math.abs(dy)) dy = 0; else dx = 0; }
+  const o = d.t === 'objmove' ? Core.moveObj(d.o, dx, dy) : Core.resizeObj(d.o, d.h, dx, dy, d.shift);
+  if (d.dup) {
+    const i = d.before.indexOf(d.src) + 1;
+    showObjs(d.before.slice(0, i).concat(o, d.before.slice(i)), o.id);
+  } else showObjs(d.before.map((x) => (x.id === o.id ? o : x)));
 }
 
 ov.addEventListener('pointerdown', (e) => {
@@ -65,7 +81,7 @@ ov.addEventListener('pointerdown', (e) => {
   const color = right ? S.secondary : S.primary, alt = right ? S.primary : S.secondary;
   const t = S.tool;
   if (t !== 'select') dropSelection();
-  if (!right && objPointerDown(p)) { requestRender(); return; }
+  if (!right && objPointerDown(p, e)) { requestRender(); return; }
   switch (t) {
     case 'pencil': case 'eraser': {
       const c = t === 'eraser' ? S.secondary : color;
@@ -109,6 +125,7 @@ ov.addEventListener('pointermove', (e) => {
   const r = img.getBoundingClientRect();
   const p = imgPt(e, r);
   setCursor({ x: Math.floor(p.x), y: Math.floor(p.y) });
+  S.altKey = e.altKey;
   setHover(p);
   if (!drag) { requestRender(); return; }
   const d = drag;
@@ -136,9 +153,9 @@ ov.addEventListener('pointermove', (e) => {
   } else if (d.t === 'select') {
     d.end = { x: clamp(Math.round(p.x), 0, img.width), y: clamp(Math.round(p.y), 0, img.height) };
   } else if (d.t === 'objmove' || d.t === 'objsize') {
-    const dx = Math.round(p.x - d.p.x), dy = Math.round(p.y - d.p.y);
-    const o = d.t === 'objmove' ? Core.moveObj(d.o, dx, dy) : Core.resizeObj(d.o, d.h, dx, dy);
-    showObjs(d.before.map((x) => (x.id === o.id ? o : x))); // live; one undo step on release
+    d.q = p; d.shift = e.shiftKey;
+    d.moved = d.moved || Math.hypot(e.clientX - d.sx, e.clientY - d.sy) >= 3;
+    objDragUpdate(d);
   } else if (d.t === 'move') {
     if (!sel) { setDrag(null); return; }
     const nx = Math.round(p.x - d.gx), ny = Math.round(p.y - d.gy);
@@ -173,7 +190,7 @@ function cancelDrag() {
   if (d.t === 'canvas') { endCanvasDrag(false); return; }
   if (d.t === 'pan' || d.t === 'pencil' || d.t === 'eraser' || d.t === 'brush') return; // strokes finish normally
   setDrag(null);
-  if (d.t === 'objmove' || d.t === 'objsize') showObjs(d.before);
+  if (d.t === 'objmove' || d.t === 'objsize') showObjs(d.before, d.src.id);
   if (d.t === 'move' && sel) {
     if (d.lifted) { // undo the lift this drag made: restore the pixels, drop the float, no history entry
       dropOp(true);
@@ -219,4 +236,4 @@ vp.addEventListener('wheel', (e) => {
   setZoom(S.zoom * Math.exp(-clamp(e.deltaY, -100, 100) * 0.005), e.clientX, e.clientY);
 }, { passive: false });
 
-export { cancelDrag, objCursor, updateRing };
+export { cancelDrag, objCursor, objDragUpdate, objGap, objTarget, updateRing };

@@ -1,7 +1,7 @@
 import Core from './core.js';
 import { ctx, docOp, img, pushDocHist } from './doc.js';
 import { makeCanvas } from './dom.js';
-import { flattenObjs, selectObj } from './objects.js';
+import { selectObj } from './objects.js';
 import { S, sel, setSel } from './state.js';
 import { commitText } from './text.js';
 import { beginOp, dropOp, endOp, touch } from './tiles.js';
@@ -72,12 +72,11 @@ function nudge(dx, dy) {
 function crop() {
   if (!sel) { flash('Select an area to crop first'); return; }
   commitSelection();
-  flattenObjs();
   const r = Core.clampRect(sel, img.width, img.height);
   if (!r) { flash('Selection is outside the image'); return; }
   const c = makeCanvas(r.w, r.h);
   c.getContext('2d').drawImage(img, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
-  docOp(c);
+  docOp(c, (o) => Core.moveObj(o, -r.x, -r.y));
 }
 
 export { commitSelection, crop, deleteSelection, dropSelection, inside, liftSelection, nudge, selectAll };

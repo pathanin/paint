@@ -164,12 +164,64 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     ok((await objs()).length === 0 && isBlack(await pixel(80, 70)), 'redo flattens again');
     await page.keyboard.press('Meta+KeyZ');
 
-    // ---- 9. whole-image ops flatten first ----
-    await P(() => window.__paint.transformDoc('rotR'));
-    ok((await objs()).length === 0 && await P(() => document.querySelector('#image').width) === 200, 'rotate flattens, then rotates');
+    // ---- 9. whole-image ops carry the objects along: still objects, one undo step ----
+    const chash = () => P(() => {
+      const c = window.__paint.composite(), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let h = 2166136261;
+      for (let i = 0; i < d.length; i++) h = Math.imul(h ^ d[i], 16777619);
+      return `${c.width}x${c.height}:${h >>> 0}`;
+    });
+    // add an odd-width line and an even-width ellipse, so both pixel grids are covered
+    await P(() => { const p = window.__paint; p.S.sizes.line = 3; p.S.sizes.ellipse = 4; });
+    await page.keyboard.press('KeyL'); await drag([[150, 30], [250, 90]]);
+    await page.keyboard.press('KeyO'); await drag([[160, 110], [270, 180]]);
+    await page.keyboard.press('Escape');
+    const o9 = await objs(), seen9 = await chash(), pix9 = await hash();
+    for (const k of ['rotR', 'rotL', 'flipH', 'flipV']) {
+      await page.keyboard.press('Meta+KeyE');
+      await P((k) => { window.__paint.transformDoc(k); const c = window.__paint.composite(); window.__ref = c.getContext('2d').getImageData(0, 0, c.width, c.height); }, k);
+      await page.keyboard.press('Meta+KeyZ'); await page.keyboard.press('Meta+KeyZ');
+      const dk = await depth();
+      await P((k) => window.__paint.transformDoc(k), k);
+      ok((await objs()).length === 3 && await depth() === dk + 1, k + ' keeps the shapes as objects, in one undo step');
+      // What is seen vs flatten-then-transform. Not bit-exact: Chrome anti-aliases a shape's edge a
+      // little differently when it is drawn turned than when its pixels are turned (up to ~110 on a
+      // few edge pixels of the ellipse). A shape one pixel off would differ by 255 along the filled
+      // rectangle's crisp edges, so: no value differs by half the range, and the ink agrees.
+      const diff = await P(() => {
+        const c = window.__paint.composite(), A = window.__ref, B = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+        if (A.width !== B.width || A.height !== B.height) return { size: false };
+        let mx = 0, inkA = 0, inkB = 0;
+        for (let i = 0; i < A.data.length; i++) {
+          mx = Math.max(mx, Math.abs(A.data[i] - B.data[i]));
+          if ((i & 3) === 0) { inkA += 255 - A.data[i]; inkB += 255 - B.data[i]; }
+        }
+        return { size: true, mx, ink: Math.abs(inkA - inkB) / inkA };
+      });
+      ok(diff.size && diff.mx < 128 && diff.ink < 0.005, k + ': what is seen matches flatten-then-' + k + ' (same place, edges within anti-aliasing): ' + JSON.stringify(diff));
+      await page.keyboard.press('Meta+KeyZ');
+      ok(JSON.stringify(await objs()) === JSON.stringify(o9) && await hash() === pix9 && await chash() === seen9, 'undo puts the image and the shapes back');
+    }
+    await P(() => window.__paint.resizeDoc(400, 300, 'canvas', 'c'));
+    ok(JSON.stringify((await objs()).map((x) => x.a)) === JSON.stringify(o9.map((x) => ({ x: x.a.x + 50, y: x.a.y + 50 }))), 'canvas size (centred) shifts the shapes with the pixels');
     await page.keyboard.press('Meta+KeyZ');
+    await P(() => window.__paint.resizeDoc(150, 100, 'scale'));
+    await P(() => new Promise((r) => { const t = () => (window.__paint.img.width === 150 ? r() : setTimeout(t, 50)); t(); }));
+    o = await objs();
+    ok(o.length === 3 && o[0].a.x === 15 && o[0].size === 1 && o[2].size === 2, 'resize scales the shapes and their strokes (a 2 px edge at 31 is a 1 px one centred on 15.5): ' + JSON.stringify(o.map((x) => [x.a, x.size])));
     await page.keyboard.press('Meta+KeyZ');
-    ok((await objs()).length === 1 && await hash() === before, 'two undos: unrotated, then objects back');
+    ok(JSON.stringify(await objs()) === JSON.stringify(o9), 'undo restores them');
+    await page.keyboard.press('KeyS');
+    await drag([[140, 20], [299, 199]]);
+    await P(() => window.__paint.crop && document.querySelector('#cropBtn').click());
+    o = await objs();
+    ok(await P(() => window.__paint.img.width) === 159 && o.length === 2 && o.every((x) => x.t !== 'rect') && o[0].a.x === 9 && o[0].a.y === 9, 'crop (from 141, 21) shifts the shapes and drops one left wholly outside: ' + JSON.stringify(o.map((x) => [x.t, x.a])));
+    await page.keyboard.press('Meta+KeyZ');
+    ok(JSON.stringify(await objs()) === JSON.stringify(o9) && await hash() === pix9, 'one undo brings the crop and the dropped shape back');
+    // leave the rest of the run as it was: just the filled rectangle
+    await page.keyboard.press('Meta+KeyZ'); await page.keyboard.press('Meta+KeyZ');
+    await P(() => { const p = window.__paint; p.S.sizes.line = 2; p.S.sizes.ellipse = 2; });
+    ok((await objs()).length === 1 && await hash() === before, 'back to one shape');
 
     // ---- 10. a line object: two end handles ----
     await page.keyboard.press('KeyL');
@@ -221,6 +273,163 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     // ---- 14. new document clears objects ----
     await P(() => window.__paint.newDoc(100, 100));
     ok((await objs()).length === 0 && await objSel() === null, 'New clears the objects');
+
+    // ---- 15. a click doesn't move: a shape moves only once the pointer has gone 3 screen px ----
+    await P(() => { const p = window.__paint; p.newDoc(2000, 1500); p.setZoom(0.25); });
+    await page.keyboard.press('KeyR');
+    await drag([[200, 200], [1000, 800]]);
+    await page.keyboard.press('KeyV');
+    await page.keyboard.press('Escape');
+    const dj = await depth();
+    { const [x, y] = await at(200, 500); await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x + 1, y + 1); await page.mouse.up(); await frame(); }
+    o = await objs();
+    ok(o[0].a.x === 200 && o[0].a.y === 200 && await depth() === dj && await objSel() === o[0].id, 'at 25% a 1 px wobble while clicking selects the shape and leaves it put: ' + JSON.stringify(o[0].a));
+    await drag([[200, 500], [240, 500]]);
+    ok((await objs())[0].a.x === 240 && await depth() === dj + 1, 'a real drag still moves it, by the whole distance');
+
+    // ---- 16. Shift: axis-locked move, kept aspect ratio, 45° line ends; pressed or released mid-drag ----
+    await P(() => { const p = window.__paint; p.newDoc(300, 200); p.setZoom(2); });
+    await page.keyboard.press('KeyR');
+    await drag([[20, 20], [80, 60]]); // 60 × 40
+    await page.keyboard.press('KeyV');
+    await page.keyboard.down('Shift');
+    await drag([[20, 30], [60, 37]]); // on the outline, clear of the handles
+    await page.keyboard.up('Shift');
+    o = await objs();
+    ok(o[0].a.x === 60 && o[0].a.y === 20, '⇧-drag moves along the main axis only: ' + JSON.stringify(o[0].a));
+    await drag([[60, 30], [70, 42]], async () => {
+      await page.keyboard.down('Shift'); await frame();
+      const mid = (await objs())[0];
+      ok(mid.a.x === 60 && mid.a.y === 32, 'pressing ⇧ mid-drag locks the axis at once: ' + JSON.stringify(mid.a));
+      await page.keyboard.up('Shift'); await frame();
+      ok((await objs())[0].a.x === 70, 'releasing it frees the axis again');
+    });
+    o = await objs();
+    const box = () => ({ x: Math.min(o[0].a.x, o[0].b.x), y: Math.min(o[0].a.y, o[0].b.y), w: Math.abs(o[0].b.x - o[0].a.x), h: Math.abs(o[0].b.y - o[0].a.y) });
+    const b0 = box();
+    await page.keyboard.down('Shift');
+    await drag([[b0.x + b0.w, b0.y + b0.h], [b0.x + b0.w + 60, b0.y + b0.h + 5]]);
+    await page.keyboard.up('Shift');
+    o = await objs();
+    const b1 = box();
+    ok(b1.x === b0.x && b1.y === b0.y && b1.w === 120 && b1.h === 80, '⇧ on a corner handle keeps the aspect ratio: ' + JSON.stringify(b1));
+    await page.keyboard.press('KeyL');
+    await drag([[30, 180], [130, 180]]);
+    await page.keyboard.down('Shift');
+    await drag([[130, 180], [120, 95]]); // 40° from the other end
+    await page.keyboard.up('Shift');
+    const ln = (await objs()).at(-1);
+    ok(ln.t === 'line' && ln.b.x - ln.a.x === ln.a.y - ln.b.y, '⇧ on a line end snaps it to 45°: ' + JSON.stringify([ln.a, ln.b]));
+
+    // ---- 17. a tiny shape: corner handles only, and its middle moves it ----
+    await page.keyboard.press('KeyR');
+    await drag([[260, 20], [264, 24]]);
+    ok(await page.locator('#objsel .handle:not([hidden])').count() === 4, 'a tiny box shows only its 4 corner handles');
+    await page.keyboard.press('KeyV');
+    await drag([[262, 22], [272, 42]]);
+    const t = (await objs()).at(-1);
+    ok(Math.min(t.a.x, t.b.x) === 270 && Math.abs(t.b.x - t.a.x) === 4 && Math.abs(t.b.y - t.a.y) === 4, 'dragging its middle moves it, at the same size: ' + JSON.stringify([t.a, t.b]));
+
+    // ---- 18. Move tool hover: the shape a click would pick is outlined ----
+    await P(() => { const p = window.__paint; p.newDoc(300, 200); p.setZoom(2); });
+    await page.keyboard.press('KeyR');
+    await drag([[20, 20], [80, 60]]);
+    await page.keyboard.press('KeyO');
+    await drag([[120, 20], [180, 60]]);
+    await page.keyboard.press('KeyL');
+    await drag([[20, 120], [180, 160]]);
+    await page.keyboard.press('KeyV');
+    await page.keyboard.press('Escape');
+    const hov = () => P(() => { const h = document.querySelector('#objhover'); return h.hidden ? null : h.className; });
+    await page.mouse.move(...await at(35, 20)); await frame();
+    ok(await hov() === 'rect', 'hovering a rectangle with the Move tool outlines it');
+    await page.mouse.move(...await at(150, 20)); await frame();
+    ok(await hov() === 'ellipse', '...an ellipse gets a round outline');
+    await page.mouse.move(...await at(100, 140)); await frame();
+    ok(await hov() === 'line', '...a line a bar along it');
+    await page.mouse.move(...await at(250, 100)); await frame();
+    ok(await hov() === null, 'empty canvas: no outline');
+    await page.mouse.click(...await at(35, 20));
+    await page.mouse.move(...await at(35, 21)); await frame();
+    ok(await hov() === null, 'the selected shape is not outlined again (it has its handles)');
+    await page.mouse.move(...await at(150, 20)); await frame();
+    ok(await hov() === 'ellipse', 'hovering the ellipse again');
+    await page.keyboard.press('KeyR'); await frame();
+    ok(await hov() === null && await P(() => document.querySelector('#overlay').style.cursor) === '', 'switching to a shape tool by key drops the outline and the move cursor at once');
+
+    // ---- 19. ⌥-drag duplicates (Move tool); a ⌥-click doesn't ----
+    await page.keyboard.press('KeyV');
+    const n0 = (await objs()).length, d19 = await depth(), rectId = (await objs())[0].id;
+    await page.keyboard.down('Alt');
+    await page.mouse.move(...await at(35, 20)); await frame();
+    ok(await P(() => document.querySelector('#overlay').style.cursor) === 'copy', '⌥ over a shape shows the copy cursor');
+    await drag([[35, 20], [35, 90]]);
+    await page.keyboard.up('Alt');
+    o = await objs();
+    ok(o.length === n0 + 1 && o[1].t === 'rect' && o[1].a.y === 90 && o[0].a.y === 20, '⌥-drag leaves the original and moves a copy, just above it: ' + JSON.stringify(o.map((x) => [x.t, x.a])));
+    ok(await objSel() === o[1].id && await depth() === d19 + 1, 'the copy is selected; one undo step');
+    await page.keyboard.press('Meta+KeyZ');
+    ok((await objs()).length === n0, 'undo removes the copy');
+    await page.keyboard.down('Alt');
+    await page.mouse.click(...await at(35, 20));
+    await drag([[35, 20], [35, 90]], () => page.keyboard.press('Escape'));
+    await page.keyboard.up('Alt');
+    ok((await objs()).length === n0 && await objSel() === rectId && await depth() === d19, 'a ⌥-click and an Esc-cancelled ⌥-drag add nothing; the original stays selected');
+
+    // ---- 20. the help dialog lists the shape shortcuts, and still fits ----
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Shift+Slash');
+    await page.locator('#helpDlg[open]').waitFor();
+    const helpTxt = await page.locator('#helpBody').textContent();
+    const macHelp = await P(() => /Mac|iPhone|iPad/.test(navigator.platform)); // keyLabel(): Ctrl+ off a Mac (CI runs Linux)
+    ok(/Shapes/.test(helpTxt) && /Duplicate by dragging/.test(helpTxt) && /Flatten into pixels/.test(helpTxt) && (macHelp ? /⌘E/ : /Ctrl\+E/).test(helpTxt) && (macHelp ? /⌥/ : /Alt/).test(helpTxt), 'help has a Shapes section with ⌘D, ⌥-drag and ⌘E (platform key names)');
+    ok(await P(() => { const b = document.querySelector('#helpBody'); return b.scrollHeight <= b.clientHeight + 1 && b.children.length === 3; }), 'help fits at 1280×800 in three columns');
+    await page.keyboard.press('Escape');
+
+    // ---- 21. Tab / ⇧Tab cycle through the shapes (Move tool, canvas focused), then let focus move on ----
+    await P(() => { const p = window.__paint; p.newDoc(300, 200); p.setZoom(2); });
+    await page.keyboard.press('KeyR'); await drag([[20, 20], [80, 60]]);
+    await page.keyboard.press('KeyO'); await drag([[120, 20], [180, 60]]);
+    await page.keyboard.press('KeyV');
+    await page.keyboard.press('Escape');
+    await P(() => document.querySelector('#viewport').focus());
+    o = await objs();
+    await page.keyboard.press('Tab');
+    ok(await objSel() === o[0].id && await P(() => document.activeElement.id) === 'viewport', 'Tab selects the first shape; focus stays on the canvas');
+    await page.waitForTimeout(100);
+    ok(/Rectangle, 60 × 40 px at 20, 20\. Shape 1 of 2/.test(await P(() => document.querySelector('#srStatus').textContent)), 'and announces it to screen readers');
+    await page.keyboard.press('Tab');
+    ok(await objSel() === o[1].id, 'Tab again: the next shape');
+    await page.keyboard.press('ArrowRight');
+    ok((await objs())[1].a.x === 121, 'arrows nudge the shape picked with Tab');
+    await page.keyboard.press('Shift+Tab');
+    ok(await objSel() === o[0].id, '⇧Tab: the previous one');
+    await page.keyboard.press('Shift+Tab');
+    ok(await objSel() === null && await P(() => document.activeElement.id) !== 'viewport', '⇧Tab past the first deselects and moves focus out (no trap)');
+    await P(() => document.querySelector('#viewport').focus());
+    await page.keyboard.press('Tab'); await page.keyboard.press('Tab'); await page.keyboard.press('Tab');
+    ok(await objSel() === null && await P(() => document.activeElement.id) !== 'viewport', 'Tab past the last does the same');
+    await page.keyboard.press('KeyP');
+    await P(() => document.querySelector('#viewport').focus());
+    await page.keyboard.press('Tab');
+    ok(await objSel() === null, 'other tools leave Tab alone');
+
+    // ---- 22. odd stroke widths: hit area, outline and handles sit on the drawn stroke (1600%) ----
+    await P(() => { const p = window.__paint; p.newDoc(60, 40); p.setZoom(16); p.S.sizes.line = 1; p.S.sizes.rect = 3; p.S.fillMode = 'outline'; });
+    await P(() => { const v = document.querySelector('#viewport'); v.scrollLeft = 0; v.scrollTop = 0; });
+    const at16 = async (ix, iy) => { const b = await page.locator('#overlay').boundingBox(); return [b.x + ix * 16, b.y + iy * 16]; };
+    const drag16 = async (a, b) => { await page.mouse.move(...await at16(...a)); await page.mouse.down(); await page.mouse.move(...await at16(...b), { steps: 5 }); await page.mouse.up(); await frame(); };
+    await page.keyboard.press('KeyL'); await drag16([5.5, 10.5], [35.5, 10.5]); // a 1 px line on pixel row 10 (y 10..11)
+    await page.keyboard.press('KeyR'); await drag16([5.5, 20.5], [25.5, 30.5]); // a 3 px rectangle
+    await page.keyboard.press('KeyV'); await page.keyboard.press('Escape');
+    await page.mouse.move(...await at16(20, 10.9)); await frame();
+    ok(await hov() === 'line', 'the bottom of a 1 px line\'s pixel row hits it');
+    await page.mouse.move(...await at16(20, 9.5)); await frame();
+    ok(await hov() === null, 'half a pixel above it does not');
+    await page.mouse.click(...await at16(5.5, 25)); await frame();
+    const selBox = await page.locator('#objsel').boundingBox(), [sx0, sy0] = await at16(5.5, 20.5), [sx1, sy1] = await at16(25.5, 30.5);
+    ok(Math.abs(selBox.x - sx0) <= 1 && Math.abs(selBox.y - sy0) <= 1 && Math.abs(selBox.x + selBox.width - sx1) <= 1 && Math.abs(selBox.y + selBox.height - sy1) <= 1,
+      'the outline of a 3 px rectangle runs along the middle of its stroke: ' + JSON.stringify([selBox, [sx0, sy0, sx1, sy1]]));
 
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));
   } catch (e) {
