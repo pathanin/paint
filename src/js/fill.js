@@ -1,41 +1,66 @@
 import Core from './core.js';
-import { ctx, img, pushHist } from './doc.js';
-import { $, hexToU32 } from './dom.js';
-import { S } from './state.js';
-import { blit } from './tiles.js';
+import { ctx, hist, img, pushHist } from './doc.js';
+import { hexToU32 } from './dom.js';
+import { startWorker, used, workerCall } from './libs.js';
+import { S, drag, sel } from './state.js';
+import { op } from './tiles.js';
+import { flash } from './toast.js';
 
 // ---------- fill ----------
+// The flood fill and its soft edge (Core.fillPlan) run in fill-worker.js, so a big fill (~0.9 s at
+// 100 MP) doesn't freeze the page; only reading the pixels and putting the box back stay here. If
+// the worker can't start or fails, the same function runs on the main thread. The page stays live
+// meanwhile, so a fill whose image changed before it finished is dropped, like a resize.
+let worker = null; // created on the first fill; false once it has failed
+let filling = null; // the running fill's promise (for the tests)
 function doFill(p, color) {
   const W = img.width, H = img.height;
   if (p.x < 0 || p.y < 0 || p.x >= W || p.y >= H) return;
+  if (filling) { flash('Still filling'); return; }
   const c = hexToU32(color);
   // Exact-match fill on a pixel that already has the colour changes nothing: skip the full readback.
   if (Math.round(S.tolerance * 255 / 100) === 0 && new Uint32Array(ctx.getImageData(p.x, p.y, 1, 1).data.buffer)[0] === c) return;
-  const data = ctx.getImageData(0, 0, W, H);
-  const u32 = new Uint32Array(data.data.buffer);
-  const region = Core.floodMask(u32, W, H, p.x, p.y, S.tolerance), mask = region.mask;
-  // The soft (anti-aliased) edge around the region is recoloured too, so no light fringe is left.
-  const edge = Core.fillEdge(u32, W, H, region, u32[p.y * W + p.x], c, S.tolerance), box = edge.box;
-  // The undo entry: the box's pixels before, the region as a bit mask and the edge pixels' new
-  // values. "After" is those pixels with the masked ones set to c and the edge ones to theirs, so
-  // neither undo nor redo has to read the canvas back.
-  const before = new ImageData(box.w, box.h);
-  blit(data, box.x, box.y, before, 0, 0, box.w, box.h);
-  const bits = new Uint8Array(Math.ceil(box.w * box.h / 8));
-  let changed = false;
-  for (let y = 0, k = 0; y < box.h; y++) {
-    for (let i = (box.y + y) * W + box.x, e = i + box.w; i < e; i++, k++) {
-      if (!mask[i]) continue;
-      bits[k >> 3] |= 1 << (k & 7);
-      if (u32[i] !== c) { u32[i] = c; changed = true; }
-    }
-  }
-  const ek = new Uint32Array(edge.idx.length);
-  edge.idx.forEach((i, k) => { u32[i] = edge.val[k]; ek[k] = ((i / W | 0) - box.y) * box.w + i % W - box.x; });
-  if (!changed && !ek.length) return;
-  ctx.putImageData(data, 0, 0, box.x, box.y, box.w, box.h);
-  pushHist({ type: 'fill', x: box.x, y: box.y, before, bits, color: c, ek, ev: edge.val, undone: false, bytes: before.data.length + bits.length + ek.length * 8 });
+  filling = runFill(p, c, S.tolerance).finally(() => { filling = null; });
 }
+async function runFill(p, c, tolerance) {
+  const src = img, top = hist.top(), openOp = op, float = sel && sel.float;
+  const W = src.width, H = src.height;
+  const changed = () => img !== src || hist.top() !== top || op !== openOp || (sel && sel.float) !== float || !!drag;
+  const job = (buf) => ({ buf, w: W, h: H, x: p.x, y: p.y, color: c, tolerance });
+  let shown = false; // say so only if it takes a noticeable time
+  const slow = setTimeout(() => { shown = true; flash('Filling…'); }, 300);
+  try {
+    let res = null;
+    if (worker !== false) {
+      const buf = ctx.getImageData(0, 0, W, H).data.buffer;
+      try {
+        worker = worker || startWorker('fill-worker');
+        res = await workerCall(worker, job(buf), [buf]);
+        used.fill = 'worker';
+      } catch {
+        if (worker) worker.terminate();
+        worker = false;
+      }
+    }
+    if (!res) { // no worker: the same work here (the buffer sent to a failed worker is gone)
+      if (changed()) return dropped();
+      const buf = ctx.getImageData(0, 0, W, H).data.buffer;
+      res = { buf, plan: Core.fillPlan(new Uint32Array(buf), W, H, p.x, p.y, c, tolerance) };
+      used.fill = 'main';
+    }
+    const { buf, plan } = res;
+    if (!plan) { if (shown) flash('Nothing to fill'); return; }
+    if (changed()) return dropped();
+    const box = plan.box;
+    ctx.putImageData(new ImageData(new Uint8ClampedArray(buf), W, H), 0, 0, box.x, box.y, box.w, box.h);
+    const before = new ImageData(new Uint8ClampedArray(plan.before.buffer), box.w, box.h);
+    pushHist({ type: 'fill', x: box.x, y: box.y, before, bits: plan.bits, color: c, ek: plan.ek, ev: plan.ev, undone: false, bytes: before.data.length + plan.bits.length + plan.ek.length * 8 });
+    if (shown) flash('Filled');
+  } finally {
+    clearTimeout(slow);
+  }
+}
+const dropped = () => flash('Fill cancelled: the image changed while it ran', true);
 // Undo/redo of a fill entry: put back the pixels before, or recompute the filled ones.
 function applyFill(e) {
   // Redo: the box holds exactly the before pixels, so painting the mask's runs in the (opaque) fill
@@ -101,4 +126,4 @@ function fillRuns(bits, w, h, ox, oy) {
   return path;
 }
 
-export { applyFill, doFill };
+export { applyFill, doFill, filling };

@@ -1,4 +1,4 @@
-// Every module, in the order of the sections of the old single app.js: most of them only wire up
+// Every module, in the order of the sections of the old single-file app.js: most of them only wire up
 // listeners when they load, and nothing else imports them. (Imports that form cycles load depth-first,
 // so this is only roughly the order the code runs in; nothing at load time depends on it.)
 import './dom.js';
@@ -30,6 +30,7 @@ import { pasteImage } from './clipboard.js';
 import { hist, img, newDoc, redo, undo } from './doc.js';
 import { $, MAC, keyLabel } from './dom.js';
 import { decodeFile, loadFile, save } from './fileio.js';
+import { filling } from './fill.js';
 import { used } from './libs.js';
 import { openLaunched, setUpPwa } from './pwa.js';
 import { composite, flattenObjs, objSel, objs } from './objects.js';
@@ -64,4 +65,4 @@ if (window.launchQueue) window.launchQueue.setConsumer(openLaunched);
 window.addEventListener('load', setUpPwa, { once: true });
 
 // Handle for scripted smoke tests in the console.
-window.__paint = { S, hist, used, decodeFile, scaleImage, resample, get img() { return img; }, newDoc, flash, save, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, loadFile, setZoom, fitZoom, MAX_PIXELS, flushToData, get op() { return op; }, get objs() { return objs; }, get objSel() { return objSel; }, flattenObjs, composite, openLaunched, get pendingParts() { return [...pendingParts].filter((p) => p.cv).length; } };
+window.__paint = { S, hist, used, decodeFile, scaleImage, resample, get img() { return img; }, newDoc, flash, save, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, loadFile, setZoom, fitZoom, MAX_PIXELS, flushToData, get op() { return op; }, get objs() { return objs; }, get objSel() { return objSel; }, flattenObjs, composite, openLaunched, get filling() { return filling; }, get pendingParts() { return [...pendingParts].filter((p) => p.cv).length; } };

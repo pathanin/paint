@@ -176,6 +176,35 @@
     return changed ? box : null;
   }
 
+  // The paint bucket's fill: the region of (x, y) and its soft edge (fillEdge) in color, in place in
+  // u32. Returns its undo data, or null if no pixel changed: box, the box's pixels before (before,
+  // row-major box.w x box.h), the region as a bit mask over the box (bits) and the edge pixels'
+  // box indices (ek) and new values (ev). "After" is before with the masked pixels set to color and
+  // the edge ones to ev, so neither undo nor redo has to read the canvas back. Runs in a worker
+  // (fill-worker.js), or on the main thread if the worker can't start.
+  function fillPlan(u32, w, h, x, y, color, tolerance) {
+    if (x < 0 || y < 0 || x >= w || y >= h) return null;
+    if (Math.round((tolerance || 0) * 255 / 100) === 0 && u32[y * w + x] === color) return null;
+    const region = floodMask(u32, w, h, x, y, tolerance), mask = region.mask;
+    const edge = fillEdge(u32, w, h, region, u32[y * w + x], color, tolerance), box = edge.box;
+    const before = new Uint32Array(box.w * box.h);
+    const bits = new Uint8Array(Math.ceil(box.w * box.h / 8));
+    let changed = false;
+    for (let yy = 0, k = 0; yy < box.h; yy++) {
+      const row = (box.y + yy) * w + box.x;
+      before.set(u32.subarray(row, row + box.w), yy * box.w);
+      for (let i = row, e = i + box.w; i < e; i++, k++) {
+        if (!mask[i]) continue;
+        bits[k >> 3] |= 1 << (k & 7);
+        if (u32[i] !== color) { u32[i] = color; changed = true; }
+      }
+    }
+    const ek = new Uint32Array(edge.idx.length);
+    edge.idx.forEach((i, k) => { u32[i] = edge.val[k]; ek[k] = ((i / w | 0) - box.y) * box.w + i % w - box.x; });
+    if (!changed && !ek.length) return null;
+    return { box, before, bits, ek, ev: edge.val };
+  }
+
   // Bresenham integer line, inclusive of both ends.
   function line(x0, y0, x1, y1) {
     x0 |= 0; y0 |= 0; x1 |= 0; y1 |= 0;
@@ -577,7 +606,7 @@
     return { ...o, a: f(o.a), b: f(o.b), size };
   }
 
-  const Core = { rgbaToU32, colorDistance, floodMask, fillEdge, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History,
+  const Core = { rgbaToU32, colorDistance, floodMask, fillEdge, floodFill, fillPlan, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History,
     objBox, drawnObj, hitsObject, hitObject, objHandles, handleAt, resizeObj, moveObj, transformObj, scaleObj };
   module.exports = Core;
 })();

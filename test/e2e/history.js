@@ -18,7 +18,8 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.goto(url);
     await page.waitForTimeout(300);
     const P = (f, a) => page.evaluate(f, a);
-    const frame = () => P(() => new Promise((r) => requestAnimationFrame(() => r())));
+    // the next frame, after any fill still running in its worker has landed
+    const frame = () => P(async () => { await window.__paint.filling; await new Promise((r) => requestAnimationFrame(() => r())); });
     // FNV-1a over the whole image plus its size: equal hashes = identical pixels.
     const hash = () => P(() => {
       const c = document.querySelector('#image');

@@ -1,7 +1,7 @@
 import Core from './core.js';
 import { hist, img, setDoc } from './doc.js';
 import { $, makeCanvas, textBox } from './dom.js';
-import { UPNG, UTIF, used } from './libs.js';
+import { loadUTIF, startWorker, used, workerCall } from './libs.js';
 import { composite, resetObjs } from './objects.js';
 import { commitSelection } from './selection.js';
 import { S, sel, sizeProblem } from './state.js';
@@ -36,6 +36,9 @@ const isTiff = (file) => file.type === 'image/tiff' || /\.tiff?$/i.test(file.nam
 async function decodeFile(file) {
   try { return await createImageBitmap(file); }
   catch (err) { if (!isTiff(file)) throw err; }
+  let UTIF;
+  try { UTIF = await loadUTIF(); }
+  catch { throw openError('the TIFF reader didn’t load. Reload the page and try again'); }
   const buf = await file.arrayBuffer();
   let page;
   try { page = UTIF.decode(buf).find((p) => p.t256 && p.t257); }
@@ -93,8 +96,9 @@ function encode(type, src = composite()) {
 }
 // UPNG compresses harder than the browser's PNG encoder. In a test (Chrome, M4), its files were
 // ~60% smaller on a screenshot, 40-46% on a drawing, 92% on a gradient, 16% on a photo and 13% on
-// noise. It runs on the main thread: ~30-100 ms per MP when the browser's PNG is under a quarter of
-// the raw size, ~180-290 ms per MP above that (photos, noise). So the browser's file size picks the
+// noise. It runs in a worker (png-worker.js), so the page doesn't freeze, but Save still waits for
+// it: ~30-100 ms per MP when the browser's PNG is under a quarter of the raw size, ~180-290 ms per
+// MP above that (photos, noise), measured on the main thread. So the browser's file size picks the
 // estimate, and UPNG runs only when that's within UPNG_BUDGET_MS, and only up to a 4K screen. Both
 // encoders run and the smaller file wins, so a PNG is never bigger than before. UPNG writes into a
 // buffer of raw size + 100 bytes and silently truncates past it; incompressible output comes close
@@ -109,13 +113,16 @@ async function encodePng() {
   const native = await encode('image/png', src);
   used.png = 'builtin';
   if (!tryUpng || upngMs(w * h, native.size / raw.byteLength) > UPNG_BUDGET_MS) return native;
+  const rawBytes = raw.byteLength, worker = startWorker('png-worker'); // one per save: frees UPNG's memory after
   try {
-    const png = UPNG.encode([raw], w, h, 0); // 0 colours = lossless
-    if (png.byteLength >= native.size || png.byteLength > raw.byteLength * 0.9) return native;
+    const { png } = await workerCall(worker, { raw, w, h }, [raw]);
+    if (png.byteLength >= native.size || png.byteLength > rawBytes * 0.9) return native;
     used.png = 'upng';
     return new Blob([png], { type: 'image/png' });
   } catch {
     return native;
+  } finally {
+    worker.terminate();
   }
 }
 function encodeFor(name) {

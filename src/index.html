@@ -10,7 +10,7 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<!-- Icons: paths adapted from Lucide (ISC license, lucide.dev). Inline so file:// works. -->
+<!-- Icons: paths adapted from Lucide (ISC license, lucide.dev). Inline: no extra request, and they're there before the scripts run. -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <defs>
     <symbol id="i-move" viewBox="0 0 24 24"><path d="M4.04 4.69a.5.5 0 0 1 .65-.65l16 6.5a.5.5 0 0 1-.06.95l-6.12 1.58a2 2 0 0 0-1.44 1.44l-1.58 6.12a.5.5 0 0 1-.95.06z"/></symbol>
@@ -220,7 +220,15 @@
   </form>
 </dialog>
 
-<!-- Built from src/js by build.mjs: one classic script, so file:// works. -->
-<script src="app.js"></script>
+<!-- Built from src/js by build.mjs: ES modules, which browsers don't load from file://. -->
+<script type="module" src="app.js"></script>
+<script>
+  if (location.protocol === 'file:') { // say why nothing works, instead of a dead page
+    const t = document.getElementById('toast');
+    t.textContent = 'Paint has to be served over http: run npm run serve and open http://localhost:8765/';
+    t.className = 'show error';
+    document.getElementById('srAlert').textContent = t.textContent;
+  }
+</script>
 </body>
 </html>
