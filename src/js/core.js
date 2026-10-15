@@ -1,5 +1,6 @@
-// Pure, DOM-free helpers. Loaded as a classic script (window.Core) and by node tests (module.exports).
-(function (root) {
+// Pure, DOM-free helpers. CommonJS (module.exports), so node tests require() it as is and the app's
+// modules import it through the bundler.
+(function () {
   'use strict';
 
   // Pack RGBA into the u32 layout of a Uint32Array view over ImageData (platform endianness).
@@ -518,6 +519,5 @@
 
   const Core = { rgbaToU32, colorDistance, floodMask, fillEdge, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History,
     objBox, hitsObject, hitObject, objHandles, handleAt, resizeObj, moveObj };
-  if (typeof module !== 'undefined' && module.exports) module.exports = Core;
-  else root.Core = Core;
-})(typeof window !== 'undefined' ? window : globalThis);
+  module.exports = Core;
+})();

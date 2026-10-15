@@ -4,44 +4,49 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A small MS-Paint-style image editor written in plain HTML, CSS and JS. It has no build step. It must keep working when `index.html` is opened directly from `file://` in Chrome, and offline. That rules out ES modules, `fetch`, and external SVG sprite references; icons are inline `<symbol>`s in `index.html`.
+A small MS-Paint-style image editor written in plain HTML, CSS and JS. The source is in `src/`: ES modules in `src/js/`, built by esbuild (`build.mjs`) into `dist/`. The built `dist/index.html` must keep working when opened directly from `file://` in Chrome, and offline. So the bundle is one classic script (`format: 'iife'`), there is no `fetch` or lazy loading, and there are no external SVG sprite references; icons are inline `<symbol>`s in `index.html`. `dist/` is not committed.
 
-The only CDN code is optional: pica (resize), UTIF (open TIFF) and UPNG (smaller PNG saves), with pako for the last two. See "Optional libraries" below. They preload at idle after boot (cached by the browser after that), and every feature that uses one has a built-in path.
+Third-party code comes from npm and is bundled in: pica (resize), UTIF (open TIFF) and UPNG (smaller PNG saves), with pako for the last two. See "Libraries" below.
 
 ## Commands
 
 ```bash
-python3 -m http.server 8765                 # dev server (also .claude/launch.json "paint" for the preview pane)
-node --test test/*.test.js                  # unit tests for js/core.js (no deps)
+npm ci                                      # esbuild, the bundled libraries, Playwright (no browser download)
+npm run build                               # src/ -> dist/ (minified, source map)
+npm run dev                                 # unminified, rebuilds on change, serves dist/ on http://localhost:8765/
+npm run serve                               # serve an existing dist/ on :8765 (python3)
+npm test                                    # unit tests for src/js/core.js (no build needed)
 node --test --test-name-pattern="History" test/*.test.js   # single test by name
 ```
 
-End-to-end smoke test: `test/e2e/smoke.js` runs about 280 checks in one sequential script, and later sections depend on state from earlier ones. It is dev-only and needs Playwright on `NODE_PATH` plus an installed Google Chrome (`channel: 'chrome'`).
+The e2e scripts test the **built** app: run `npm run build` (or keep `npm run dev` running) first. They drive an installed Google Chrome (`channel: 'chrome'`). End-to-end smoke test: `test/e2e/smoke.js` runs about 290 checks in one sequential script, and later sections depend on state from earlier ones.
 
 ```bash
-mkdir -p /tmp/pw && (cd /tmp/pw && npm i playwright@1)
-NODE_PATH=/tmp/pw/node_modules node test/e2e/smoke.js                      # http://localhost:8765/
-NODE_PATH=/tmp/pw/node_modules node test/e2e/smoke.js file://$PWD/index.html
-NODE_PATH=/tmp/pw/node_modules node test/e2e/shots.js /tmp/pw/shot         # light/dark/dialog/narrow screenshots
-NODE_PATH=/tmp/pw/node_modules node test/e2e/history.js                    # pixel-exact undo/redo, undo depth
-NODE_PATH=/tmp/pw/node_modules node test/e2e/preview.js                    # previews on screen at several zooms
-NODE_PATH=/tmp/pw/node_modules node test/e2e/filledge.js                   # brush = one path; fill leaves no fringe at soft edges
-NODE_PATH=/tmp/pw/node_modules node test/e2e/objects.js                    # live shapes: draw, move, resize, restyle, flatten (docs/objects.md)
-NODE_PATH=/tmp/pw/node_modules node test/e2e/libs.js                       # CDN libraries: online, offline, CDN hanging
-NODE_PATH=/tmp/pw/node_modules node test/e2e/bench.js --json /tmp/pw/a.json   # perf benchmark (3 runs, medians)
-node test/e2e/bench-compare.js /tmp/pw/before.json /tmp/pw/a.json           # deltas; exit 1 on a regression
+node test/e2e/smoke.js                      # http://localhost:8765/
+node test/e2e/smoke.js file://$PWD/dist/index.html
+node test/e2e/shots.js /tmp/pw/shot         # light/dark/dialog/narrow screenshots
+node test/e2e/history.js                    # pixel-exact undo/redo, undo depth
+node test/e2e/preview.js                    # previews on screen at several zooms
+node test/e2e/filledge.js                   # brush = one path; fill leaves no fringe at soft edges
+node test/e2e/objects.js                    # live shapes: draw, move, resize, restyle, flatten (docs/objects.md)
+node test/e2e/libs.js                       # bundled libraries: each path runs, round trips, no network
+node test/e2e/pwa.js                        # installable app: manifest, offline reload, launched files; file:// untouched
+node test/e2e/bench.js --json /tmp/pw/a.json   # perf benchmark (3 runs, medians)
+node test/e2e/bench-compare.js /tmp/pw/before.json /tmp/pw/a.json   # deltas; exit 1 on a regression
 ```
 
-CI (`.github/workflows/ci.yml`, GitHub Actions) runs the unit tests and smoke (http and `file://`), history, preview, filledge, objects and libs on every push to master and every PR, in the runner's installed Chrome. The benchmark isn't in CI: shared runners are too noisy to gate on.
+CI (`.github/workflows/ci.yml`, GitHub Actions) runs the unit tests, builds, and runs smoke (http and `file://`), history, preview, filledge, objects, libs (http and `file://`) and pwa on every push to master and every PR, in the runner's installed Chrome. The benchmark isn't in CI: shared runners are too noisy to gate on. After a push to master that passes, CI's `deploy` job publishes `dist/` to GitHub Pages (https://pathanin.github.io/paint/); the repo's Pages source must be set to "GitHub Actions".
 
 The benchmark's `task` (CDP main-thread time) varies by about ±15% between runs. For sub-millisecond per-frame changes, compare Chrome traces instead.
 
-When smoke fails, read the **first** `FAIL` line, because later failures often cascade from it. The tests drive the app through `window.__paint`, a test handle defined at the bottom of `js/app.js`. Add to it rather than reaching into the DOM for internal state.
+When smoke fails, read the **first** `FAIL` line, because later failures often cascade from it. The tests drive the app through `window.__paint`, a test handle defined at the bottom of `src/js/main.js`. Add to it rather than reaching into the DOM for internal state.
 
 ## Architecture
 
-- **`js/core.js`** holds pure, DOM-free helpers that are exported as `window.Core` and through `module.exports` for Node. They cover flood fill, Bresenham line, rect/resize/anchor math, the smoothed brush path (`Stroke`) and `History`. `History` is the bounded undo stack: it evicts by count and bytes and tracks a save point with `markSaved()`/`isClean()`. `push()` returns the number of entries it evicted. Anything testable without a canvas belongs here, test-first.
-- **`js/app.js`** is one IIFE organised into `// ---------- section ----------` blocks: document & history, view, tools, text, selection, clipboard, transforms, file I/O, dialogs, handles, pointer, keyboard, toolbar wiring, tooltips, help, boot. The core state lives in module locals:
+- **`src/js/core.js`** holds pure, DOM-free helpers, exported through `module.exports` (Node's tests `require()` it; the modules import it through esbuild). They cover flood fill, Bresenham line, rect/resize/anchor math, the smoothed brush path (`Stroke`) and `History`. `History` is the bounded undo stack: it evicts by count and bytes and tracks a save point with `markSaved()`/`isClean()`. `push()` returns the number of entries it evicted. Anything testable without a canvas belongs here, test-first.
+- **`src/js/*.js`** are the app's ES modules, one per area: `dom` (element handles, write-if-changed setters, `keyLabel`), `state` (`S`, `drag`, `sel`, constants), `toast`, `libs`, `doc` (document & history), `tiles` (undo tiles), `view` (zoom, `render()`, status), `tools`, `fill`, `objects`, `text`, `selection`, `clipboard`, `transforms`, `fileio`, `dialogs`, `handles`, `pointer`, `keyboard`, `paste` (paste, drop, unload), `toolbar`, `tooltips`, `help`, `pwa` (manifest, service worker, launched files), and `main` (boot, `__paint`). Most modules wire their listeners when they load; `main.js` imports every one. The modules import each other in cycles; that's fine because load-time code only registers listeners and never calls into another module (boot calls happen in `main.js`).
+  - **Each piece of mutable state is owned by one module**, which exports it as a live binding. Other modules read it directly but change it only through the owner's functions, since an ES module can't assign another's binding (esbuild fails the build if one tries): `setDrag()`/`setSel()` (`state`), `showObjs()`/`resetObjs()`/`applyObjHist()`/`commitObjDrag()` (`objects`), `setCursor()`/`setHover()` (`view`). `img` and `ctx` change only in `adoptImage()` (`doc`), `op` only in `tiles`, `textAt` only in `text`.
+  - The core state:
   - `S` holds settings and the document (tool, colours, sizes, zoom, file handle and name, `pristine`).
   - `drag` is the in-progress pointer gesture, keyed by `drag.t`: `pencil`, `brush`, `move`, `select`, `canvas`, `pan`, `objmove`, `objsize` (the Move tool, V, or a shape tool on its own selected shape), and so on.
   - `sel` is the selection; `sel.float` is a lifted or pasted canvas that hasn't been committed yet.
@@ -78,19 +83,25 @@ When smoke fails, read the **first** `FAIL` line, because later failures often c
   - Arrows nudge the selection only when focus is on the canvas. Toolbars use roving tabindex through `rove()`.
 - **Focus rules:** after a pointer click on a toolbar control, focus is released so single-letter shortcuts work. Keyboard activation keeps focus. The text box doesn't commit when focus moves into `.chrome`. `releaseFocus()` returns focus to an open text box.
 
-## Optional libraries
+## Libraries
 
-- The `LIBS` table in `js/app.js` lists each library with an exact version, an SRI hash and its dependencies. `lib(name)` injects a classic `<script crossorigin integrity>` and resolves to the library's global. It rejects after `LIB_TIMEOUT` (4 s). The rejection is reused, so an unreachable CDN costs one wait at most. A later use falls back at once but starts a background retry (at most every `LIB_RETRY_MS`, 30 s); the `online` event clears failures, and a script that arrives after its timeout is picked up (`libReady()`).
-- Scripts are `async = true`. In-order execution (`async = false`) let one stalled library block the others; dependencies are awaited instead.
-- Boot calls `preloadLibs()` from `requestIdleCallback`. jsDelivr sends `immutable, max-age=31536000`, and Chrome serves those files from disk cache after a restart, even offline and from `file://`. Don't short-circuit on `navigator.onLine`: that skips the cache. `picaInst` is still created on first use, so the preload starts no workers.
-- `fallbackNote()` is the once-a-session notice. It fires only when `lib()` rejected (`used.resizeMissed`, `used.pngMissed`), not when a budget skipped the library. It says "Working offline" when `navigator.onLine` is false, and that the libraries couldn't be loaded otherwise.
-- Every caller catches the rejection and falls back: `scaleImage()` falls back to `resample()`, `encodePng()` to `toBlob`, and `decodeFile()` to an error saying the TIFF reader couldn't be downloaded. `__paint.used` records which path ran, and `libs.js` asserts it so that a silent fallback can't pass the online checks.
-- To bump a version, change the path and recompute the hash: `curl -sL https://cdn.jsdelivr.net/npm/<pkg>@<ver>/<file> | openssl dgst -sha384 -binary | openssl base64 -A`.
+- pica, utif2, upng-js and pako are npm dependencies pinned to exact versions in `package.json` and imported in `src/js/libs.js`, so they're in `dist/app.js` (about 180 KB of the bundle). UTIF and UPNG `require('pako')`, which esbuild resolves. pica's workers run from blob URLs, which works from `file://` too (`libs.js` checks both).
+- `picaInst` is created on first use, so boot starts no workers.
+- Each caller keeps a built-in path, for inputs past the library's budget and in case it throws: `scaleImage()` falls back to `resample()`, and `encodePng()` to `toBlob`. `__paint.used` records which path ran, and `libs.js` asserts it so that a silent fallback can't pass.
+- To bump a version: `npm i --save-exact <pkg>@<ver>`, rebuild, and run `libs.js`.
 - Scaling is async. `scaleDoc()` drops its result if the document changed while it ran.
 - The budgets come from measurements on an M4 (the numbers are in the code comments):
   - pica is CPU-bound and gets superlinear on large downscales, so past `PICA_MAX_PIXELS` (50 MP, source plus result) the built-in GPU path runs.
   - UPNG runs on the main thread. It runs only up to `UPNG_MAX_PIXELS` (one 4K screen) and when `upngMs()` estimates it within `UPNG_BUDGET_MS` (750 ms). The estimate uses the browser PNG's size as an entropy proxy.
   - Both encoders run, and the smaller blob is kept.
+
+## Installable app (PWA)
+
+- Over http(s) only, `pwa.js` (`setUpPwa()`, on `load`) links `manifest.webmanifest` and registers `sw.js`. On `file://` neither exists, and nothing is attempted.
+- `sw.js` is network-first with a cached fallback (offline, or after `NET_WAIT_MS`). Cache-first would keep serving an old build, and would shadow `npm run dev` on the same origin. `build.mjs` stamps it with the file list and a content hash, so each build gets a fresh cache.
+- A dev build (`define: { DEV }`) unregisters any service worker instead of registering one.
+- `manifest.webmanifest` `file_handlers` make the installed app an "Open with" target for images. Launches arrive through `launchQueue`, whose consumer `main.js` sets after boot (`openLaunched()`). The file handle is kept, so ⌘S writes back.
+- Any new file the page loads must live in `src/` (outside `src/js/`), so it's copied to `dist/` and into the service worker's list.
 
 ## Constraints and conventions
 
