@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A small MS-Paint-style image editor written in plain HTML, CSS and JS. The source is in `src/`: ES modules in `src/js/`, built by esbuild (`build.mjs`) into `dist/`. The built `dist/index.html` must keep working when opened directly from `file://` in Chrome, and offline. So the bundle is one classic script (`format: 'iife'`), there is no `fetch` or lazy loading, and there are no external SVG sprite references; icons are inline `<symbol>`s in `index.html`. `dist/` is not committed.
+A small MS-Paint-style image editor written in plain HTML, CSS and JS. The source is in `src/`: ES modules in `src/js/`, built by esbuild (`build.mjs`) into `dist/`. The built `dist/index.html` must keep working when opened directly from `file://` in Chrome, and offline. So the bundle is one classic script (`format: 'iife'`), there is no `fetch` or lazy loading, and there are no external SVG sprite references; icons are inline `<symbol>`s in `src/index.html`. `dist/` is not committed.
 
 Third-party code comes from npm and is bundled in: pica (resize), UTIF (open TIFF) and UPNG (smaller PNG saves), with pako for the last two. See "Libraries" below.
 
@@ -13,7 +13,8 @@ Third-party code comes from npm and is bundled in: pica (resize), UTIF (open TIF
 ```bash
 npm ci                                      # esbuild, the bundled libraries, Playwright (no browser download)
 npm run build                               # src/ -> dist/ (minified, source map)
-npm run dev                                 # unminified, rebuilds on change, serves dist/ on http://localhost:8765/
+npm run dev                                 # unminified, rebuilds on change, serves dist/ on http://localhost:8765/ (edits to
+                                            # non-JS files in src/ are copied on the next JS rebuild: touch a module)
 npm run serve                               # serve an existing dist/ on :8765 (python3)
 npm test                                    # unit tests for src/js/core.js (no build needed)
 node --test --test-name-pattern="History" test/*.test.js   # single test by name
@@ -35,7 +36,7 @@ node test/e2e/bench.js --json /tmp/pw/a.json   # perf benchmark (3 runs, medians
 node test/e2e/bench-compare.js /tmp/pw/before.json /tmp/pw/a.json   # deltas; exit 1 on a regression
 ```
 
-CI (`.github/workflows/ci.yml`, GitHub Actions) runs the unit tests, builds, and runs smoke (http and `file://`), history, preview, filledge, objects, libs (http and `file://`) and pwa on every push to master and every PR, in the runner's installed Chrome. The benchmark isn't in CI: shared runners are too noisy to gate on. After a push to master that passes, CI's `deploy` job publishes `dist/` to GitHub Pages (https://pathanin.github.io/paint/); the repo's Pages source must be set to "GitHub Actions".
+CI (`.github/workflows/ci.yml`, GitHub Actions) runs the unit tests, builds, and runs smoke (http and `file://`), history, preview, filledge, objects, libs (http and `file://`) and pwa on every push to master and every PR, in the runner's installed Chrome. The benchmark isn't in CI: shared runners are too noisy to gate on. After a push to master that passes, CI's `deploy` job publishes `dist/` to GitHub Pages (https://pathanin.github.io/paint/). The repo's Settings → Pages → Source is "GitHub Actions"; the deploy fails without it.
 
 The benchmark's `task` (CDP main-thread time) varies by about ±15% between runs. For sub-millisecond per-frame changes, compare Chrome traces instead.
 
@@ -72,7 +73,7 @@ When smoke fails, read the **first** `FAIL` line, because later failures often c
   - `obj` entries hold the other object list and swap it on apply. Streams of edits (held arrows, a colour-well drag) coalesce into one entry via `setObjs(next, key)`, except across the save point. A flatten is a `region` entry that also carries the object list, so one undo un-bakes the pixels and brings the objects back.
   - `doc` entries hold the previous `#image` element itself (crop, resize, rotate, a paste that grows the canvas). `History`'s `onDrop` frees dropped canvases.
   - Unsaved state is `isDirty()` = `!hist.isClean()` OR a floating selection OR non-empty open text. Never keep a separate dirty flag.
-- **UI wiring** is mostly data-driven from attributes in `index.html`:
+- **UI wiring** is mostly data-driven from attributes in `src/index.html`:
   - `data-tool` and `data-cmd` buttons are dispatched by one document-level click handler, which looks commands up in `CMDS`.
   - `.opts [data-for="tool1 tool2"]` elements show or hide per tool in `setTool()`.
   - `data-tip` / `data-kbd` / `data-hint` feed the custom tooltip. Shortcut labels are written Mac-style (`⌘⇧`), and `keyLabel()` converts them for other platforms. `aria-keyshortcuts` and `aria-description` are generated from the same attributes at boot.

@@ -70,7 +70,7 @@ jobs:
         run: node test/e2e/pwa.js
 
   # Publish dist/ to GitHub Pages (https://pathanin.github.io/paint/) after a push to master, once
-  # the tests pass. Needs Settings → Pages → Source: "GitHub Actions" (a one-time repo setting).
+  # the tests pass. Relies on Settings → Pages → Source: "GitHub Actions" (set once; the deploy fails without it).
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     needs: [unit, e2e]
