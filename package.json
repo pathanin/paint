@@ -1,0 +1,22 @@
+{
+  "name": "paint",
+  "private": true,
+  "version": "0.0.0",
+  "description": "A small MS-Paint-style image editor",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node build.mjs --dev",
+    "serve": "python3 -m http.server 8765 -d dist",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "pako": "1.0.11",
+    "pica": "10.0.3",
+    "upng-js": "2.1.0",
+    "utif2": "4.1.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "playwright": "1.64.1"
+  }
+}

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const Core = require('../js/core.js');
+const Core = require('../src/js/core.js');
 
 // Build a w*h grid from rows of chars; each char maps to a u32 color.
 function grid(rows, map) {
