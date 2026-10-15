@@ -1,7 +1,7 @@
 import Core from './core.js';
 import { docOp, hist, img } from './doc.js';
 import { $, makeCanvas } from './dom.js';
-import { pica, used } from './libs.js';
+import { loadPica, used } from './libs.js';
 import { dropSelection } from './selection.js';
 import { S, drag, sel, sizeProblem } from './state.js';
 import { commitText, textAt } from './text.js';
@@ -33,7 +33,7 @@ let picaInst = null;
 async function scaleImage(src, w, h) {
   try {
     if (src.width * src.height + w * h > PICA_MAX_PIXELS) throw new Error('too large for pica');
-    picaInst = picaInst || pica(); // created on first use, so boot starts no workers
+    picaInst = picaInst || (await loadPica())(); // loaded and created on first use, so boot starts no workers
     const out = makeCanvas(w, h);
     await picaInst.resize(src, out, { filter: 'lanczos3' });
     used.resize = 'pica';

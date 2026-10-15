@@ -2,8 +2,10 @@
 // usage: node pwa.js [url]   exit 0 = all pass; url must be http(s) (default http://localhost:8765/)
 // Over http(s): the manifest is linked and Chrome reports no installability errors, the service
 // worker caches the app so a reload works with the network off, and a file handed to the installed
-// app (launchQueue) opens with its handle, so Save writes back to it. From file:// (dist/index.html
-// next to this repo's build): no manifest, no service worker, no errors.
+// app (launchQueue) opens with its handle, so Save writes back to it. Offline, the parts that load
+// on first use (library chunks, the fill and PNG workers) work too, and a file only the previous
+// build's cache has is still served. From file:// (dist/index.html next to this repo's build), which
+// can't load ES modules, the page says how to run it instead.
 const { chromium } = require('playwright');
 const path = require('path');
 const fs = require('fs');
@@ -66,8 +68,43 @@ setTimeout(() => { console.log(`FAIL: timed out during ${at}`); console.log(`${p
       ok(await P(() => window.__paint.hist.canUndo()), 'offline: drawing works');
       const r = await P(async () => { const p = window.__paint; await p.resizeDoc(400, 300, 'scale'); return [p.used.resize, p.img.width]; });
       ok(r.join() === 'pica,400', `offline: resize uses the bundled pica (${r})`);
+      await P(() => { const p = window.__paint; p.newDoc(300, 200); p.fitZoom(false); p.setTool('fill'); p.S.tolerance = 0; p.S.primary = '#ff0000'; });
+      const b2 = await page.locator('#overlay').boundingBox();
+      await page.mouse.click(b2.x + 3, b2.y + 3);
+      const f = await P(async () => { const p = window.__paint; await p.filling; return [p.used.fill, ...p.img.getContext('2d').getImageData(0, 0, 1, 1).data].join(); });
+      ok(f === 'worker,255,0,0,255', `offline: fill runs in its worker (${f})`);
+      const tif = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'rgba-deflate.tif')).toString('base64');
+      const t = await P(async (b64) => {
+        const p = window.__paint, bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        const bmp = await p.decodeFile(new File([bytes], 'a.tif', { type: 'image/tiff' }));
+        return [p.used.open, bmp.width].join();
+      }, tif);
+      ok(t === 'utif,4', `offline: TIFF opens through UTIF (${t})`);
+      const png = await P(async () => {
+        const p = window.__paint, g = p.img.getContext('2d');
+        g.fillStyle = '#00f'; g.fillRect(10, 10, 50, 50);
+        let blob = null;
+        p.S.fileName = 'out.png';
+        p.S.fileHandle = { name: 'out.png', queryPermission: async () => 'granted', requestPermission: async () => 'granted',
+          createWritable: async () => ({ write: async (x) => { blob = x; }, close: async () => {} }) };
+        await p.save(false);
+        return [p.used.png, !!blob].join();
+      });
+      ok(png === 'upng,true', `offline: PNG save runs UPNG in its worker (${png})`);
     }
     await context.setOffline(false);
+
+    // ---- a file the server no longer has (an old build's chunk) comes from the previous build's cache
+    at = 'previous cache';
+    const prev = await P(async () => {
+      const c = await caches.open('paint-test-previous');
+      await c.put(new URL('chunks/old-build-chunk.js', location.href).href, new Response('export const x = 1;', { headers: { 'content-type': 'text/javascript' } }));
+      const r = await fetch('chunks/old-build-chunk.js');
+      const body = await r.text();
+      await caches.delete('paint-test-previous');
+      return [r.status, body].join(' ');
+    });
+    ok(prev === '200 export const x = 1;', 'a 404 is answered from the previous build’s cache: ' + prev);
 
     // ---- a file handed to the installed app opens, and keeps its handle for Save
     at = 'launch';
@@ -91,17 +128,13 @@ setTimeout(() => { console.log(`FAIL: timed out during ${at}`); console.log(`${p
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));
     await context.close();
 
-    // ---- file://: no manifest or service worker, and nothing goes wrong for lack of them
+    // ---- file://: ES modules don't load there, so the page says how to run the app instead
     at = 'file';
     const fpage = await browser.newPage();
-    const ferrs = [];
-    fpage.on('pageerror', (e) => ferrs.push(e.message));
     await fpage.goto(fileUrl);
-    await fpage.waitForFunction(() => window.__paint);
-    await fpage.waitForTimeout(300); // past the load event, where the http(s) path would set up
-    const f = await fpage.evaluate(() => ({ link: !!document.querySelector('link[rel=manifest]'), sw: !!(navigator.serviceWorker && navigator.serviceWorker.controller) }));
-    ok(!f.link && !f.sw, 'file://: no manifest link, no service worker: ' + JSON.stringify(f));
-    ok(ferrs.length === 0, 'file://: no page errors: ' + ferrs.join(' | '));
+    await fpage.waitForTimeout(300);
+    const f = await fpage.evaluate(() => ({ app: !!window.__paint, toast: document.querySelector('#toast').textContent, shown: document.querySelector('#toast').classList.contains('show') }));
+    ok(!f.app && f.shown && /served over http: run npm run serve/.test(f.toast), 'file://: the page says to serve it over http: ' + JSON.stringify(f));
     await fpage.close();
   } finally {
     await browser.close();

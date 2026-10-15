@@ -1,10 +1,13 @@
 // Bundled-library e2e test (Playwright + installed Chrome). Dev-only, like smoke.js.
 // usage: node libs.js [url]   exit 0 = all pass
-// pica (resize), UTIF (open TIFF) and UPNG (smaller PNG) are bundled into app.js, so they work
-// offline and from file:// (pica's workers too). Checks that each library path actually runs (a
-// silent fallback must not pass), that each feature keeps its built-in path past the library's
-// budget, the results (pixel-exact TIFF and PNG round trips, less moiré than the built-in
-// resampler), and that the page asks the network for nothing.
+// pica (resize), UTIF (open TIFF) and UPNG (smaller PNG, in png-worker.js) are bundled into chunks
+// that load on first use, from the app's own server (and offline, from the service worker). Checks
+// that boot loads none of them, that each library path actually runs (a silent fallback must not
+// pass), that each feature keeps its built-in path past the library's budget, the results
+// (pixel-exact TIFF and PNG round trips, less moiré than the built-in resampler), that the page
+// asks no other server for anything, and that the paint bucket runs in its worker. Then, with the
+// chunks and workers blocked (a tab left open across a deploy), that each feature still works or
+// says why not.
 const { chromium } = require('playwright');
 const path = require('path');
 const url = process.argv[2] || 'http://localhost:8765/';
@@ -42,12 +45,16 @@ function hugeTiff() {
     const errs = [], remote = [];
     page.on('pageerror', (e) => errs.push(e.message));
     page.on('dialog', (d) => d.accept());
-    page.on('request', (r) => { if (!/^(file:|blob:|data:|http:\/\/localhost[:/])/.test(r.url())) remote.push(r.url()); });
+    const requested = [];
+    page.on('request', (r) => { requested.push(r.url()); if (!/^(blob:|data:|http:\/\/localhost[:/])/.test(r.url())) remote.push(r.url()); });
     await page.goto(url);
     await page.waitForFunction(() => window.__paint);
+    await page.waitForTimeout(300); // past the load event
     const P = (f, a) => page.evaluate(f, a);
     const toast = () => page.locator('#toast').textContent();
     at = 'checks';
+    const LAZY = /\/(chunks\/(pica|UTIF)-[^/]*|fill-worker|png-worker)\.js$/;
+    ok(!requested.some((u) => LAZY.test(u)), 'boot loads no library chunk or worker: ' + requested.filter((u) => LAZY.test(u)).join(' '));
 
     // ---- resize: pica online, built-in otherwise; a clean result either way
     const t0 = Date.now();
@@ -232,8 +239,95 @@ function hugeTiff() {
       ok(s.clean, `${label}: saved state is clean`);
     }
 
+    // ---- the paint bucket: filled in its worker, and undoes exactly
+    const fillAt = async (pg, color) => {
+      const b = await pg.locator('#overlay').boundingBox();
+      await pg.evaluate((c) => { const p = window.__paint; p.setTool('fill'); p.S.tolerance = 0; p.S.primary = c; }, color);
+      await pg.mouse.click(b.x + 3, b.y + 3);
+      return pg.evaluate(async () => {
+        const p = window.__paint;
+        await p.filling;
+        const d = p.img.getContext('2d').getImageData(0, 0, 1, 1).data;
+        return { used: p.used.fill, px: [...d].join(), steps: p.hist.undoStack.length };
+      });
+    };
+    await P(() => { const p = window.__paint; p.newDoc(300, 200); p.fitZoom(false); });
+    const f1 = await fillAt(page, '#ff0000');
+    ok(f1.used === 'worker' && f1.px === '255,0,0,255' && f1.steps === 1, 'fill runs in its worker: ' + JSON.stringify(f1));
+    ok(await P(() => { window.__paint.undo(); return [...window.__paint.img.getContext('2d').getImageData(0, 0, 1, 1).data].join(); }) === '255,255,255,255', 'undo of the worker fill restores white');
+    // the page stays live during a fill: an edit that lands first wins, and the fill is dropped
+    await P(() => { const p = window.__paint; p.newDoc(6000, 4000); p.fitZoom(false); });
+    await fillAt(page, '#ff0000');
+    await P(() => { window.__paint.S.primary = '#0000ff'; });
+    const ob = await page.locator('#overlay').boundingBox();
+    await page.mouse.click(ob.x + 3, ob.y + 3);
+    const race = await P(async () => {
+      const p = window.__paint, running = !!p.filling;
+      p.undo(); // the red fill, while the blue one is still in its worker
+      await p.filling;
+      return { running, px: [...p.img.getContext('2d').getImageData(0, 0, 1, 1).data].join(), undo: p.hist.undoStack.length, redo: p.hist.redoStack.length, toast: document.querySelector('#toast').textContent };
+    });
+    ok(race.running, 'the 24 MP fill was still running when undo came');
+    // ...but panning around while it runs changes no pixels: the fill lands
+    await P(() => { window.__paint.S.primary = '#00ff00'; document.querySelector('#toast').textContent = ''; }); // the race's toast may still show
+    await page.mouse.click(ob.x + 3, ob.y + 3);
+    await page.mouse.move(ob.x + 200, ob.y + 200);
+    await page.keyboard.down('Space');
+    await page.mouse.down();
+    await page.mouse.move(ob.x + 150, ob.y + 170, { steps: 3 });
+    const pan = await P(async () => {
+      const p = window.__paint, running = !!p.filling, during = p.drag && p.drag.t;
+      await p.filling;
+      return { running, during, steps: p.hist.undoStack.length, toast: document.querySelector('#toast').textContent };
+    });
+    await page.mouse.up();
+    await page.keyboard.up('Space');
+    const panPx = await P(() => [...window.__paint.img.getContext('2d').getImageData(0, 0, 1, 1).data].join());
+    ok(pan.running && pan.during === 'pan', 'the fill was still running during the pan: ' + JSON.stringify(pan));
+    ok(pan.steps === 1 && panPx === '0,255,0,255' && !/cancelled/.test(pan.toast), 'a fill lands under a pan: ' + JSON.stringify({ ...pan, panPx }));
+    ok(race.px === '255,255,255,255' && race.undo === 0 && race.redo === 1 && /Fill cancelled: the image changed/.test(race.toast), 'a fill whose image changed meanwhile is dropped: ' + JSON.stringify(race));
+
     ok(remote.length === 0, 'no requests leave the machine: ' + remote.slice(0, 3).join(' '));
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));
+
+    // ---- chunks and workers that don't load: the built-in paths, or a reason
+    at = 'blocked';
+    const bctx = await browser.newContext({ viewport: { width: 1000, height: 700 } }); // its own HTTP cache
+    await bctx.route(LAZY, (r) => r.fulfill({ status: 404, body: 'gone' })); // the workers' requests too
+    const bp = await bctx.newPage();
+    const berrs = [];
+    bp.on('pageerror', (e) => berrs.push(e.message));
+    await bp.goto(url);
+    await bp.waitForFunction(() => window.__paint);
+    await bp.evaluate(() => { const p = window.__paint; p.newDoc(300, 200); p.fitZoom(false); });
+    const f2 = await fillAt(bp, '#0000ff');
+    ok(f2.used === 'main' && f2.px === '0,0,255,255' && f2.steps === 1, 'fill without its worker runs on the main thread: ' + JSON.stringify(f2));
+    const f3 = await fillAt(bp, '#00ff00');
+    ok(f3.used === 'main' && f3.px === '0,255,0,255' && f3.steps === 2, 'a second fill goes straight to the main thread: ' + JSON.stringify(f3));
+    const rz = await bp.evaluate(async () => { const p = window.__paint; await p.resizeDoc(100, 50, 'scale'); return [p.used.resize, p.img.width, p.img.height].join(); });
+    ok(rz === 'builtin,100,50', 'resize without the pica chunk uses the built-in resampler: ' + rz);
+    const tif = require('fs').readFileSync(path.join(FIX, 'rgba-deflate.tif')).toString('base64');
+    await bp.evaluate((b64) => {
+      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      const dt = new DataTransfer(); dt.items.add(new File([bytes], 'nochunk.tif', { type: 'image/tiff' }));
+      window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    }, tif);
+    await bp.waitForFunction(() => /nochunk/.test(document.querySelector('#toast').textContent), null, { timeout: 5000 }).catch(() => {});
+    const tt = await bp.locator('#toast').textContent();
+    ok(/Can't open nochunk\.tif: the TIFF reader didn’t load\. Reload the page/.test(tt), 'TIFF without its chunk says to reload: ' + tt);
+    const png = await bp.evaluate(async () => {
+      const p = window.__paint;
+      p.newDoc(200, 100);
+      let blob = null;
+      p.S.fileName = 'out.png';
+      p.S.fileHandle = { name: 'out.png', queryPermission: async () => 'granted', requestPermission: async () => 'granted',
+        createWritable: async () => ({ write: async (x) => { blob = x; }, close: async () => {} }) };
+      await p.save(false);
+      return { used: p.used.png, ok: !!blob && blob.type === 'image/png' && blob.size > 0 };
+    });
+    ok(png.used === 'builtin' && png.ok, 'PNG save without its worker uses the browser encoder: ' + JSON.stringify(png));
+    ok(berrs.length === 0, 'blocked: no page errors: ' + berrs.join(' | '));
+    await bctx.close();
   } finally {
     await browser.close();
   }

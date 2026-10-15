@@ -190,6 +190,43 @@ test('fillEdge clamps its box to the image', () => {
   assert.deepEqual(e.box, { x: 1, y: 0, w: 3, h: 2 });
 });
 
+// fillPlan: the whole fill (region, soft edge, undo data) in one call, so it can run in a worker.
+test('fillPlan fills like floodMask + fillEdge and returns the undo data for its box', () => {
+  const W = Core.rgbaToU32(255, 255, 255, 255), K = Core.rgbaToU32(0, 0, 0, 255), R = Core.rgbaToU32(255, 0, 0, 255);
+  const g40 = Core.rgbaToU32(102, 102, 102, 255);
+  const rows = ['......', '.##g..', '.#..#.', '..g#..', '......', '######'];
+  const a = grid(rows, { '.': W, '#': K, g: g40 }), b = grid(rows, { '.': W, '#': K, g: g40 });
+  const orig = a.u32.slice();
+  const e = fillWithEdge(a, 0, 0, R, 10);
+  const p = Core.fillPlan(b.u32, b.w, b.h, 0, 0, R, 10);
+  assert.deepEqual([...b.u32], [...a.u32]); // the same pixels as the two-step fill
+  assert.deepEqual(p.box, e.box);
+  const { x, y, w, h } = p.box;
+  assert.equal(p.before.length, w * h);
+  // before: the box's original pixels; bits/ek/ev rebuild the box's filled pixels from them (redo)
+  const after = p.before.slice();
+  for (let yy = 0; yy < h; yy++) {
+    for (let xx = 0; xx < w; xx++) {
+      const k = yy * w + xx;
+      assert.equal(p.before[k], orig[(y + yy) * b.w + x + xx]);
+      if (p.bits[k >> 3] & (1 << (k & 7))) after[k] = R;
+    }
+  }
+  p.ek.forEach((k, j) => { after[k] = p.ev[j]; });
+  for (let yy = 0; yy < h; yy++) for (let xx = 0; xx < w; xx++) assert.equal(after[yy * w + xx], b.u32[(y + yy) * b.w + x + xx]);
+  assert.ok(p.ek.length > 0); // the grey pixels are a soft edge
+});
+
+test('fillPlan returns null and leaves the pixels alone when nothing changes', () => {
+  const W = Core.rgbaToU32(255, 255, 255, 255), K = Core.rgbaToU32(0, 0, 0, 255);
+  const g = grid(['..#', '.#.', '#..'], { '.': W, '#': K });
+  const orig = g.u32.slice();
+  assert.equal(Core.fillPlan(g.u32, g.w, g.h, 0, 0, W, 0), null);
+  assert.equal(Core.fillPlan(g.u32, g.w, g.h, 0, 0, W, 10), null);
+  assert.equal(Core.fillPlan(g.u32, g.w, g.h, 9, 0, K, 0), null); // outside the image
+  assert.deepEqual([...g.u32], [...orig]);
+});
+
 test('line produces contiguous Bresenham points', () => {
   assert.deepEqual(Core.line(0, 0, 3, 0), [[0, 0], [1, 0], [2, 0], [3, 0]]);
   assert.deepEqual(Core.line(0, 0, 2, 2), [[0, 0], [1, 1], [2, 2]]);

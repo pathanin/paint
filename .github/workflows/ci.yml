@@ -41,12 +41,9 @@ jobs:
           python3 -m http.server 8765 -d dist > /tmp/http.log 2>&1 &
           for i in $(seq 1 30); do curl -sf http://localhost:8765/index.html > /dev/null && exit 0; sleep 0.5; done
           echo "server did not start"; cat /tmp/http.log; exit 1
-      - name: smoke (http)
+      - name: smoke
         if: ${{ !cancelled() }}
         run: node test/e2e/smoke.js
-      - name: smoke (file://)
-        if: ${{ !cancelled() }}
-        run: node test/e2e/smoke.js "file://$PWD/dist/index.html"
       - name: history
         if: ${{ !cancelled() }}
         run: node test/e2e/history.js
@@ -59,12 +56,9 @@ jobs:
       - name: objects
         if: ${{ !cancelled() }}
         run: node test/e2e/objects.js
-      - name: libs (http)
+      - name: libs
         if: ${{ !cancelled() }}
         run: node test/e2e/libs.js
-      - name: libs (file://)
-        if: ${{ !cancelled() }}
-        run: node test/e2e/libs.js "file://$PWD/dist/index.html"
       - name: pwa
         if: ${{ !cancelled() }}
         run: node test/e2e/pwa.js

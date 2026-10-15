@@ -63,7 +63,8 @@ async function once() {
       const tick = (t) => { if (window.__frames) window.__frames.push(t); requestAnimationFrame(tick); };
       requestAnimationFrame(tick);
     });
-    const settle = () => P(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => { window.__benchFlush(); r(); }))));
+    // two frames after any fill still running in its worker has landed
+    const settle = () => P(async () => { await window.__paint.filling; await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => { window.__benchFlush(); r(); }))); });
     const gc = async () => { await P(() => window.gc && window.gc()); await page.waitForTimeout(300); };
 
     async function run(name, fn) {

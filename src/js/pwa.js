@@ -2,8 +2,8 @@ import { confirmDiscard, loadFile } from './fileio.js';
 import { flash } from './toast.js';
 
 // ---------- installable app ----------
-// Served over http(s), the page links its manifest (so Chrome offers to install it) and registers
-// the service worker (so it opens offline). Neither exists on file://, so nothing happens there.
+// The page links its manifest (so Chrome offers to install it) and registers the service worker
+// (so it opens offline).
 // A dev build (npm run dev) instead removes a worker an earlier build left on the same origin,
 // which would otherwise keep serving the old files.
 function setUpPwa() {

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A small MS-Paint-style image editor written in plain HTML, CSS and JS. The source is in `src/`: ES modules in `src/js/`, built by esbuild (`build.mjs`) into `dist/`. The built `dist/index.html` must keep working when opened directly from `file://` in Chrome, and offline. So the bundle is one classic script (`format: 'iife'`), there is no `fetch` or lazy loading, and there are no external SVG sprite references; icons are inline `<symbol>`s in `src/index.html`. `dist/` is not committed.
+A small MS-Paint-style image editor written in plain HTML, CSS and JS. The source is in `src/`: ES modules in `src/js/`, built by esbuild (`build.mjs`) into `dist/`. The built app is served over http(s) (`npm run serve`, `npm run dev`, GitHub Pages) and works offline once loaded, through the service worker. The output is ES modules (`format: 'esm'`, `splitting: true`): `app.js`, the two workers `fill-worker.js` and `png-worker.js`, and `chunks/`, where the libraries load with `import()` on first use. Opened from `file://`, where ES modules don't load, the page only shows a message to serve it. Icons are inline `<symbol>`s in `src/index.html`. `dist/` is not committed.
 
 Third-party code comes from npm and is bundled in: pica (resize), UTIF (open TIFF) and UPNG (smaller PNG saves), with pako for the last two. See "Libraries" below.
 
@@ -24,19 +24,18 @@ The e2e scripts test the **built** app: run `npm run build` (or keep `npm run de
 
 ```bash
 node test/e2e/smoke.js                      # http://localhost:8765/
-node test/e2e/smoke.js file://$PWD/dist/index.html
 node test/e2e/shots.js /tmp/pw/shot         # light/dark/dialog/narrow screenshots
 node test/e2e/history.js                    # pixel-exact undo/redo, undo depth
 node test/e2e/preview.js                    # previews on screen at several zooms
 node test/e2e/filledge.js                   # brush = one path; fill leaves no fringe at soft edges
 node test/e2e/objects.js                    # live shapes: draw, move, resize, restyle, flatten (docs/objects.md)
-node test/e2e/libs.js                       # bundled libraries: each path runs, round trips, no network
-node test/e2e/pwa.js                        # installable app: manifest, offline reload, launched files; file:// untouched
+node test/e2e/libs.js                       # libraries: lazy, each path runs, round trips, fallbacks when a chunk won't load
+node test/e2e/pwa.js                        # installable app: manifest, offline reload + lazy parts, launched files, file:// notice
 node test/e2e/bench.js --json /tmp/pw/a.json   # perf benchmark (3 runs, medians)
 node test/e2e/bench-compare.js /tmp/pw/before.json /tmp/pw/a.json   # deltas; exit 1 on a regression
 ```
 
-CI (`.github/workflows/ci.yml`, GitHub Actions) runs the unit tests, builds, and runs smoke (http and `file://`), history, preview, filledge, objects, libs (http and `file://`) and pwa on every push to master and every PR, in the runner's installed Chrome. The benchmark isn't in CI: shared runners are too noisy to gate on. After a push to master that passes, CI's `deploy` job publishes `dist/` to GitHub Pages (https://pathanin.github.io/paint/). The repo's Settings → Pages → Source is "GitHub Actions"; the deploy fails without it.
+CI (`.github/workflows/ci.yml`, GitHub Actions) runs the unit tests, builds, and runs smoke, history, preview, filledge, objects, libs and pwa on every push to master and every PR, in the runner's installed Chrome. The benchmark isn't in CI: shared runners are too noisy to gate on. After a push to master that passes, CI's `deploy` job publishes `dist/` to GitHub Pages (https://pathanin.github.io/paint/). The repo's Settings → Pages → Source is "GitHub Actions"; the deploy fails without it.
 
 The benchmark's `task` (CDP main-thread time) varies by about ±15% between runs. For sub-millisecond per-frame changes, compare Chrome traces instead.
 
@@ -45,7 +44,7 @@ When smoke fails, read the **first** `FAIL` line, because later failures often c
 ## Architecture
 
 - **`src/js/core.js`** holds pure, DOM-free helpers, exported through `module.exports` (Node's tests `require()` it; the modules import it through esbuild). They cover flood fill, Bresenham line, rect/resize/anchor math, the smoothed brush path (`Stroke`) and `History`. `History` is the bounded undo stack: it evicts by count and bytes and tracks a save point with `markSaved()`/`isClean()`. `push()` returns the number of entries it evicted. Anything testable without a canvas belongs here, test-first.
-- **`src/js/*.js`** are the app's ES modules, one per area: `dom` (element handles, write-if-changed setters, `keyLabel`), `state` (`S`, `drag`, `sel`, constants), `toast`, `libs`, `doc` (document & history), `tiles` (undo tiles), `view` (zoom, `render()`, status), `tools`, `fill`, `objects`, `text`, `selection`, `clipboard`, `transforms`, `fileio`, `dialogs`, `handles`, `pointer`, `keyboard`, `paste` (paste, drop, unload), `toolbar`, `tooltips`, `help`, `pwa` (manifest, service worker, launched files), and `main` (boot, `__paint`). Most modules wire their listeners when they load; `main.js` imports every one. The modules import each other in cycles; that's fine because load-time code only registers listeners and never calls into another module (boot calls happen in `main.js`).
+- **`src/js/*.js`** are the app's ES modules, one per area: `dom` (element handles, write-if-changed setters, `keyLabel`), `state` (`S`, `drag`, `sel`, constants), `toast`, `libs` (lazy libraries, workers), `doc` (document & history), `tiles` (undo tiles), `view` (zoom, `render()`, status), `tools`, `fill`, `objects`, `text`, `selection`, `clipboard`, `transforms`, `fileio`, `dialogs`, `handles`, `pointer`, `keyboard`, `paste` (paste, drop, unload), `toolbar`, `tooltips`, `help`, `pwa` (manifest, service worker, launched files), and `main` (boot, `__paint`). Most modules wire their listeners when they load; `main.js` imports every one. The modules import each other in cycles; that's fine because load-time code only registers listeners and never calls into another module (boot calls happen in `main.js`).
   - **Each piece of mutable state is owned by one module**, which exports it as a live binding. Other modules read it directly but change it only through the owner's functions, since an ES module can't assign another's binding (esbuild fails the build if one tries): `setDrag()`/`setSel()` (`state`), `showObjs()`/`resetObjs()`/`mapObjs()`/`applyObjHist()`/`commitObjDrag()` (`objects`), `setCursor()`/`setHover()` (`view`). `img` and `ctx` change only in `adoptImage()` (`doc`), `op` only in `tiles`, `textAt` only in `text`.
   - The core state:
   - `S` holds settings and the document (tool, colours, sizes, zoom, file handle and name, `pristine`).
@@ -69,6 +68,7 @@ When smoke fails, read the **first** `FAIL` line, because later failures often c
     - Chrome makes each `drawImage` to or from a large canvas costly (1600 tile draws ~130–540 ms at 100 MP, one whole-image draw ~15 ms): snapshot and draw back per contiguous block (`Core.groupRects(…, 1)`), never per tile.
     - Never read back the document while a stroke is in progress; each readback stalls the next frame. `dropOp(true)` restores the tiles.
     - The brush (`brushCommit()`) draws each batch of segments by restoring its box from the op's tiles and stroking every segment that reaches it as one clipped path, so batches never ink an edge pixel twice. It `touch()`es the box first, so every tile it restores from exists.
+  - The fill itself (`Core.fillPlan`: region, soft edge and undo data) runs in `fill-worker.js` on a transferred copy of the pixels; the page stays live, so `runFill()` drops the result, with a flash, if the image changed meanwhile (an open op, a float, `img` or the history top changed), like `scaleDoc()`; a pan or other pixel-free drag doesn't count. One fill at a time. Tests `await __paint.filling` before reading pixels.
   - `fill` entries store the before pixels, a bit mask and the new values of the anti-aliased ring around the region (`Core.fillEdge`, `ek`/`ev`), so neither undo nor redo reads the canvas. Redo paints the mask's runs as one `Path2D` fill (exact for the opaque fill colour), then the ring pixels one path per colour; masks with over 100k runs, or a ring that isn't opaque, fall back to recomputing and putting the pixels.
   - `obj` entries hold the other object list and swap it on apply. Streams of edits (held arrows, a colour-well drag) coalesce into one entry via `setObjs(next, key)`, except across the save point. A flatten is a `region` entry that also carries the object list, so one undo un-bakes the pixels and brings the objects back.
   - `doc` entries hold the previous `#image` element itself (crop, resize, rotate, a paste that grows the canvas), plus the previous object list when the op moved objects. `History`'s `onDrop` frees dropped canvases.
@@ -86,20 +86,21 @@ When smoke fails, read the **first** `FAIL` line, because later failures often c
 
 ## Libraries
 
-- pica, utif2, upng-js and pako are npm dependencies pinned to exact versions in `package.json` and imported in `src/js/libs.js`, so they're in `dist/app.js` (about 180 KB of the bundle). UTIF and UPNG `require('pako')`, which esbuild resolves. pica's workers run from blob URLs, which works from `file://` too (`libs.js` checks both).
+- pica, utif2, upng-js and pako are npm dependencies pinned to exact versions in `package.json`. esbuild splits each into a chunk under `dist/chunks/` (about 180 KB together), which loads on first use: `loadPica()` and `loadUTIF()` in `src/js/libs.js`, and UPNG inside `png-worker.js`. Boot loads none of them (`libs.js` checks). UTIF and UPNG `require('pako')`, which esbuild resolves. pica's own workers run from blob URLs.
+- Workers are entries in `build.mjs`, started by name with `startWorker()` (the URL is relative to the page, since the calling module may land in a chunk). `workerCall()` runs one job and rejects if the worker didn't load or threw. Worker names aren't content-hashed, so after a deploy a tab still running the old build starts the new worker: keep each worker's message format backward-compatible (or hash their names).
 - `picaInst` is created on first use, so boot starts no workers.
-- Each caller keeps a built-in path, for inputs past the library's budget and in case it throws: `scaleImage()` falls back to `resample()`, and `encodePng()` to `toBlob`. `__paint.used` records which path ran, and `libs.js` asserts it so that a silent fallback can't pass.
+- Each caller keeps a built-in path, for inputs past the library's budget and in case it throws: `scaleImage()` falls back to `resample()`, `encodePng()` to `toBlob`, and the fill to running `Core.fillPlan` on the main thread. TIFF has no built-in decoder, so a UTIF chunk that won't load says to reload. A chunk can fail to load in a tab left open across a deploy, without a service worker; `libs.js` blocks them all and checks each path. `__paint.used` records which path ran, and `libs.js` asserts it so that a silent fallback can't pass.
 - To bump a version: `npm i --save-exact <pkg>@<ver>`, rebuild, and run `libs.js`.
 - Scaling is async. `scaleDoc()` drops its result if the document changed while it ran.
 - The budgets come from measurements on an M4 (the numbers are in the code comments):
   - pica is CPU-bound and gets superlinear on large downscales, so past `PICA_MAX_PIXELS` (50 MP, source plus result) the built-in GPU path runs.
-  - UPNG runs on the main thread. It runs only up to `UPNG_MAX_PIXELS` (one 4K screen) and when `upngMs()` estimates it within `UPNG_BUDGET_MS` (750 ms). The estimate uses the browser PNG's size as an entropy proxy.
+  - UPNG runs in `png-worker.js` (one per save), so the page doesn't freeze, but Save waits for it. It runs only up to `UPNG_MAX_PIXELS` (one 4K screen) and when `upngMs()` estimates it within `UPNG_BUDGET_MS` (750 ms). The estimate uses the browser PNG's size as an entropy proxy.
   - Both encoders run, and the smaller blob is kept.
 
 ## Installable app (PWA)
 
-- Over http(s) only, `pwa.js` (`setUpPwa()`, on `load`) links `manifest.webmanifest` and registers `sw.js`. On `file://` neither exists, and nothing is attempted.
-- `sw.js` is network-first with a cached fallback (offline, or after `NET_WAIT_MS`). Cache-first would keep serving an old build, and would shadow `npm run dev` on the same origin. `build.mjs` stamps it with the file list and a content hash, so each build gets a fresh cache.
+- `pwa.js` (`setUpPwa()`, on `load`) links `manifest.webmanifest` and registers `sw.js`.
+- `sw.js` is network-first with a cached fallback (offline, or after `NET_WAIT_MS`). Cache-first would keep serving an old build, and would shadow `npm run dev` on the same origin. `build.mjs` stamps it with the file list (the static files and every script esbuild wrote, from its metafile, so the lazy chunks work offline) and a content hash, so each build gets a fresh cache. The previous build's cache is kept, and a 404 is answered from it: a tab still running that build asks for chunks only it knew (`test/e2e/pwa.js`).
 - A dev build (`define: { DEV }`) unregisters any service worker instead of registering one.
 - `manifest.webmanifest` `file_handlers` make the installed app an "Open with" target for images. Launches arrive through `launchQueue`, whose consumer `main.js` sets after boot (`openLaunched()`). The file handle is kept, so ⌘S writes back.
 - Any new file the page loads must live in `src/` (outside `src/js/`), so it's copied to `dist/` and into the service worker's list.

@@ -70,7 +70,7 @@ Everything is a node, including brush strokes (vector paths) and pasted bitmaps 
    - The chunk must be spliced in after encoding (UPNG and `toBlob` both produce plain PNGs). That's ~40 lines of CRC32 and chunk splicing, which fits in `core.js` and is testable.
    - The file grows by the size of the base raster.
    - A file edited in another app keeps a stale chunk. Store a hash of the composite in the chunk, and ignore the chunk when the pixels no longer match.
-4. **`file://`, no `fetch`.** Everything stays in Canvas 2D, in the one bundled classic script. No CanvasKit, Yoga or Yjs. This rules out C's usual stack and is fine for B.
+4. **`file://`, no `fetch`** (lifted 2026-10-16: the app is now served over http(s), as ES modules; see `CLAUDE.md`). Everything stays in Canvas 2D, in the one bundled classic script. No CanvasKit, Yoga or Yjs. This rules out C's usual stack and is fine for B.
 5. **Performance at 100 MP.** Objects are drawn to `#preview`, which only covers the visible area plus a margin (`placePreview()`), so a frame's cost scales with the screen, not the document. The selection outline and handles are DOM elements in device px, like `#ants`, so they stay crisp at 1600%. Full-size rasterization happens only on flatten, save, copy and whole-image ops. Object undo entries are tiny (a list snapshot), so object edits never push pixel history out.
 6. **Undo integration.** `History` is untouched. An `obj` entry holds the *other* object list and swaps it on apply, the same "entry holds the other state" rule as region and doc entries. Flatten is a `region` entry that also carries the object list, so one undo restores the shapes and un-bakes their pixels together. `isDirty()` stays derived from history.
 
