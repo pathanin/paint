@@ -20,27 +20,25 @@ jobs:
           node-version: 22
       - run: node --test test/*.test.js
 
-  # The e2e scripts drive the app in the installed Google Chrome (channel 'chrome'), which the
-  # ubuntu runner image ships. Each suite is its own step and runs even when an earlier one failed,
-  # so one failure doesn't hide the others. bench.js is left out: its timings vary too much on
-  # shared runners to gate on.
+  # The e2e scripts drive the built app (dist/) in the installed Google Chrome (channel 'chrome'),
+  # which the ubuntu runner image ships; Playwright is a dev dependency and downloads no browser.
+  # Each suite is its own step and runs even when an earlier one failed, so one failure doesn't hide
+  # the others. bench.js is left out: its timings vary too much on shared runners to gate on.
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      NODE_PATH: /tmp/pw/node_modules
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Install Playwright (dev-only, not a project dependency)
-        run: |
-          mkdir -p /tmp/pw && cd /tmp/pw && npm i --no-save --no-audit --no-fund playwright@1
-          google-chrome --version
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - run: google-chrome --version
       - name: Serve the app
         run: |
-          python3 -m http.server 8765 > /tmp/http.log 2>&1 &
+          python3 -m http.server 8765 -d dist > /tmp/http.log 2>&1 &
           for i in $(seq 1 30); do curl -sf http://localhost:8765/index.html > /dev/null && exit 0; sleep 0.5; done
           echo "server did not start"; cat /tmp/http.log; exit 1
       - name: smoke (http)
@@ -48,7 +46,7 @@ jobs:
         run: node test/e2e/smoke.js
       - name: smoke (file://)
         if: ${{ !cancelled() }}
-        run: node test/e2e/smoke.js "file://$PWD/index.html"
+        run: node test/e2e/smoke.js "file://$PWD/dist/index.html"
       - name: history
         if: ${{ !cancelled() }}
         run: node test/e2e/history.js
@@ -61,6 +59,43 @@ jobs:
       - name: objects
         if: ${{ !cancelled() }}
         run: node test/e2e/objects.js
-      - name: libs
+      - name: libs (http)
         if: ${{ !cancelled() }}
         run: node test/e2e/libs.js
+      - name: libs (file://)
+        if: ${{ !cancelled() }}
+        run: node test/e2e/libs.js "file://$PWD/dist/index.html"
+      - name: pwa
+        if: ${{ !cancelled() }}
+        run: node test/e2e/pwa.js
+
+  # Publish dist/ to GitHub Pages (https://pathanin.github.io/paint/) after a push to master, once
+  # the tests pass. Needs Settings → Pages → Source: "GitHub Actions" (a one-time repo setting).
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: [unit, e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - id: deployment
+        uses: actions/deploy-pages@v4

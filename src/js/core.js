@@ -1,5 +1,6 @@
-// Pure, DOM-free helpers. Loaded as a classic script (window.Core) and by node tests (module.exports).
-(function (root) {
+// Pure, DOM-free helpers. CommonJS (module.exports), so node tests require() it as is and the app's
+// modules import it through the bundler.
+(function () {
   'use strict';
 
   // Pack RGBA into the u32 layout of a Uint32Array view over ImageData (platform endianness).
@@ -465,7 +466,7 @@
     const t = n ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / n)) : 0;
     return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
   }
-  // o as drawn: an odd stroke width is drawn on pixel centres (+0.5, see drawObj in app.js) and an
+  // o as drawn: an odd stroke width is drawn on pixel centres (+0.5, see drawObj in objects.js) and an
   // even one on the points themselves. Hit tests and handles use this, so they sit on the stroke.
   function drawnObj(o) {
     if (!(o.size % 2)) return o;
@@ -578,6 +579,5 @@
 
   const Core = { rgbaToU32, colorDistance, floodMask, fillEdge, floodFill, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History,
     objBox, drawnObj, hitsObject, hitObject, objHandles, handleAt, resizeObj, moveObj, transformObj, scaleObj };
-  if (typeof module !== 'undefined' && module.exports) module.exports = Core;
-  else root.Core = Core;
-})(typeof window !== 'undefined' ? window : globalThis);
+  module.exports = Core;
+})();
