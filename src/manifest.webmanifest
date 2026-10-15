@@ -1,0 +1,27 @@
+{
+  "id": "./",
+  "name": "Paint",
+  "short_name": "Paint",
+  "description": "A small MS-Paint-style image editor",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f3f4f6",
+  "theme_color": "#fbfbfc",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "file_handlers": [
+    {
+      "action": "./",
+      "accept": {
+        "image/png": [".png"],
+        "image/jpeg": [".jpg", ".jpeg"],
+        "image/webp": [".webp"],
+        "image/gif": [".gif"],
+        "image/bmp": [".bmp"],
+        "image/tiff": [".tif", ".tiff"]
+      }
+    }
+  ]
+}

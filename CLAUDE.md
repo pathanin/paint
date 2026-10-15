@@ -30,11 +30,12 @@ node test/e2e/preview.js                    # previews on screen at several zoom
 node test/e2e/filledge.js                   # brush = one path; fill leaves no fringe at soft edges
 node test/e2e/objects.js                    # live shapes: draw, move, resize, restyle, flatten (docs/objects.md)
 node test/e2e/libs.js                       # bundled libraries: each path runs, round trips, no network
+node test/e2e/pwa.js                        # installable app: manifest, offline reload, launched files; file:// untouched
 node test/e2e/bench.js --json /tmp/pw/a.json   # perf benchmark (3 runs, medians)
 node test/e2e/bench-compare.js /tmp/pw/before.json /tmp/pw/a.json   # deltas; exit 1 on a regression
 ```
 
-CI (`.github/workflows/ci.yml`, GitHub Actions) runs the unit tests, builds, and runs smoke (http and `file://`), history, preview, filledge, objects and libs (http and `file://`) on every push to master and every PR, in the runner's installed Chrome. The benchmark isn't in CI: shared runners are too noisy to gate on. After a push to master that passes, CI's `deploy` job publishes `dist/` to GitHub Pages (https://pathanin.github.io/paint/); the repo's Pages source must be set to "GitHub Actions".
+CI (`.github/workflows/ci.yml`, GitHub Actions) runs the unit tests, builds, and runs smoke (http and `file://`), history, preview, filledge, objects, libs (http and `file://`) and pwa on every push to master and every PR, in the runner's installed Chrome. The benchmark isn't in CI: shared runners are too noisy to gate on. After a push to master that passes, CI's `deploy` job publishes `dist/` to GitHub Pages (https://pathanin.github.io/paint/); the repo's Pages source must be set to "GitHub Actions".
 
 The benchmark's `task` (CDP main-thread time) varies by about ±15% between runs. For sub-millisecond per-frame changes, compare Chrome traces instead.
 
@@ -43,7 +44,7 @@ When smoke fails, read the **first** `FAIL` line, because later failures often c
 ## Architecture
 
 - **`src/js/core.js`** holds pure, DOM-free helpers, exported through `module.exports` (Node's tests `require()` it; the modules import it through esbuild). They cover flood fill, Bresenham line, rect/resize/anchor math, the smoothed brush path (`Stroke`) and `History`. `History` is the bounded undo stack: it evicts by count and bytes and tracks a save point with `markSaved()`/`isClean()`. `push()` returns the number of entries it evicted. Anything testable without a canvas belongs here, test-first.
-- **`src/js/*.js`** are the app's ES modules, one per area: `dom` (element handles, write-if-changed setters, `keyLabel`), `state` (`S`, `drag`, `sel`, constants), `toast`, `libs`, `doc` (document & history), `tiles` (undo tiles), `view` (zoom, `render()`, status), `tools`, `fill`, `objects`, `text`, `selection`, `clipboard`, `transforms`, `fileio`, `dialogs`, `handles`, `pointer`, `keyboard`, `paste` (paste, drop, unload), `toolbar`, `tooltips`, `help`, and `main` (boot, `__paint`). Most modules wire their listeners when they load; `main.js` imports every one. The modules import each other in cycles; that's fine because load-time code only registers listeners and never calls into another module (boot calls happen in `main.js`).
+- **`src/js/*.js`** are the app's ES modules, one per area: `dom` (element handles, write-if-changed setters, `keyLabel`), `state` (`S`, `drag`, `sel`, constants), `toast`, `libs`, `doc` (document & history), `tiles` (undo tiles), `view` (zoom, `render()`, status), `tools`, `fill`, `objects`, `text`, `selection`, `clipboard`, `transforms`, `fileio`, `dialogs`, `handles`, `pointer`, `keyboard`, `paste` (paste, drop, unload), `toolbar`, `tooltips`, `help`, `pwa` (manifest, service worker, launched files), and `main` (boot, `__paint`). Most modules wire their listeners when they load; `main.js` imports every one. The modules import each other in cycles; that's fine because load-time code only registers listeners and never calls into another module (boot calls happen in `main.js`).
   - **Each piece of mutable state is owned by one module**, which exports it as a live binding. Other modules read it directly but change it only through the owner's functions, since an ES module can't assign another's binding (esbuild fails the build if one tries): `setDrag()`/`setSel()` (`state`), `showObjs()`/`resetObjs()`/`applyObjHist()`/`commitObjDrag()` (`objects`), `setCursor()`/`setHover()` (`view`). `img` and `ctx` change only in `adoptImage()` (`doc`), `op` only in `tiles`, `textAt` only in `text`.
   - The core state:
   - `S` holds settings and the document (tool, colours, sizes, zoom, file handle and name, `pristine`).
@@ -93,6 +94,14 @@ When smoke fails, read the **first** `FAIL` line, because later failures often c
   - pica is CPU-bound and gets superlinear on large downscales, so past `PICA_MAX_PIXELS` (50 MP, source plus result) the built-in GPU path runs.
   - UPNG runs on the main thread. It runs only up to `UPNG_MAX_PIXELS` (one 4K screen) and when `upngMs()` estimates it within `UPNG_BUDGET_MS` (750 ms). The estimate uses the browser PNG's size as an entropy proxy.
   - Both encoders run, and the smaller blob is kept.
+
+## Installable app (PWA)
+
+- Over http(s) only, `pwa.js` (`setUpPwa()`, on `load`) links `manifest.webmanifest` and registers `sw.js`. On `file://` neither exists, and nothing is attempted.
+- `sw.js` is network-first with a cached fallback (offline, or after `NET_WAIT_MS`). Cache-first would keep serving an old build, and would shadow `npm run dev` on the same origin. `build.mjs` stamps it with the file list and a content hash, so each build gets a fresh cache.
+- A dev build (`define: { DEV }`) unregisters any service worker instead of registering one.
+- `manifest.webmanifest` `file_handlers` make the installed app an "Open with" target for images. Launches arrive through `launchQueue`, whose consumer `main.js` sets after boot (`openLaunched()`). The file handle is kept, so ⌘S writes back.
+- Any new file the page loads must live in `src/` (outside `src/js/`), so it's copied to `dist/` and into the service worker's list.
 
 ## Constraints and conventions
 

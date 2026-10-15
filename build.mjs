@@ -21,6 +21,7 @@ const options = {
   minify: !dev,
   sourcemap: dev ? 'inline' : 'linked',
   legalComments: 'linked', // the libraries' licence headers, in app.js.LEGAL.txt
+  define: { DEV: String(dev) }, // pwa.js: no service worker in a dev build
   logLevel: 'warning',
   plugins: [{ name: 'static', setup: (b) => b.onEnd((r) => { if (!r.errors.length) copyStatic(); }) }],
 };

@@ -2,7 +2,7 @@
 
 A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, annotate. Plain HTML/CSS/JS, bundled by esbuild into one page that works offline and from `file://`.
 
-**Use it online:** https://pathanin.github.io/paint/ (published from master by CI).
+**Use it online:** https://pathanin.github.io/paint/ (published from master by CI). Chrome can install it as an app (the install icon in the address bar): it then has its own window and Dock icon, works offline, and appears under "Open with" for images, saving back to the file you opened.
 
 **Run locally:** `npm ci && npm run build`, then open `dist/index.html` in Chrome (works from `file://`), or `npm run dev` for http://localhost:8765/ with rebuild on change. Drop an image on the window, paste one with ⌘V, or ⌘O.
 ⌘S writes back to the file you opened (Chrome asks for write permission once).
@@ -48,7 +48,7 @@ Bundled into the app (versions pinned in `package.json`), so they work offline t
 
 ## Layout
 
-- `src/index.html`, `src/style.css` — the page
+- `src/index.html`, `src/style.css` — the page; `src/manifest.webmanifest`, `src/sw.js`, `src/icon.svg` — the installable app
 - `src/js/core.js` — pure helpers (flood fill, Bresenham, rect/resize math, smoothed brush path, bounded undo history)
 - `src/js/*.js` — UI, tools, file I/O, one ES module per area; `main.js` boots the app
 - `build.mjs` — bundles `src/` into `dist/` (`npm run build`; `npm run dev` watches and serves)
@@ -57,5 +57,6 @@ Bundled into the app (versions pinned in `package.json`), so they work offline t
   Build, serve `dist/` (`npm run serve`, or `npm run dev`), then `node test/e2e/smoke.js [url]`
   (url defaults to `http://localhost:8765/`; `file:///…/dist/index.html` works too). `test/e2e/shots.js PREFIX` saves screenshots.
 - `test/e2e/libs.js` — the bundled libraries: which path ran, pixel-exact TIFF and PNG round trips, the built-in paths past each budget, and no network requests. Fixtures are in `test/fixtures/`.
+- `test/e2e/pwa.js` — the installable app over http: manifest and install criteria, offline reload through the service worker, files handed to the installed app; and that `file://` has none of it.
 - `test/e2e/history.js` (pixel-exact undo/redo of every edit kind, undo depth on a 12 MP image) and `test/e2e/preview.js` (selection and shape previews on screen at several zooms) — same setup and `[url]` argument as the smoke test.
 - `test/e2e/bench.js [url] [--runs N] [--only substr] [--json out.json]` — performance benchmark: main-thread time, frame times and memory per scenario, median of N runs. `test/e2e/bench-compare.js before.json after.json` prints the deltas and exits 1 on a regression.

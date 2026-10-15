@@ -65,6 +65,9 @@ jobs:
       - name: libs (file://)
         if: ${{ !cancelled() }}
         run: node test/e2e/libs.js "file://$PWD/dist/index.html"
+      - name: pwa
+        if: ${{ !cancelled() }}
+        run: node test/e2e/pwa.js
 
   # Publish dist/ to GitHub Pages (https://pathanin.github.io/paint/) after a push to master, once
   # the tests pass. Needs Settings → Pages → Source: "GitHub Actions" (a one-time repo setting).
