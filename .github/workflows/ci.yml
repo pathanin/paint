@@ -65,3 +65,34 @@ jobs:
       - name: libs (file://)
         if: ${{ !cancelled() }}
         run: node test/e2e/libs.js "file://$PWD/dist/index.html"
+
+  # Publish dist/ to GitHub Pages (https://pathanin.github.io/paint/) after a push to master, once
+  # the tests pass. Needs Settings → Pages → Source: "GitHub Actions" (a one-time repo setting).
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: [unit, e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - id: deployment
+        uses: actions/deploy-pages@v4

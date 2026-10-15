@@ -2,7 +2,9 @@
 
 A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, annotate. Plain HTML/CSS/JS, bundled by esbuild into one page that works offline and from `file://`.
 
-**Run:** `npm ci && npm run build`, then open `dist/index.html` in Chrome (works from `file://`), or `npm run dev` for http://localhost:8765/ with rebuild on change. Drop an image on the window, paste one with ⌘V, or ⌘O.
+**Use it online:** https://pathanin.github.io/paint/ (published from master by CI).
+
+**Run locally:** `npm ci && npm run build`, then open `dist/index.html` in Chrome (works from `file://`), or `npm run dev` for http://localhost:8765/ with rebuild on change. Drop an image on the window, paste one with ⌘V, or ⌘O.
 ⌘S writes back to the file you opened (Chrome asks for write permission once).
 
 ## Shortcuts

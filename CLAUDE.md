@@ -34,7 +34,7 @@ node test/e2e/bench.js --json /tmp/pw/a.json   # perf benchmark (3 runs, medians
 node test/e2e/bench-compare.js /tmp/pw/before.json /tmp/pw/a.json   # deltas; exit 1 on a regression
 ```
 
-CI (`.github/workflows/ci.yml`, GitHub Actions) runs the unit tests, builds, and runs smoke (http and `file://`), history, preview, filledge, objects and libs (http and `file://`) on every push to master and every PR, in the runner's installed Chrome. The benchmark isn't in CI: shared runners are too noisy to gate on.
+CI (`.github/workflows/ci.yml`, GitHub Actions) runs the unit tests, builds, and runs smoke (http and `file://`), history, preview, filledge, objects and libs (http and `file://`) on every push to master and every PR, in the runner's installed Chrome. The benchmark isn't in CI: shared runners are too noisy to gate on. After a push to master that passes, CI's `deploy` job publishes `dist/` to GitHub Pages (https://pathanin.github.io/paint/); the repo's Pages source must be set to "GitHub Actions".
 
 The benchmark's `task` (CDP main-thread time) varies by about ±15% between runs. For sub-millisecond per-frame changes, compare Chrome traces instead.
 
