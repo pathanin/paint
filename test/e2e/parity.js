@@ -152,6 +152,19 @@ async function session(browser, url, flatten) {
   return { page, s, grab, records, errs };
 }
 
+// Compare the change from pa to a with the change from pb to b (same sizes only), or null.
+function changed(pa, a, pb, b) {
+  if (!pa || !pb || pa.w !== a.w || pa.h !== a.h || pb.w !== b.w || pb.h !== b.h || a.w !== b.w || a.h !== b.h) return null;
+  const A0 = Buffer.from(pa.b64, 'base64'), A1 = Buffer.from(a.b64, 'base64'), B0 = Buffer.from(pb.b64, 'base64'), B1 = Buffer.from(b.b64, 'base64');
+  const moved = (x, y, i) => { for (let k = 0; k < 4; k++) if (Math.abs(x[i + k] - y[i + k]) > 32) return true; return false; };
+  let union = 0, xor = 0;
+  for (let i = 0; i < A1.length; i += 4) {
+    const ma = moved(A0, A1, i), mb = moved(B0, B1, i);
+    if (ma || mb) union++;
+    if (ma !== mb) xor++;
+  }
+  return { bad: union > 0 && xor > 0.1 * union, msg: `${xor} of ${union} changed px differ` };
+}
 // null when equal, else {size, n, worst, msg}.
 function diff(a, b) {
   if (a.w !== b.w || a.h !== b.h) return { size: true, msg: `${a.w}x${a.h} vs ${b.w}x${b.h}` };
@@ -196,6 +209,12 @@ function diff(a, b) {
       // fails both (a 1 px shift of one shape moves its whole outline).
       const ca = await A.grab('composite'), cb = await B.grab('composite');
       const d = diff(ca, cb);
+      // What the step changed, on each side: the pixels that moved by more than 32 from the step before.
+      // Anti-aliasing noise sits on the edges of marks both sides made; a mark one side lacks (or put
+      // elsewhere) shows up as its whole area. So the two changes must agree on 90% of their union.
+      const ch = changed(A.prev, ca, B.prev, cb);
+      if (ch && ch.bad) bad.push(`what the step changed differs: ${ch.msg}`);
+      A.prev = ca; B.prev = cb;
       if (d && (d.size || d.n > 0.01 * ca.w * ca.h || d.ink > 0.005)) bad.push('composite ' + d.msg);
       else if (d) notes.push('composite within anti-aliasing: ' + d.msg);
       if (bad.length) { fails++; console.log('FAIL: ', name, '-', bad.join('; ')); }

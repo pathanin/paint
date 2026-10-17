@@ -84,7 +84,7 @@ function mapObjs(map, w, h) {
 }
 function resetObjs() { install([]); objSel = null; multi = []; }
 // Objects read back from a saved file (persist.js): the list as it was, ids from where it left off.
-function loadObjs(list, nextId) { install(list); objSel = null; nextObjId = Math.max(nextId || 1, ...list.map((o) => o.id + 1)); }
+function loadObjs(list, nextId) { install(list); objSel = null; multi = []; nextObjId = Math.max(nextId || 1, ...list.map((o) => o.id + 1)); }
 const objIdNext = () => nextObjId;
 // Undo/redo of an obj entry (a diff), or of a flatten's region entry or a whole-image op's doc entry
 // (a whole list, swapped in).

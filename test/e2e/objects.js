@@ -563,11 +563,25 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     const seen25 = await chash();
     const b64 = await P(async () => { const b = await window.__paint.encodeFor('scene.png'); const u = new Uint8Array(await b.arrayBuffer()); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); });
     ok(kinds === 'brush,rect,text,fill,image' && Buffer.from(b64, 'base64').includes(Buffer.from('paNt')), 'the PNG carries a paNt chunk for ' + kinds);
+    await P(() => { const p = window.__paint; p.setTool('move'); p.selectAll && p.setTool('move'); });
+    await drag([[296, 196], [0, 0]]); // a group selected before opening (from an empty corner)
+    ok(await P(() => window.__paint.selList().length) === 5, 'a box over everything selects all five');
+    await P(() => { window.__clip = null; navigator.clipboard.write = async (items) => { window.__clip = await items[0].getType('image/png'); }; });
+    await page.keyboard.press('Meta+KeyC');
+    await page.waitForFunction(() => window.__clip);
+    const cp = await P(async () => {
+      const p = window.__paint, bs = p.selList().map((o) => p.Core.objBox(o));
+      const x = Math.min(...bs.map((b) => b.x)), y = Math.min(...bs.map((b) => b.y));
+      const bmp = await createImageBitmap(window.__clip);
+      return [bmp.width, bmp.height, Math.max(...bs.map((b) => b.x + b.w)) - x, Math.max(...bs.map((b) => b.y + b.h)) - y];
+    });
+    ok(cp[0] === cp[2] && cp[1] === cp[3], '⌘C copies the selected group (their union box), not the whole image: ' + cp);
     await P(() => window.__paint.newDoc(50, 50));
     await page.setInputFiles('#fileInput', { name: 'scene.png', mimeType: 'image/png', buffer: Buffer.from(b64, 'base64') });
     await page.waitForFunction(() => window.__paint.S.fileName === 'scene.png'); await frame();
     ok(await P(() => window.__paint.objs.map((o) => o.t).join()) === kinds && await chash() === seen25 && await P(() => !window.__paint.hist.canUndo()),
       'reopened, the objects come back and the picture is identical');
+    ok(await P(() => window.__paint.selList().length) === 0, 'and nothing is selected (no stale group from before)');
     await P(() => { const p = window.__paint; p.setTool('move'); const o = p.objs.find((x) => x.t === 'rect'); p.selectObj(o.id); document.querySelector('#viewport').focus(); });
     await page.keyboard.press('Delete'); await frame();
     ok(await P(() => window.__paint.objs.length === 4 && !window.__paint.objs.some((o) => o.t === 'rect')), 'and they are editable (the rectangle can be deleted on its own)');
