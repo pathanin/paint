@@ -1,11 +1,12 @@
 import Core from './core.js';
 import { makeAsset, pathAsset } from './assets.js';
-import { base, ctx, img } from './doc.js';
+import { base, img } from './doc.js';
 import { hexToU32, makeCanvas } from './dom.js';
 import { startWorker, used, workerCall } from './libs.js';
 import { addObj, composite, sceneVer } from './objects.js';
 import { S, sel } from './state.js';
 import { flash } from './toast.js';
+import { kickFrame } from './view.js';
 
 // ---------- fill ----------
 const BAND = 256;
@@ -29,13 +30,20 @@ function band(bands, col, x, y, w, h) {
 // it finished is dropped, like a resize.
 let worker = null; // created on the first fill; false once it has failed
 let filling = null; // the running fill's promise (for the tests)
+let one = null; // a 1 px canvas, for reading the clicked pixel
 function doFill(p, color) {
   const src = composite(), W = src.width, H = src.height;
   if (p.x < 0 || p.y < 0 || p.x >= W || p.y >= H) return;
   if (filling) { flash('Still filling'); return; }
   const c = hexToU32(color);
   // Exact-match fill on a pixel that already has the colour changes nothing: skip the full readback.
-  if (Math.round(S.tolerance * 255 / 100) === 0 && new Uint32Array(ctx.getImageData(p.x, p.y, 1, 1).data.buffer)[0] === c) return;
+  // The pixel is copied out first: getImageData on #image itself held the next frame for ~250 ms at 10000².
+  if (Math.round(S.tolerance * 255 / 100) === 0) {
+    one = one || makeCanvas(1, 1).getContext('2d');
+    one.globalCompositeOperation = 'copy';
+    one.drawImage(src, p.x, p.y, 1, 1, 0, 0, 1, 1);
+    if (new Uint32Array(one.getImageData(0, 0, 1, 1).data.buffer)[0] === c) return;
+  }
   filling = runFill(p, c, S.tolerance).finally(() => { filling = null; });
 }
 async function runFill(p, c, tolerance) {
@@ -53,7 +61,9 @@ async function runFill(p, c, tolerance) {
     let res = null;
     if (worker !== false) {
       try {
-        const bmp = await createImageBitmap(composite());
+        const snap = createImageBitmap(composite());
+        kickFrame();
+        const bmp = await snap;
         worker = worker || startWorker('fill-worker');
         res = await workerCall(worker, job({ bmp }), [bmp]);
         used.fill = 'worker';

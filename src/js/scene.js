@@ -10,8 +10,9 @@ import { drawObj, drawPieces, segBox, stampBox, stampPieces } from './tools.js';
 // in z order (docs/total-objects.md). Pan and zoom never redraw it; an edit marks the rects it
 // changed (markDirty) and redraw() repaints only those, from an R-tree of the objects' boxes.
 // Invariant: any sequence of redraws leaves #image byte-identical to drawing the whole scene once.
-// The repaint runs in a microtask, so it lands before anything else (a frame, a test, a save) can
-// read #image, and a pointermove's several marks cost one repaint.
+// The repaint runs in a microtask, and a pointermove's several marks cost one repaint. A big one may
+// be painted later (see `later` and the fence below), so whatever reads #image (a save, a copy, the
+// picker, a fill, the tests) goes through composite() / flushRedraw(), which finishes it first.
 
 // Geometry cache: objects are immutable, so each one's box (everything drawing it can paint) and its
 // index entry are computed once and live as long as the object.
@@ -114,21 +115,22 @@ const markAll = () => markDirty({ x: 0, y: 0, w: img.width, h: img.height });
 // flushRedraw() first, which finishes them all.
 // The GPU, not the main thread, is what a big repaint costs: at 10000², 360 tiles take ~2 ms to
 // queue and ~50 ms to draw, and a frame waits for everything queued before it. So once over BIG tiles
-// are queued, a fence (gpuFence()) marks their end, and until it passes, another big repaint keeps
-// its rects dirty and slices wait: held arrows with 5k objects selected repaint once per GPU
+// are queued, a fence (fenceAfter()) marks their end, and until it passes, another big repaint is
+// held and slices wait: held arrows with 5k objects selected repaint once per GPU
 // round, with whatever came meanwhile, instead of stacking 50 ms per press. Small repaints (a
 // stroke, one object) never wait.
 const later = new Map();
 const SLICE_MS = 12, BIG = 64;
-let laterTimer = 0, fence = null;
+let laterTimer = 0, fence = null, held = []; // held: rects of big repaints waiting for the fence
 function paint(all) {
   queued = false;
+  if (all && held.length) { dirty.push(...held); held = []; }
   const now = [];
   if (dirty.length) {
     const rs = dirty;
     dirty = [];
     const tiles = Core.dirtyTiles(rs, img.width, img.height, TILE);
-    if (!all && tiles.length > BIG && fence) { dirty = rs; queued = true; return; } // repainted when it passes
+    if (!all && tiles.length > BIG && fence) { held.push(...rs); return; } // repainted when it passes
     if (!all && tiles.length > BIG) {
       const v = visibleRect();
       for (const t of tiles) {
@@ -184,7 +186,7 @@ function pollFence() {
   if (!gl.isContextLost() && gl.getSyncParameter(f.f, gl.SYNC_STATUS) !== gl.SIGNALED && performance.now() - f.t < 2000) { setTimeout(pollFence, 2); return; }
   if (!gl.isContextLost()) gl.deleteSync(f.f);
   fence = null;
-  if (queued) paint(false);
+  if (held.length) { dirty.push(...held); held = []; paint(false); }
   else if (later.size && !laterTimer) laterTimer = setTimeout(paintLater, 0);
 }
 const flushRedraw = () => paint(true);

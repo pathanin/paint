@@ -18,6 +18,12 @@ import { brushPath, drawShape, segsBox } from './tools.js';
 // 400 MB at 100 MP, and twice that once shown.
 const pv = $('#preview');
 const octx = pv.getContext('2d');
+// A snapshot of #image (createImageBitmap, the fill) leaves GPU work queued that only a frame with a
+// changed canvas sends off; until one comes, the compositor's next frame waits for it (a fill click at
+// 10000² showed nothing for ~300 ms). A transparent 1 px draw on the preview is such a change, and
+// leaves its pixels as they are.
+const blank = makeCanvas(1, 1);
+const kickFrame = () => { octx.drawImage(blank, 0, 0); requestRender(); };
 
 function layout() {
   stage.style.width = img.width * S.zoom + 'px';
@@ -284,4 +290,4 @@ function updateChrome() {
   setProp(EL.redo, 'disabled', !hist.canRedo());
 }
 
-export { fitZoom, imgPt, layout, requestRender, setCursor, setHover, setZoom, updateChrome, updateStatus, zoomStep };
+export { fitZoom, imgPt, kickFrame, layout, requestRender, setCursor, setHover, setZoom, updateChrome, updateStatus, zoomStep };
