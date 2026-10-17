@@ -1,6 +1,9 @@
 import Core from './core.js';
 import { base, hist, img, pushDocHist, pushHist, setDoc } from './doc.js';
-import { cloneCanvas } from './dom.js';
+import { cloneCanvas, makeCanvas } from './dom.js';
+import { makeAsset } from './assets.js';
+import { S } from './state.js';
+import { drawObj } from './tools.js';
 import { flushRedraw, sceneSwap } from './scene.js';
 import { commitSelection } from './selection.js';
 import { commitText } from './text.js';
@@ -166,12 +169,31 @@ function reorderObj(dir) {
   next[i] = { ...nb, z: o.z }; next[j] = { ...o, z: nb.z };
   setObjs(next);
 }
+// The Fill tool inside a closed shape: the shape takes the colour as its fill (one undo step).
+function fillShape(o, c) {
+  const next = o.mode === 'fill' ? { ...o, color: c } : { ...o, mode: 'both', alt: c };
+  setObjs(objs.map((x) => (x.id === o.id ? next : x)));
+}
+// ⌘E with objects selected: just those become one image object, in place of the topmost of them.
+function flattenSelected() {
+  const list = selList();
+  if (!list.length) return false;
+  const bs = list.map((o) => Core.objBox(o)), x = Math.min(...bs.map((b) => b.x)), y = Math.min(...bs.map((b) => b.y));
+  const c = makeCanvas(Math.max(...bs.map((b) => b.x + b.w)) - x, Math.max(...bs.map((b) => b.y + b.h)) - y), g = c.getContext('2d');
+  g.translate(-x, -y);
+  for (const o of list) drawObj(g, o);
+  const top = list[list.length - 1];
+  const im = { t: 'image', x, y, w: c.width, h: c.height, asset: makeAsset(c), id: nextObjId++, z: top.z };
+  setObjs(objs.filter((o) => !list.includes(o) || o === top).map((o) => (o === top ? im : o)));
+  selectObj(im.id);
+  return true;
+}
 // Bake every object into the pixels (⌘E) as one undo step: the base becomes a copy of the cache, so it
 // gets exactly what is on screen (drawing the objects again, in another batch, could anti-alias their
 // edges differently: see scene.js). A whole-document step, like a crop: it keeps the old base and the
 // object list, so undo brings both back.
 function flattenObjs() {
-  if (!objs.length) return;
+  if (!objs.length || (S.tool === 'move' && flattenSelected())) return;
   commitText();
   commitSelection(); // a floating selection is about to become an object too
   flushRedraw();
@@ -187,4 +209,4 @@ function composite() {
   return img;
 }
 
-export { addObj, loadObjs, multi, objIdNext, selectMany, selList, applyObjHist, commitObjDrag, composite, cycleObj, deleteObj, duplicateObj, flattenObjs, mapObjs, newObjId, nudgeObj, objs, objSel, objVer, reorderObj, resetObjs, restyleObj, selectObj, selObj, setObjs, showObjs, zAbove };
+export { addObj, fillShape, loadObjs, multi, objIdNext, selectMany, selList, applyObjHist, commitObjDrag, composite, cycleObj, deleteObj, duplicateObj, flattenObjs, mapObjs, newObjId, nudgeObj, objs, objSel, objVer, reorderObj, resetObjs, restyleObj, selectObj, selObj, setObjs, showObjs, zAbove };

@@ -23,7 +23,8 @@ const STEPS = [
   ['ellipse outline', (s) => s.drag('ellipse', { primary: '#22b14c', size: 5, fillMode: 'outline' }, [[420, 220], [600, 360]])],
   ['pencil over shapes', (s) => s.drag('pencil', { primary: '#a349a4', size: 4 }, [[320, 40], [640, 300]])],
   ['brush over shapes', (s) => s.drag('brush', { primary: '#ff7f27', size: 20 }, [[350, 120], [520, 300], [700, 200]])],
-  ['fill inside ellipse', (s) => s.click('fill', { primary: '#99d9ea', tolerance: 10 }, [510, 330])],
+  // (A fill click inside a closed shape now sets that shape's fill, decision 5b: not master's behaviour.)
+  ['fill between strokes', (s) => s.click('fill', { primary: '#99d9ea', tolerance: 10 }, [650, 60])],
   ['fill background', (s) => s.click('fill', { primary: '#efe4b0', tolerance: 10 }, [760, 560])],
   ['text', (s) => s.text([60, 420], 'Parity 1', { primary: '#000000', fontSize: 28 })],
   ['line', (s) => s.drag('line', { primary: '#880015', size: 2 }, [[20, 580], [780, 380]])],

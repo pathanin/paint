@@ -3,7 +3,7 @@ import { img } from './doc.js';
 import { $, clamp, ov, ring, setProp, stage, textBox, vp } from './dom.js';
 import { doFill } from './fill.js';
 import { endCanvasDrag } from './handles.js';
-import { addObj, commitObjDrag, multi, newObjId, objSel, objs, selectMany, selObj, selectObj, showObjs, zAbove } from './objects.js';
+import { addObj, commitObjDrag, fillShape, multi, newObjId, objSel, objs, selectMany, selObj, selectObj, showObjs, zAbove } from './objects.js';
 import { endLive, flushRedraw, hitAt, markDirty, objsIn, setLive } from './scene.js';
 import { dropSelection, inside, liftSelection, unlift } from './selection.js';
 import { S, SHAPES, drag, sel, setDrag, setSel } from './state.js';
@@ -125,7 +125,12 @@ ov.addEventListener('pointerdown', (e) => {
       markDirty(Core.objBox(o));
       break;
     }
-    case 'fill': doFill(ip, color); break;
+    case 'fill': { // inside a closed shape on top: set that shape's fill (decision 5b); else flood fill
+      const top = objsIn({ x: p.x, y: p.y, w: 0, h: 0 }).reverse().find((o) => Core.insideShape(o, p) || Core.hitsObject(o, p, 0));
+      if (top && Core.insideShape(top, p)) { fillShape(top, color); break; }
+      doFill(ip, color);
+      break;
+    }
     case 'picker': pick(ip, right); break;
     case 'line': case 'rect': case 'ellipse':
       setDrag({ t, start: ip, end: ip, shift: e.shiftKey, color, alt });

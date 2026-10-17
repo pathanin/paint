@@ -388,7 +388,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.locator('#helpDlg[open]').waitFor();
     const helpTxt = await page.locator('#helpBody').textContent();
     const macHelp = await P(() => /Mac|iPhone|iPad/.test(navigator.platform)); // keyLabel(): Ctrl+ off a Mac (CI runs Linux)
-    ok(/Objects/.test(helpTxt) && /Duplicate by dragging/.test(helpTxt) && /Flatten into pixels/.test(helpTxt) && /Delete what the Eraser crosses/.test(helpTxt) && (macHelp ? /⌘E/ : /Ctrl\+E/).test(helpTxt) && (macHelp ? /⌥/ : /Alt/).test(helpTxt), 'help has an Objects section with ⌘D, ⌥-drag, ⌘E and the ⌥-drag eraser (platform key names)');
+    ok(/Objects/.test(helpTxt) && /Duplicate by dragging/.test(helpTxt) && /Flatten \(with Move: just the selection\)/.test(helpTxt) && /Delete what the Eraser crosses/.test(helpTxt) && (macHelp ? /⌘E/ : /Ctrl\+E/).test(helpTxt) && (macHelp ? /⌥/ : /Alt/).test(helpTxt), 'help has an Objects section with ⌘D, ⌥-drag, ⌘E and the ⌥-drag eraser (platform key names)');
     ok(await P(() => { const b = document.querySelector('#helpBody'); return b.scrollHeight <= b.clientHeight + 1 && b.children.length === 3; }), 'help fits at 1280×800 in three columns');
     await page.keyboard.press('Escape');
 
@@ -556,7 +556,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.keyboard.press('KeyR'); await drag([[30, 30], [120, 90]]);
     await page.keyboard.press('KeyT'); await page.mouse.click(...await at(150, 20)); await page.keyboard.type('Saved'); await page.keyboard.press('Enter');
     await P(() => { window.__paint.setTool('fill'); window.__paint.S.primary = '#ffc90e'; window.__paint.S.tolerance = 10; });
-    await page.mouse.click(...await at(60, 60)); await P(() => window.__paint.filling); await frame();
+    await page.mouse.click(...await at(250, 100)); await P(() => window.__paint.filling); await frame(); // the background, outside the shapes
     await P(() => { const c = document.createElement('canvas'); c.width = 30; c.height = 20; const g = c.getContext('2d'); g.fillStyle = 'rgba(237, 28, 36, 0.5)'; g.fillRect(0, 0, 30, 20); window.__paint.pasteImage(c); window.__paint.selectAll(); window.__paint.setTool('move'); });
     await frame();
     const kinds = await P(() => window.__paint.objs.map((o) => o.t).join());
@@ -564,8 +564,8 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     const b64 = await P(async () => { const b = await window.__paint.encodeFor('scene.png'); const u = new Uint8Array(await b.arrayBuffer()); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); });
     ok(kinds === 'brush,rect,text,fill,image' && Buffer.from(b64, 'base64').includes(Buffer.from('paNt')), 'the PNG carries a paNt chunk for ' + kinds);
     await P(() => { const p = window.__paint; p.setTool('move'); p.selectAll && p.setTool('move'); });
-    await drag([[296, 196], [0, 0]]); // a group selected before opening (from an empty corner)
-    ok(await P(() => window.__paint.selList().length) === 5, 'a box over everything selects all five');
+    await P(() => { const p = window.__paint; p.selectMany(p.objs.map((o) => o.id)); }); // a group selected before opening
+    ok(await P(() => window.__paint.selList().length) === 5, 'all five selected');
     await P(() => { window.__clip = null; navigator.clipboard.write = async (items) => { window.__clip = await items[0].getType('image/png'); }; });
     await page.keyboard.press('Meta+KeyC');
     await page.waitForFunction(() => window.__clip);
@@ -656,6 +656,24 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.mouse.click(...await at(290, 10));
     ok(await P(() => window.__paint.selList().length) === 0, 'a click on empty canvas deselects them');
     void g0;
+
+    // ---- 28. Fill inside a closed shape sets its fill (decision 5b); ⌘E with a selection flattens just it ----
+    await P(() => { const p = window.__paint; p.newDoc(300, 200); p.setZoom(2); p.S.pristine = false; p.S.primary = '#000000'; p.S.fillMode = 'outline';
+      const v = document.querySelector('#viewport'); v.scrollLeft = v.scrollTop = 0; });
+    await page.keyboard.press('KeyR'); await drag([[20, 20], [100, 80]]);
+    await page.keyboard.press('KeyO'); await drag([[150, 20], [250, 100]]);
+    await P(() => { window.__paint.setTool('fill'); window.__paint.S.primary = '#ed1c24'; });
+    await page.mouse.click(...await at(60, 50)); await P(() => window.__paint.filling); await frame();
+    ok(await P(() => { const o = window.__paint.objs; return o.length === 2 && o[0].mode === 'both' && o[0].alt === '#ed1c24'; }), 'a fill click inside a closed shape sets its fill, adding no fill object');
+    await page.mouse.click(...await at(280, 180)); await P(() => window.__paint.filling); await frame();
+    ok(await P(() => window.__paint.objs.map((o) => o.t).join()) === 'rect,ellipse,fill', 'outside the shapes it is a flood fill as before');
+    await page.keyboard.press('KeyV');
+    await page.mouse.click(...await at(150, 60)); // the ellipse's outline
+    const seen28 = await chash();
+    await page.keyboard.press('Meta+KeyE'); await frame();
+    ok(await P(() => window.__paint.objs.map((o) => o.t).join()) === 'rect,image,fill', '⌘E with a selection flattens just it into one image object, in its place');
+    await page.keyboard.press('Meta+KeyZ'); await frame();
+    ok(await P(() => window.__paint.objs.map((o) => o.t).join()) === 'rect,ellipse,fill' && await chash() === seen28, 'one undo brings the ellipse back exactly');
 
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));
   } catch (e) {

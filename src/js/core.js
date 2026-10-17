@@ -599,6 +599,14 @@
     const k = y * o.w + x;
     return !!(o.asset.bits[k >> 3] & (1 << (k & 7))); // the filled region (its soft edge is next to it)
   }
+  // Is p inside the closed shape o (a rectangle or an ellipse, any fill mode)?
+  function insideShape(o, p) {
+    if (o.t !== 'rect' && o.t !== 'ellipse') return false;
+    const r = normRect(drawnObj(o).a, drawnObj(o).b);
+    if (r.w <= 0 || r.h <= 0) return false;
+    if (o.t === 'rect') return p.x > r.x && p.x < r.x + r.w && p.y > r.y && p.y < r.y + r.h;
+    return Math.hypot((p.x - r.x - r.w / 2) / (r.w / 2), (p.y - r.y - r.h / 2) / (r.h / 2)) < 1;
+  }
   // Index of the topmost object (the list runs bottom to top) at p, or -1.
   function hitObject(objs, p, tol) {
     for (let i = objs.length - 1; i >= 0; i--) if (hitsObject(objs[i], p, tol)) return i;
@@ -879,6 +887,6 @@
   }
 
   const Core = { rgbaToU32, colorDistance, floodMask, fillEdge, floodFill, fillPlan, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History, zBetween, dirtyTiles, diffObjs, applyPairs, crc32, pngChunks, readChunk, withChunk,
-    objBox, objFrame, segsBox, drawnObj, hitsObject, hitObject, objHandles, handleAt, resizeObj, moveObj, transformObj, scaleObj };
+    objBox, objFrame, insideShape, segsBox, drawnObj, hitsObject, hitObject, objHandles, handleAt, resizeObj, moveObj, transformObj, scaleObj };
   module.exports = Core;
 })();

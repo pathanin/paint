@@ -37,7 +37,7 @@ import { decodeFile, encodeFor, loadFile, save } from './fileio.js';
 import { filling } from './fill.js';
 import { used } from './libs.js';
 import { openLaunched, setUpPwa } from './pwa.js';
-import { composite, flattenObjs, objSel, objs, selList, selectObj } from './objects.js';
+import { composite, flattenObjs, objSel, objs, selList, selectMany, selectObj } from './objects.js';
 import { crop, selectAll } from './selection.js';
 import { MAX_PIXELS, S, drag, sel } from './state.js';
 import { flushRedraw, freshRender, hitAt, markAll, objsIn, redrawCount } from './scene.js';
@@ -69,4 +69,4 @@ if (window.launchQueue) window.launchQueue.setConsumer(openLaunched);
 window.addEventListener('load', setUpPwa, { once: true });
 
 // Handle for scripted smoke tests in the console.
-window.__paint = { S, hist, used, decodeFile, scaleImage, resample, get img() { flushRedraw(); return img; }, get base() { return base; }, get redrawCount() { return redrawCount; }, flushRedraw, markAll, objsIn, freshRender, hitAt, selectObj, selList, Core, newDoc, flash, save, encodeFor, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, loadFile, setZoom, fitZoom, MAX_PIXELS, get objs() { return objs; }, get objSel() { return objSel; }, flattenObjs, composite, openLaunched, get filling() { return filling; } };
+window.__paint = { S, hist, used, decodeFile, scaleImage, resample, get img() { flushRedraw(); return img; }, get base() { return base; }, get redrawCount() { return redrawCount; }, flushRedraw, markAll, objsIn, freshRender, hitAt, selectObj, selectMany, selList, Core, newDoc, flash, save, encodeFor, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, loadFile, setZoom, fitZoom, MAX_PIXELS, get objs() { return objs; }, get objSel() { return objSel; }, flattenObjs, composite, openLaunched, get filling() { return filling; } };
