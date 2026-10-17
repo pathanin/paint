@@ -477,6 +477,7 @@ dialog fieldset:disabled { opacity: .4; }
   .opts .lbl { display: none; } /* Size, Smoothing: each slider is labelled and has a tooltip; room for the palette's 24px targets */
   .colors { gap: 26px; }
   .seg span { padding: 3px 4px; }
+  .zorder button { padding: 3px 5px; } /* the Move tool's arrange buttons: 24px back, so they fit at 600px in CI's fonts too */
   .opts input[type=range] { width: 48px; }
 }
 /* Last resort for very narrow windows: let the bars scroll rather than clip controls. */
