@@ -115,7 +115,7 @@ function render() {
   const hit = !drag && hoverPt && objs.length ? objTarget(hoverPt) : null;
   if (!drag) setProp(ov.style, 'cursor', objCursor(hit) || (S.tool === 'move' ? 'grab' : '') || (S.tool === 'select' && sel && hoverPt && inside(hoverPt, sel) ? 'move' : ''));
   // The Move tool outlines the shape a click would pick (not the selected one: it has its own).
-  placeObjHover(hit && !hit.h && S.tool === 'move' && hit.o.id !== objSel ? hit.o : null);
+  placeObjHover(hit && !hit.h && (hit.erase || (S.tool === 'move' && hit.o.id !== objSel)) ? hit.o : null); // ⌥ + Eraser: what a click would delete
   if (drag && drag.t === 'canvas') showGhost(drag);
   const shape = drag && SHAPES.has(drag.t);
   const marquee = drag && drag.t === 'select';

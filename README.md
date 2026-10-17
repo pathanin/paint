@@ -13,7 +13,7 @@ A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, ann
 
 | Keys | Action |
 |---|---|
-| V S P B E F I T L R O | Move (editable shapes; drag empty canvas to pan), Select, Pencil, Brush, Eraser, Fill, Picker, Text, Line, Rect, Ellipse |
+| V S P B E F I T L R O | Move (every mark is an editable object; drag empty canvas to pan), Select, Pencil, Brush, Eraser, Fill, Picker, Text, Line, Rect, Ellipse |
 | Left / right click | Draw with color 1 / color 2 (right-click or Shift-click a swatch sets color 2) |
 | X | Swap colors |
 | [ ] | Smaller / bigger size |
@@ -24,9 +24,10 @@ A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, ann
 | Arrows (Shift = 10px) | Nudge selection |
 | ⌘C ⌘X ⌘V | Copy, cut, paste the selection. With nothing selected, ⌘C and ⌘X copy the whole image and leave it unchanged |
 | ⌘⇧X | Crop to selection |
-| ⌘D, ⌘] ⌘[, ⌘E | Shapes (line, rectangle, ellipse stay movable above your drawing): duplicate, bring forward / send backward, flatten all into pixels |
-| ⌥+drag (Move tool) | Duplicate a shape by dragging a copy off it |
-| Tab / Shift+Tab (Move tool, canvas focused) | Select the next / previous shape in drawing order; past the last one, focus moves on |
+| ⌘D, ⌘] ⌘[, ⌘E | Objects (every stroke, shape, text, fill and paste stays movable; new ones go on top; PNG saves keep them): duplicate, bring forward / send backward, flatten all into pixels |
+| ⌥+drag (Move tool) | Duplicate an object by dragging a copy off it |
+| ⌥+drag (Eraser) | Delete every object the drag crosses (⌥ alone outlines the one under the pointer) |
+| Tab / Shift+Tab (Move tool, canvas focused) | Select the next / previous object in drawing order; past the last one, focus moves on |
 | Shift+R | Resize image (resample) |
 | Shift+C, or drag the handles on the right/bottom/corner | Canvas size (new area = color 2; Shift+drag corner keeps aspect; Esc cancels) |
 | ⌘O ⌘S ⌘⇧S Alt+N | Open, save, save as, new |

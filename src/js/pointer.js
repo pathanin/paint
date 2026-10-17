@@ -24,6 +24,7 @@ function objTarget(p) {
     if (h) return { o, h };
     if (Core.hitsObject(o, p, objTol())) return { o, h: null };
   }
+  if (S.tool === 'eraser' && S.altKey) { const o3 = hitAt(p, S.sizes.eraser / 2 + objTol()); return o3 ? { o: o3, h: null, erase: true } : null; }
   if (S.tool !== 'move') return null;
   const o2 = hitAt(p, objTol());
   return o2 ? { o: o2, h: null } : null;
@@ -31,10 +32,12 @@ function objTarget(p) {
 const HANDLE_CURSORS = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', a: 'move', b: 'move' };
 // ⌥ over a shape with the Move tool: a drag duplicates it (copy cursor).
 function objCursor(hit) {
+  if (hit && hit.erase) return 'crosshair';
   return hit ? (hit.h ? HANDLE_CURSORS[hit.h] : S.altKey && S.tool === 'move' ? 'copy' : 'move') : '';
 }
 function objPointerDown(p, e) {
   const hit = objTarget(p);
+  if (hit && hit.erase) return false; // the eraser's ⌥-drag takes it
   if (!hit) {
     if (objSel != null) selectObj(null);
     return false;
@@ -83,7 +86,12 @@ ov.addEventListener('pointerdown', (e) => {
   if (t !== 'select') dropSelection();
   if (!right && objPointerDown(p, e)) { requestRender(); return; }
   switch (t) {
-    case 'pencil': case 'eraser': {
+    case 'eraser': if (e.altKey) { // ⌥-drag: delete whole objects it crosses (decision 4b), one undo step
+      setDrag({ t: 'erase', last: p, before: objs, gone: new Set() });
+      eraseAlong(drag, p);
+      break;
+    } // falls through: a plain eraser stroke
+    case 'pencil': {
       // A stroke is one object (docs/total-objects.md): drawn live on top as it grows, added on release.
       const o = { t, pts: [ip.x, ip.y], color: t === 'eraser' ? S.secondary : color, size: S.sizes[t] };
       setDrag({ t, last: ip, o });
@@ -153,6 +161,8 @@ ov.addEventListener('pointermove', (e) => {
         d.last = iq;
       }
     }
+  } else if (d.t === 'erase') {
+    eraseAlong(d, p);
   } else if (SHAPES.has(d.t)) {
     d.end = { x: Math.floor(p.x), y: Math.floor(p.y) };
     d.shift = e.shiftKey;
@@ -171,6 +181,19 @@ ov.addEventListener('pointermove', (e) => {
   }
   requestRender();
 });
+
+// ⌥-erase: every object within the eraser's reach of the path from the last point to p goes (shown at
+// once; one undo step on release). Samples the path every half reach, so a fast drag skips nothing.
+function eraseAlong(d, p) {
+  const reach = S.sizes.eraser / 2 + objTol(), n = Math.max(1, Math.ceil(Math.hypot(p.x - d.last.x, p.y - d.last.y) / Math.max(1, reach / 2)));
+  let hit = false;
+  for (let i = 0; i <= n; i++) {
+    const q = { x: d.last.x + (p.x - d.last.x) * i / n, y: d.last.y + (p.y - d.last.y) * i / n };
+    for (let o = hitAt(q, reach); o; o = hitAt(q, reach)) { d.gone.add(o.id); hit = true; showObjs(objs.filter((x) => x.id !== o.id)); }
+  }
+  d.last = p;
+  return hit;
+}
 
 // Settled brush segments join the live stroke; only their box is repainted.
 function addSegs(d, segs) {
@@ -204,6 +227,7 @@ function cancelDrag() {
   if (d.t === 'pan' || d.t === 'pencil' || d.t === 'eraser' || d.t === 'brush') return; // strokes finish normally
   setDrag(null);
   if (d.t === 'objmove' || d.t === 'objsize') showObjs(d.before, d.src.id);
+  if (d.t === 'erase') showObjs(d.before);
   if (d.t === 'move' && sel) {
     if (d.lifted) unlift(); // undo the lift this drag made: no patch, no float, no history entry
     sel.x = d.ox; sel.y = d.oy;
@@ -224,7 +248,7 @@ function finishDrag(e) {
     endLive();
     addObj(d.o, { keepSel: true }); // on top of everything (decision 10)
   }
-  else if (d.t === 'objmove' || d.t === 'objsize') commitObjDrag(d.before);
+  else if (d.t === 'objmove' || d.t === 'objsize' || d.t === 'erase') commitObjDrag(d.before);
   else if (SHAPES.has(d.t)) {
     if (d.t !== 'line' && d.start.x === d.end.x && d.start.y === d.end.y) { requestRender(); return; } // a click, not a shape
     addObj(shapeObj(d)); // a live object above the pixels until flattened (docs/objects.md)

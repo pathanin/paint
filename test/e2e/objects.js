@@ -386,7 +386,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.locator('#helpDlg[open]').waitFor();
     const helpTxt = await page.locator('#helpBody').textContent();
     const macHelp = await P(() => /Mac|iPhone|iPad/.test(navigator.platform)); // keyLabel(): Ctrl+ off a Mac (CI runs Linux)
-    ok(/Shapes/.test(helpTxt) && /Duplicate by dragging/.test(helpTxt) && /Flatten into pixels/.test(helpTxt) && (macHelp ? /⌘E/ : /Ctrl\+E/).test(helpTxt) && (macHelp ? /⌥/ : /Alt/).test(helpTxt), 'help has a Shapes section with ⌘D, ⌥-drag and ⌘E (platform key names)');
+    ok(/Objects/.test(helpTxt) && /Duplicate by dragging/.test(helpTxt) && /Flatten into pixels/.test(helpTxt) && /Delete what the Eraser crosses/.test(helpTxt) && (macHelp ? /⌘E/ : /Ctrl\+E/).test(helpTxt) && (macHelp ? /⌥/ : /Alt/).test(helpTxt), 'help has an Objects section with ⌘D, ⌥-drag, ⌘E and the ⌥-drag eraser (platform key names)');
     ok(await P(() => { const b = document.querySelector('#helpBody'); return b.scrollHeight <= b.clientHeight + 1 && b.children.length === 3; }), 'help fits at 1280×800 in three columns');
     await page.keyboard.press('Escape');
 
@@ -584,6 +584,33 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     const jpg = await P(async () => { const p = window.__paint; p.newDoc(40, 40); p.setTool('rect'); return 0; });
     await page.keyboard.press('KeyR'); await drag([[5, 5], [30, 30]]);
     ok(await P(async () => { const u = new Uint8Array(await (await window.__paint.encodeFor('x.jpg')).arrayBuffer()); return u[0] === 0xff && u[1] === 0xd8; }) && jpg === 0, 'JPEG saves just the picture');
+
+    // ---- 26. ⌥-drag with the Eraser deletes whole objects it crosses (decision 4b) ----
+    await P(() => { const p = window.__paint; p.newDoc(300, 200); p.setZoom(2); p.S.pristine = false; p.S.primary = '#000000'; p.S.sizes.eraser = 8;
+      const v = document.querySelector('#viewport'); v.scrollLeft = v.scrollTop = 0; });
+    await page.keyboard.press('KeyR'); await drag([[20, 20], [80, 60]]);
+    await page.keyboard.press('KeyP'); await drag([[150, 20], [150, 120]]);
+    await page.keyboard.press('KeyO'); await drag([[200, 140], [280, 190]]);
+    const seen26 = await chash(), d26 = await depth();
+    await page.keyboard.press('KeyE');
+    await page.keyboard.down('Alt');
+    await page.mouse.move(...await at(150, 70)); await frame(); await frame();
+    ok(await page.locator('#objhover').isVisible(), '⌥ over an object with the Eraser outlines what it would delete');
+    await page.mouse.move(...await at(10, 40));
+    await page.mouse.down();
+    await page.mouse.move(...await at(170, 40), { steps: 3 }); // a fast drag across the rectangle's edge and the stroke
+    await page.mouse.up();
+    await page.keyboard.up('Alt');
+    await frame();
+    ok(await P(() => window.__paint.objs.map((o) => o.t).join()) === 'ellipse' && await depth() === d26 + 1, '⌥-drag deleted the two objects it crossed, in one undo step');
+    ok(isWhite(await pixel(20, 40)), 'and painted nothing');
+    await page.keyboard.press('Meta+KeyZ'); await frame();
+    ok(await P(() => window.__paint.objs.length) === 3 && await chash() === seen26, 'one undo brings both back exactly');
+    await page.mouse.move(...await at(10, 40));
+    await page.mouse.down();
+    await page.mouse.move(...await at(170, 40), { steps: 3 });
+    await page.mouse.up();
+    ok(await P(() => window.__paint.objs.map((o) => o.t).join()) === 'rect,pencil,ellipse,eraser', 'without ⌥ the Eraser draws a colour-2 stroke object on top');
 
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));
   } catch (e) {
