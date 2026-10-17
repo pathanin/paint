@@ -2,7 +2,7 @@ import Core from './core.js';
 import { base, hist, img, pushDocHist, pushHist, setDoc } from './doc.js';
 import { cloneCanvas, makeCanvas } from './dom.js';
 import { makeAsset } from './assets.js';
-import { S } from './state.js';
+import { S, isClear } from './state.js';
 import { drawObj } from './tools.js';
 import { flushRedraw, sceneSwap } from './scene.js';
 import { commitSelection } from './selection.js';
@@ -226,9 +226,10 @@ function reorderObj(dir) {
   const moved = list.map((o) => { z = Core.zBetween(z, hi); return { ...o, z }; });
   setObjs(rest.slice(0, at + 1).concat(moved, rest.slice(at + 1)));
 }
-// The Fill tool inside a closed shape: the shape takes the colour as its fill (one undo step).
+// The Fill tool inside a closed shape: the shape takes the colour as its fill (one undo step). In
+// Transparent its fill goes (a shape fill in it is no fill): only for an outlined one (pointer.js).
 function fillShape(o, c) {
-  const next = o.mode === 'fill' ? { ...o, color: c } : { ...o, mode: 'both', alt: c };
+  const next = isClear(c) ? { ...o, mode: 'outline' } : o.mode === 'fill' ? { ...o, color: c } : { ...o, mode: 'both', alt: c };
   setObjs(objs.map((x) => (x.id === o.id ? next : x)));
 }
 // ⌘E with objects selected: just those become pixels, as image objects. Selected objects next to each

@@ -6,8 +6,9 @@ import { endCanvasDrag } from './handles.js';
 import { addObj, commitObjDrag, fillShape, groupBox, multi, newObjId, objSel, objs, restoreSel, selectMany, selObj, selectObj, showObjs, zAbove } from './objects.js';
 import { endLive, flushRedraw, growLive, hitAt, objsIn, setLive } from './scene.js';
 import { dropSelection, inside, liftSelection, unlift } from './selection.js';
-import { S, SHAPES, drag, sel, setDrag, setSel } from './state.js';
+import { S, SHAPES, drag, isClear, sel, setDrag, setSel } from './state.js';
 import { commitText, startText } from './text.js';
+import { flash } from './toast.js';
 import { pick, shapeObj } from './tools.js';
 import { imgPt, requestRender, setCursor, setHover, setZoom, updateChrome, updateStatus } from './view.js';
 
@@ -118,6 +119,11 @@ ov.addEventListener('pointerdown', (e) => {
   const t = S.tool;
   if (t !== 'select') dropSelection();
   if (!right && objPointerDown(p, e)) { requestRender(); return; }
+  const textHit = t === 'text' ? hitAt(p, objTol()) : null, onText = textHit && textHit.t === 'text'; // editing one keeps its colour
+  if ((SHAPES.has(t) || (t === 'text' && !onText)) && isClear(color)) { // nothing to see: the pixel tools erase with it instead
+    flash(`Color ${right ? 2 : 1} is Transparent: pick a color to draw ${t === 'text' ? 'text' : 'shapes'}`);
+    return;
+  }
   switch (t) {
     case 'eraser': if (e.altKey) { // ⌥-drag: delete whole objects it crosses (decision 4b), one undo step
       setDrag({ t: 'erase', last: p, before: objs, gone: new Set() });
@@ -139,8 +145,9 @@ ov.addEventListener('pointerdown', (e) => {
       break;
     }
     case 'fill': { // inside a closed shape on top: set that shape's fill (decision 5b); else flood fill
+      // In Transparent: an outlined shape loses its fill; otherwise it clears what is seen, like a flood fill.
       const top = objsIn({ x: p.x, y: p.y, w: 0, h: 0 }).reverse().find((o) => Core.insideShape(o, p) || Core.hitsObject(o, p, 0));
-      if (top && Core.insideShape(top, p)) { fillShape(top, color); break; }
+      if (top && Core.insideShape(top, p) && !(isClear(color) && top.mode !== 'both')) { fillShape(top, color); break; }
       doFill(ip, color);
       break;
     }
@@ -148,11 +155,9 @@ ov.addEventListener('pointerdown', (e) => {
     case 'line': case 'rect': case 'ellipse':
       setDrag({ t, start: ip, end: ip, shift: e.shiftKey, color, alt });
       break;
-    case 'text': { // on a text object: edit it again
-      const hit = hitAt(p, objTol());
-      startText(ip, color, hit && hit.t === 'text' ? hit : null);
+    case 'text': // on a text object: edit it again
+      startText(ip, color, onText ? textHit : null);
       break;
-    }
     case 'move': break; // right button: nothing
     case 'select': {
       const rp = { x: clamp(Math.round(p.x), 0, img.width), y: clamp(Math.round(p.y), 0, img.height) };

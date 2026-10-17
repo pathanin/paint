@@ -57,6 +57,9 @@ jobs:
       - name: objects
         if: ${{ !cancelled() }}
         run: node test/e2e/objects.js
+      - name: alpha
+        if: ${{ !cancelled() }}
+        run: node test/e2e/alpha.js
       - name: libs
         if: ${{ !cancelled() }}
         run: node test/e2e/libs.js

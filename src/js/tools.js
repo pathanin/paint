@@ -2,7 +2,7 @@ import Core from './core.js';
 import { $, clamp, makeCanvas, ring, setAttr, setData, stage, toHex } from './dom.js';
 import { composite, restyleObj, selObj, selectObj } from './objects.js';
 import { dropSelection } from './selection.js';
-import { S } from './state.js';
+import { S, isClear } from './state.js';
 import { commitText, placeTextBox, textAt } from './text.js';
 import { flash } from './toast.js';
 import { requestRender } from './view.js';
@@ -38,11 +38,18 @@ function setSize(v) {
   $('#size').setAttribute('aria-valuetext', S.sizes[S.tool] + ' px');
 }
 // key: as restyleObj's (a colour well streams input events); false leaves the selected object alone.
+// Transparent never goes into the <input type=color> (Chrome would turn it into black): the well
+// keeps its last colour and shows a checkerboard over it. A shape's line or text can't be
+// transparent, so it then restyles only a shape's fill (colour 2).
 function setColor(which, hex, key) {
   S[which] = hex;
-  if (key !== false) restyleObj(which === 'primary' ? { color: hex } : { alt: hex }, key);
-  $('#' + which).value = hex;
-  if (textAt && which === 'primary') { textAt.color = hex; placeTextBox(); }
+  const clear = isClear(hex), well = $('#' + which), label = which === 'primary' ? 'Color 1' : 'Color 2';
+  if (key !== false && !(clear && which === 'primary')) restyleObj(which === 'primary' ? { color: hex } : { alt: hex }, key);
+  if (!clear) well.value = hex;
+  well.classList.toggle('clear', clear);
+  setAttr(well, 'aria-label', clear ? label + ': Transparent' : label);
+  setData(well, 'tip', clear ? label + ': Transparent' : label);
+  if (textAt && which === 'primary' && !clear) { textAt.color = hex; placeTextBox(); }
   document.querySelectorAll('#palette button').forEach((b) => {
     b.classList.toggle('is1', b.dataset.color === S.primary);
     b.classList.toggle('is2', b.dataset.color === S.secondary);
@@ -53,7 +60,8 @@ function setColor(which, hex, key) {
 }
 
 // Pencil and eraser: square stamps along the Bresenham line between each pair of points, as one
-// path (whole-pixel rects in one opaque colour: the same pixels as stamping them one by one).
+// path (whole-pixel rects in one opaque colour: the same pixels as stamping them one by one). In
+// Transparent they clear what is under them instead, exactly (whole pixels).
 // Piece i (an even index into pts) is the line from that point to the next; a lone point is piece 0.
 // r: only the pieces whose stamps reach r (a tile being repainted); idx: just these pieces (the live
 // stroke's pieces in a tile, scene.js), which are the same ones.
@@ -66,12 +74,15 @@ function stampBox(o, i) { // what piece i's stamps cover
 const stampPieces = (o) => (o.pts.length > 2 ? o.pts.length - 2 : 1); // pieces are i = 0, 2, ... below this
 function drawStamps(c, o, r, idx) {
   const off = Math.floor(o.size / 2), s = o.size, pts = o.pts;
-  c.fillStyle = o.color;
+  c.save();
+  if (isClear(o.color)) c.globalCompositeOperation = 'destination-out';
+  c.fillStyle = isClear(o.color) ? '#000' : o.color;
   c.beginPath();
   const piece = (i) => { const j = stampEnd(pts, i); for (const [x, y] of Core.line(pts[i], pts[i + 1], pts[j], pts[j + 1])) c.rect(x - off, y - off, s, s); };
   if (idx) for (const i of idx) piece(i);
   else for (let i = 0, n = stampPieces(o); i < n; i += 2) if (!r || meets(stampBox(o, i), r)) piece(i);
   c.fill();
+  c.restore();
 }
 // Brush: Core.Stroke segments ({a, c, b}, c = quadratic control or null) as one path, so joins blend
 // once; a segment that doesn't start where the last one ended starts a new subpath (same shape:
@@ -80,6 +91,7 @@ function drawStamps(c, o, r, idx) {
 function brushPath(c, segs, color, size) {
   if (!segs.length) return;
   c.save();
+  if (isClear(color)) { c.globalCompositeOperation = 'destination-out'; color = '#000'; } // erases, soft edge and all
   c.strokeStyle = color;
   c.lineWidth = size;
   c.lineCap = c.lineJoin = 'round';
@@ -172,7 +184,10 @@ function drawObj(c, o, r) {
     const q = Core.normRect(a, b);
     if (o.t === 'rect') c.rect(q.x + off, q.y + off, q.w, q.h);
     else c.ellipse(q.x + q.w / 2 + off, q.y + q.h / 2 + off, q.w / 2, q.h / 2, 0, 0, Math.PI * 2);
-    if (o.mode !== 'outline') { c.fillStyle = o.mode === 'fill' ? o.color : o.alt; c.fill(); }
+    // A fill in Transparent: none for a shape's inside (alt), but a fill-mode rect in it (a lift's or
+    // Delete's patch with colour 2 Transparent) clears what is under it.
+    if (o.mode === 'fill' && isClear(o.color)) { c.save(); c.globalCompositeOperation = 'destination-out'; c.fillStyle = '#000'; c.fill(); c.restore(); }
+    else if (o.mode !== 'outline') { c.fillStyle = o.mode === 'fill' ? o.color : o.alt; c.fill(); }
     if (o.mode !== 'fill') c.stroke();
   }
   c.restore();

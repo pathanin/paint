@@ -1,12 +1,12 @@
 import Core from './core.js';
 import { hist, img, redo, undo } from './doc.js';
-import { $, antsEl, clamp, ov, setAttr, setData, setProp, setText, stage, vp } from './dom.js';
+import { $, antsEl, clamp, makeCanvas, ov, setAttr, setData, setProp, setText, stage, vp } from './dom.js';
 import { isDirty, save } from './fileio.js';
 import { showGhost } from './handles.js';
 import { groupBox, hasObjs, multi, objSel, objVer, objs, selList, selObj } from './objects.js';
 import { objCursor, objGap, objTarget, updateRing } from './pointer.js';
 import { crop, inside } from './selection.js';
-import { S, SHAPES, drag, sel } from './state.js';
+import { S, SHAPES, drag, isClear, sel } from './state.js';
 import { placeTextBox, textAt } from './text.js';
 import { brushPath, drawShape, segsBox } from './tools.js';
 
@@ -102,6 +102,21 @@ new ResizeObserver(() => requestRender()).observe(vp);
 const floatIds = new WeakMap(); // canvas -> id, so a new float with the same geometry still redraws
 let nFloats = 0;
 const floatId = (c) => { if (!floatIds.has(c)) floatIds.set(c, ++nFloats); return floatIds.get(c); };
+// The brush tail of an erasing (Transparent) stroke can't cut a hole in the preview, so it's
+// painted with what the hole will show: #stage's checkerboard, at the same 16 CSS px period.
+// Built once per colour scheme: reading the colours each frame would force a style recalc.
+let checker = null;
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { checker = null; });
+function checkerInk() {
+  if (!checker) {
+    const cs = getComputedStyle(stage), c = makeCanvas(16, 16), g = c.getContext('2d');
+    g.fillStyle = cs.getPropertyValue('--check-a').trim(); g.fillRect(0, 0, 16, 16);
+    g.fillStyle = cs.getPropertyValue('--check-b').trim(); g.fillRect(8, 0, 8, 8); g.fillRect(0, 8, 8, 8); // as repeating-conic-gradient(b 0 25%, a 0 50%)
+    checker = octx.createPattern(c, 'repeat');
+  }
+  checker.setTransform(new DOMMatrix().scale(1 / S.zoom)); // image px -> CSS px
+  return checker;
+}
 function requestRender() {
   if (rafPending) return;
   rafPending = true;
@@ -146,7 +161,7 @@ function render() {
     };
     // Pixels-to-be (a floating selection, the brush tail), then a shape being drawn, over the image.
     if (sel && sel.float) { octx.drawImage(sel.float, sel.x, sel.y); add(sel); }
-    if (tail && tail.length) { brushPath(octx, tail, drag.color, drag.size); add(segsBox(tail, drag.size / 2 + 1)); }
+    if (tail && tail.length) { brushPath(octx, tail, isClear(drag.color) ? checkerInk() : drag.color, drag.size); add(segsBox(tail, drag.size / 2 + 1)); }
     if (shape) add(drawShape(octx, drag));
     if (multi.length) { // several selected: each one's outline, batched into one path (as tldraw does)
       const path = new Path2D(), lw = 1 / S.zoom;

@@ -25,6 +25,11 @@ const TOOL_KEYS = {
   KeyV: 'move', KeyS: 'select', KeyP: 'pencil', KeyB: 'brush', KeyE: 'eraser', KeyF: 'fill',
   KeyI: 'picker', KeyT: 'text', KeyL: 'line', KeyR: 'rect', KeyO: 'ellipse',
 };
+// Transparent: a colour slot can hold it instead of a hex. Pixel tools then clear (the eraser,
+// pencil, brush and fill erase; Delete, a lift and a grown canvas leave transparency); shapes and
+// text can't be drawn in it, and a shape's fill in it is no fill.
+const CLEAR = 'transparent';
+const isClear = (c) => c === CLEAR;
 const PALETTE = [
   ['#000000', 'Black'], ['#7f7f7f', 'Gray'], ['#880015', 'Dark red'], ['#ed1c24', 'Red'], ['#ff7f27', 'Orange'],
   ['#fff200', 'Yellow'], ['#22b14c', 'Green'], ['#00a2e8', 'Turquoise'], ['#3f48cc', 'Indigo'], ['#a349a4', 'Purple'],
@@ -42,4 +47,4 @@ function sizeProblem(w, h) {
     : `${w} × ${h} px (${megapixels(w, h)} MP) is over the ${MAX_PIXELS / 1e6} MP limit`;
 }
 
-export { drag, MAX_DIM, MAX_PIXELS, PALETTE, S, sel, setDrag, setSel, SHAPES, sizeProblem, TOOL_KEYS };
+export { CLEAR, drag, isClear, MAX_DIM, MAX_PIXELS, PALETTE, S, sel, setDrag, setSel, SHAPES, sizeProblem, TOOL_KEYS };

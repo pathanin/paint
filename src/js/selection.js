@@ -13,6 +13,8 @@ import { requestRender, updateChrome } from './view.js';
 const inside = (p, r) => p.x >= r.x && p.y >= r.y && p.x < r.x + r.w && p.y < r.y + r.h;
 // A colour-2 rectangle over r: what a lift leaves behind and what Delete paints (decision 7a). A
 // filled rect on whole pixels (even width, so no half-pixel offset): crisp, the same as fillRect.
+// With colour 2 Transparent it clears what is under it instead (drawObj: a fill-mode rect in
+// Transparent erases), as a lift or Delete did to the pixels before.
 const patchObj = (r) => ({ t: 'rect', a: { x: r.x, y: r.y }, b: { x: r.x + r.w, y: r.y + r.h }, color: S.secondary, alt: S.secondary, size: 2, mode: 'fill' });
 // Lift what is seen under the selection into a float, leaving a colour-2 patch object (shown at once,
 // recorded with the float's commit as one undo step).
