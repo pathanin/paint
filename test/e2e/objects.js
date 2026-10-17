@@ -693,6 +693,8 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       const v = document.querySelector('#viewport'); v.scrollLeft = v.scrollTop = 0; });
     await page.keyboard.press('KeyR'); await drag([[20, 20], [60, 40]]);
     await drag([[80, 50], [100, 70]]);
+    const keys30 = await P(() => window.__paint.objs.map((o) => o.z));
+    ok(keys30.slice(1).every((z, i) => z > keys30[i] && z.length <= 4), 'z-keys above the picture are short and in order: ' + keys30.join(' '));
     await page.keyboard.press('KeyV');
     await P(() => { const p = window.__paint; p.selectMany(p.userObjs.map((o) => o.id)); });
     await frame();

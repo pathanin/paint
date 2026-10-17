@@ -460,6 +460,9 @@
     canRedo() { return this.redoStack.length > 0; }
     markSaved(entry = this.top()) { this.saved = entry; }
     isClean() { return this.saved !== LOST && this.top() === this.saved; }
+    // The document changed in a way no entry records (its saved state can't be reached any more):
+    // not clean again until the next save.
+    forgetSave() { this.saved = LOST; }
     // Drop the entries whose stored state is gone (isLost(entry)), and with them every entry that can
     // only be reached by stepping through one: all older undo entries, all further redo entries.
     // Returns the number dropped.
@@ -788,6 +791,36 @@
     const r = zInc(ia);
     return r != null && r < b ? r : ia + zMid(fa, null);
   }
+  // The opened picture's key (objects.js, decision 6): the integer just below 'a0', so the first object
+  // above it is 'a0' and appends stay short ('a1', 'a2'...). Nothing ever goes below it.
+  const BASE_Z = 'Zz';
+  // list (sorted by z) with keys all above BASE_Z: unchanged if they are, else re-keyed in order from
+  // 'a0' (a file saved while the base had a longer, lower key).
+  function zAboveBase(list) {
+    if (list.every((o) => o.z > BASE_Z)) return list;
+    let z = BASE_Z;
+    return list.map((o) => { z = zBetween(z, null); return { ...o, z }; });
+  }
+  // ⌘E on selected objects: each becomes part of one image at the z of its run's top. An unselected
+  // object between two selected ones that overlaps what is selected below it would end up under
+  // pixels it covered, so it ends the run there. objs: the list, bottom to top; ids: a Set of the
+  // selected ids. Returns runs of selected objects (each bottom to top), bottom run first.
+  function flattenRuns(objs, ids) {
+    const runs = [];
+    let run = null, box = null;
+    for (const o of objs) {
+      const b = objBox(o);
+      if (ids.has(o.id)) {
+        if (!run) { run = []; box = { ...b }; runs.push(run); }
+        else {
+          const x1 = Math.max(box.x + box.w, b.x + b.w), y1 = Math.max(box.y + box.h, b.y + b.h);
+          box.x = Math.min(box.x, b.x); box.y = Math.min(box.y, b.y); box.w = x1 - box.x; box.h = y1 - box.y;
+        }
+        run.push(o);
+      } else if (run && !o.locked && b.x < box.x + box.w && b.x + b.w > box.x && b.y < box.y + box.h && b.y + b.h > box.y) run = null;
+    }
+    return runs;
+  }
   // Undo entries for objects are diffs: pairs [now, then] by id, where now is the object in the live
   // list (null: absent) and then the one to put back (null: none). diffObjs(prev, next) gives the
   // pairs that turn next back into prev; applyPairs(list, pairs) does it, keeping z order (lists are
@@ -916,7 +949,7 @@
     return [...seen.values()];
   }
 
-  const Core = { rgbaToU32, colorDistance, floodMask, fillEdge, floodFill, fillPlan, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History, zBetween, dirtyTiles, diffObjs, applyPairs, crc32, pngChunks, readChunk, withChunk, packObj, unpackObj,
+  const Core = { rgbaToU32, colorDistance, floodMask, fillEdge, floodFill, fillPlan, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History, zBetween, BASE_Z, zAboveBase, flattenRuns, dirtyTiles, diffObjs, applyPairs, crc32, pngChunks, readChunk, withChunk, packObj, unpackObj,
     objBox, objFrame, insideShape, segsBox, drawnObj, hitsObject, hitObject, objHandles, handleAt, resizeObj, moveObj, transformObj, scaleObj };
   module.exports = Core;
 })();

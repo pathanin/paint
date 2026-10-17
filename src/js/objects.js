@@ -36,9 +36,10 @@ function selectMany(ids) {
   requestRender();
 }
 // The opened picture is the bottom object (decision 6): {t: 'base', locked, x: 0, y: 0, w, h, asset} over
-// the base canvas, with the lowest possible z-key. Locked: never hit, picked, box-selected, moved,
-// reordered or deleted. It's replaced whenever the base canvas is (syncBase(), from doc.js).
-const BASE_Z = 'A' + '0'.repeat(26);
+// the base canvas, with a z-key below every other (Core.BASE_Z, so the keys above it stay short).
+// Locked: never hit, picked, box-selected, moved, reordered or deleted. It's replaced whenever the
+// base canvas is (syncBase(), from doc.js). A saved list with keys not above it is re-keyed on load.
+const BASE_Z = Core.BASE_Z;
 const isBase = (o) => o.t === 'base';
 const baseRec = () => ({ t: 'base', id: 0, z: BASE_Z, locked: true, x: 0, y: 0, w: base.width, h: base.height, asset: { cv: base, bytes: 0 } }); // the base canvas itself: no copy (it'd be the whole picture again)
 const hasObjs = () => objs.some((o) => !isBase(o));
@@ -106,7 +107,7 @@ function mapObjs(map, w, h) {
 }
 function resetObjs() { install([baseRec()]); objSel = null; multi = []; }
 // Objects read back from a saved file (persist.js): the list as it was, ids from where it left off.
-function loadObjs(list, nextId) { install([baseRec()].concat(list)); objSel = null; multi = []; nextObjId = Math.max(nextId || 1, ...list.map((o) => o.id + 1)); }
+function loadObjs(list, nextId) { install([baseRec()].concat(Core.zAboveBase(list))); objSel = null; multi = []; nextObjId = Math.max(nextId || 1, ...list.map((o) => o.id + 1)); }
 const objIdNext = () => nextObjId;
 const userObjs = () => objs.filter((o) => !isBase(o));
 // Undo/redo of an obj entry (a diff), or of a flatten's region entry or a whole-image op's doc entry

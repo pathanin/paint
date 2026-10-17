@@ -915,6 +915,47 @@ test('zBetween: a key strictly between its neighbours, at either end, and after 
   assert.throws(() => Core.zBetween(top, a));
 });
 
+test('BASE_Z: keys appended above the opened picture stay short, and the back slot sorts between', () => {
+  let k = Core.BASE_Z;
+  for (let i = 0; i < 5000; i++) { const n = Core.zBetween(k, null); assert.ok(n > k); k = n; }
+  assert.ok(k.length <= 4, 'append key length ' + k.length + ' (' + k + ')');
+  const first = Core.zBetween(Core.BASE_Z, null), back = Core.zBetween(Core.BASE_Z, first);
+  assert.ok(Core.BASE_Z < back && back < first && back.length <= 4, `${Core.BASE_Z} < ${back} < ${first}`);
+  // a list saved with keys at or below the base key is re-keyed in order; one above it is kept as is
+  const old = ['A00000000000000000000000001', 'A00000000000000000000000002', 'A0000000000000000000000000V'].map((z, i) => ({ id: i + 1, z }));
+  const re = Core.zAboveBase(old);
+  assert.deepEqual(re.map((o) => o.id), [1, 2, 3]);
+  assert.ok(re.every((o, i) => o.z > Core.BASE_Z && (!i || re[i - 1].z < o.z)), JSON.stringify(re));
+  assert.equal(Core.zAboveBase(re), re);
+});
+
+test('flattenRuns: an unselected object between selected ones ends the run only where it overlaps it', () => {
+  const r = (id, x, y, w, h, more) => ({ id, t: 'rect', a: { x, y }, b: { x: x + w, y: y + h }, size: 2, mode: 'fill', ...more });
+  const base = { id: 0, t: 'base', locked: true, x: 0, y: 0, w: 500, h: 500 };
+  const A = r(1, 10, 10, 50, 50), B = r(2, 40, 40, 50, 50), C = r(3, 200, 10, 50, 50), Bfar = r(2, 300, 300, 20, 20);
+  const ids = (runs) => runs.map((run) => run.map((o) => o.id));
+  assert.deepEqual(ids(Core.flattenRuns([base, A, B, C], new Set([1, 3]))), [[1], [3]], 'B covers part of A: A and C flatten apart');
+  assert.deepEqual(ids(Core.flattenRuns([base, A, Bfar, C], new Set([1, 3]))), [[1, 3]], 'B is elsewhere: one image');
+  assert.deepEqual(ids(Core.flattenRuns([base, A, C, B], new Set([1, 3]))), [[1, 3]], 'B above the selection: one image');
+  assert.deepEqual(ids(Core.flattenRuns([base, B, A, C], new Set([1, 3]))), [[1, 3]], 'B below the selection: one image');
+  // the run's box grows: an object over the second selected one also splits it
+  const D = r(4, 210, 20, 10, 10);
+  assert.deepEqual(ids(Core.flattenRuns([base, A, C, D, B], new Set([1, 3, 2]))), [[1, 3], [2]]);
+});
+
+test('History.forgetSave: not clean until the next save', () => {
+  const h = new Core.History({ maxCount: 10, maxBytes: 1e9 });
+  h.push({ bytes: 1 });
+  h.markSaved();
+  assert.ok(h.isClean());
+  h.forgetSave();
+  assert.ok(!h.isClean());
+  h.undo(); h.redo();
+  assert.ok(!h.isClean(), 'undo and redo cannot reach the saved state again');
+  h.markSaved();
+  assert.ok(h.isClean());
+});
+
 test('dirtyTiles: each grid tile a dirty pixel falls in, once, whole (clipped at the image edge)', () => {
   const W = 1000, H = 700, T = 256;
   let s = 3;
