@@ -1,5 +1,5 @@
 import Core from './core.js';
-import { ctx, docOp, img, pushDocHist } from './doc.js';
+import { base, bctx, docOp, img, pushDocHist } from './doc.js';
 import { makeCanvas } from './dom.js';
 import { selectObj } from './objects.js';
 import { S, sel, setSel } from './state.js';
@@ -14,17 +14,17 @@ const inside = (p, r) => p.x >= r.x && p.y >= r.y && p.x < r.x + r.w && p.y < r.
 function liftSelection() {
   beginOp();
   const f = makeCanvas(sel.w, sel.h);
-  f.getContext('2d').drawImage(img, sel.x, sel.y, sel.w, sel.h, 0, 0, sel.w, sel.h);
+  f.getContext('2d').drawImage(base, sel.x, sel.y, sel.w, sel.h, 0, 0, sel.w, sel.h);
   touch(sel.x, sel.y, sel.w, sel.h);
-  ctx.fillStyle = S.secondary;
-  ctx.fillRect(sel.x, sel.y, sel.w, sel.h);
+  bctx.fillStyle = S.secondary;
+  bctx.fillRect(sel.x, sel.y, sel.w, sel.h);
   sel.float = f;
   updateChrome();
 }
 function commitSelection() {
   if (!sel || !sel.float) return;
   touch(sel.x, sel.y, sel.w, sel.h);
-  ctx.drawImage(sel.float, sel.x, sel.y);
+  bctx.drawImage(sel.float, sel.x, sel.y);
   sel.float = null;
   finishFloat();
   requestRender();
@@ -48,8 +48,8 @@ function deleteSelection() {
   else {
     beginOp();
     touch(sel.x, sel.y, sel.w, sel.h);
-    ctx.fillStyle = S.secondary;
-    ctx.fillRect(sel.x, sel.y, sel.w, sel.h);
+    bctx.fillStyle = S.secondary;
+    bctx.fillRect(sel.x, sel.y, sel.w, sel.h);
     endOp();
   }
   setSel(null);
@@ -75,7 +75,7 @@ function crop() {
   const r = Core.clampRect(sel, img.width, img.height);
   if (!r) { flash('Selection is outside the image'); return; }
   const c = makeCanvas(r.w, r.h);
-  c.getContext('2d').drawImage(img, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+  c.getContext('2d').drawImage(base, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
   docOp(c, (o) => Core.moveObj(o, -r.x, -r.y));
 }
 

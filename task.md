@@ -36,6 +36,18 @@ The design decisions behind the current UI, the evidence behind them, and what's
   Full rebuild of 5,000 strokes at 10000²: **~32 ms**; the visible 1600×1000 part: ~10 ms. Main-thread time was under 0.5 ms per redraw up to 1,000 strokes.
 - **Finding:** any path drawn into a 10000² canvas right after a `drawImage` into it costs ~12 ms of GPU time, whatever the path. Drawn on a block-sized scratch canvas and copied in with one `drawImage`, the cost is gone. So `redraw()` composes each block on a scratch canvas. At 2000² and 4000² the difference is small.
 - **Gate (≤ 8 ms per 256² redraw with 500 strokes, ≤ 2 s for a full 5k rebuild at 10000²):** passed, 0.9 ms and ~32 ms, with the scratch-canvas redraw. Lift-on-drag isn't needed from the start.
+- **Correction found in Phase 1: exact block redraws aren't possible on Chrome's GPU canvas.** How a path is anti-aliased depends on what else is in the same GPU batch. On one canvas, a 2 px line drawn after an ellipse has an edge pixel of 128 instead of 28 (Chrome switches the batch to multisampling), and the same draw at another canvas offset gives yet another value (up to 100 of 255 off). So no redraw can be byte-identical to `master`'s composite, which has the same dependence. What can be exact, and is:
+  - **The cache is a pure function of the scene.** It is repainted in whole 512² tiles, each composed from scratch on a tile-sized canvas at the tile's origin. A pixel always gets the same draws in the same batch, whatever caused the repaint. `objects.js` checks the cache against `__paint.freshRender()` (the same tile method, whole) after random edits, and the check fails if a removed object's box isn't repainted.
+  - **Parity:** before the switch, the raster (`__paint.base` here, `#image` on `master`) and the object records are byte-identical to `master`. Composites with path objects are compared within anti-aliasing (no channel off by half the range, ≤ 0.5% of pixels): the line step differs by 788 px, worst channel 67.
+  - **Measured alternatives** (ms per 256² block with 100 / 500 / 5,000 strokes; full 5k rebuild), at 2000² and 4000²:
+
+    | Variant | 2000² | 4000² | Exact against its own full render |
+    |---|---|---|---|
+    | In place, batch ended after each object (1×1 `drawImage`) | 42 / 172 / 2070; 1991 | 146 / 729 / 7296; 7282 | yes |
+    | Whole tiles, batch ended after each object | 12 / 58 / 576; 1059 | 12 / 59 / 577; 1106 | yes |
+    | **Whole tiles, no batch ends (chosen)** | 0.2 / 0.5 / 5.0; 13 | 0.3 / 0.5 / 4.3; 53 | **yes** |
+
+    At 10000², whole 256² tiles took 0.7 / 1.3 / 4.8 ms and 583 ms for a full rebuild; 512² tiles bring the rebuild in the app to 163 ms (bench `rebuild 5k (rotate)`). The gate still passes.
 - **Bench baselines on `master`** (new `bench.js` rows, `--only 5k`, 1 run): `scene 5k objects` 151 / 133 ms (4000×3000 / 10000²), `move one in 5k` 226 / 235 ms, `stroke over 5k` 1130 / 1534 ms (12 long frames at 10000²), `rebuild 5k (rotate)` 17 / 19 ms.
 
 1. **Not yet verified:**

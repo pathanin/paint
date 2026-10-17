@@ -6,15 +6,22 @@ import { commitSelection } from './selection.js';
 import { S, drag, sel, setDrag, setSel } from './state.js';
 import { commitText } from './text.js';
 import { dropOp, gpuLost, release, swapParts } from './tiles.js';
+import { markAll } from './scene.js';
 import { flash } from './toast.js';
 import { fitZoom, layout, requestRender, updateChrome } from './view.js';
 
 // ---------- document & history ----------
-// The document canvas. Whole-image ops (crop, rotate, resize...) swap in a new element rather than
-// copying pixels, and undo swaps it back, so these are reassigned by adoptImage().
-let img = $('#image');
-let ctx = img.getContext('2d');
-img.addEventListener('contextlost', () => gpuLost());
+// Two document-sized canvases. base holds the pixels (the opened picture and pixel edits); #image
+// (img) is what you see, save, copy and pick from: base with every object drawn over it, a cache
+// that only scene.js's redraw() writes. Whole-image ops (crop, rotate, resize...) swap in a new
+// base canvas rather than copying pixels, and undo swaps it back, so base and bctx are reassigned
+// by adoptImage(); img is always the #image element.
+const img = $('#image');
+const ctx = img.getContext('2d');
+let base = document.createElement('canvas');
+let bctx = base.getContext('2d');
+base.addEventListener('contextlost', () => gpuLost());
+img.addEventListener('contextrestored', () => markAll()); // it comes back blank: repaint the scene
 
 // Dropped doc entries hold whole canvases: free them now (width 0) rather than at some later GC.
 const hist = new Core.History({ maxBytes: 256 * 1024 * 1024, maxCount: 100, onDrop: (e) => {
@@ -22,24 +29,26 @@ const hist = new Core.History({ maxBytes: 256 * 1024 * 1024, maxCount: 100, onDr
   else if (e.type === 'region') e.parts.forEach(release);
 } });
 
-// Make canvas c the document, without copying it: it replaces #image in the page.
+// Make canvas c the base, without copying it; #image takes its size and is repainted.
 function adoptImage(c) {
-  if (c === img) return;
-  c.id = 'image';
-  c.setAttribute('role', 'img');
-  img.replaceWith(c);
-  img.removeAttribute('id');
-  img = c;
-  ctx = c.getContext('2d');
+  if (c === base) return;
+  base = c;
+  bctx = c.getContext('2d');
   c.addEventListener('contextlost', gpuLost);
+  fitView();
 }
-// source: a canvas to adopt as the document, a bitmap to draw into it, or null for white.
+function fitView() {
+  if (img.width !== base.width || img.height !== base.height) { img.width = base.width; img.height = base.height; }
+  markAll();
+}
+// source: a canvas to adopt as the base, a bitmap to draw into it, or null for white.
 function setDoc(source, w, h) {
   if (source instanceof HTMLCanvasElement) adoptImage(source);
   else {
-    img.width = w; img.height = h; // also clears it
-    if (source) ctx.drawImage(source, 0, 0);
-    else { ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h); }
+    base.width = w; base.height = h; // also clears it
+    if (source) bctx.drawImage(source, 0, 0);
+    else { bctx.fillStyle = '#ffffff'; bctx.fillRect(0, 0, w, h); }
+    fitView();
   }
   dropOp();
   setSel(null); setDrag(null);
@@ -55,9 +64,9 @@ function setDoc(source, w, h) {
 function docOp(next, map) {
   commitText();
   commitSelection();
-  const before = img;
+  const before = base;
   setDoc(next);
-  const objsBefore = map ? mapObjs(map, img.width, img.height) : null;
+  const objsBefore = map ? mapObjs(map, base.width, base.height) : null;
   pushDocHist(before, objsBefore);
 }
 const pushDocHist = (before, objs) => pushHist({ type: 'doc', canvas: before, bytes: before.width * before.height * 4, ...(objs && { objs }) });
@@ -77,7 +86,7 @@ function applyHist(e) {
   else if (e.type === 'fill') applyFill(e);
   else if (e.type === 'doc') {
     const other = e.canvas;
-    e.canvas = img;
+    e.canvas = base;
     setDoc(other);
   }
   updateChrome();
@@ -110,4 +119,4 @@ function newDoc(w, h) {
   updateChrome();
 }
 
-export { ctx, docOp, hist, img, newDoc, pushDocHist, pushHist, redo, setDoc, undo };
+export { base, bctx, ctx, docOp, hist, img, newDoc, pushDocHist, pushHist, redo, setDoc, undo };

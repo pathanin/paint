@@ -1,7 +1,7 @@
 import Core from './core.js';
-import { docOp, img, setDoc } from './doc.js';
+import { base, docOp, img, setDoc } from './doc.js';
 import { $, clamp, cloneCanvas, makeCanvas, vp } from './dom.js';
-import { composite, deleteObj, objs, selObj, selectObj } from './objects.js';
+import { composite, deleteObj, selObj, selectObj } from './objects.js';
 import { deleteSelection, dropSelection } from './selection.js';
 import { S, sel, setSel, sizeProblem } from './state.js';
 import { commitText } from './text.js';
@@ -21,10 +21,8 @@ function selectionCanvas() {
   }
   if (!sel) return composite(); // toBlob() encodes a snapshot, so later edits can't leak in
   if (sel.float) return sel.float;
-  const c = makeCanvas(sel.w, sel.h), g = c.getContext('2d');
-  g.drawImage(img, sel.x, sel.y, sel.w, sel.h, 0, 0, sel.w, sel.h);
-  g.translate(-sel.x, -sel.y);
-  for (const ob of objs) drawObj(g, ob); // copy what is seen
+  const c = makeCanvas(sel.w, sel.h);
+  c.getContext('2d').drawImage(composite(), sel.x, sel.y, sel.w, sel.h, 0, 0, sel.w, sel.h); // copy what is seen
   return c;
 }
 async function copySel(cut) {
@@ -54,12 +52,12 @@ function pasteImage(bmp) {
   // finishFloat() records grow + paste as a single undo step.
   let growFrom = null;
   if (bmp.width > img.width || bmp.height > img.height) {
-    growFrom = img; // kept as is for the undo entry; the grown canvas replaces it
+    growFrom = base; // kept as is for the undo entry; the grown canvas replaces it
     const c = makeCanvas(Math.max(img.width, bmp.width), Math.max(img.height, bmp.height));
     const g = c.getContext('2d');
     g.fillStyle = S.secondary;
     g.fillRect(0, 0, c.width, c.height);
-    g.drawImage(img, 0, 0);
+    g.drawImage(base, 0, 0);
     setDoc(c);
   }
   if (growFrom) flash(`Canvas enlarged to ${img.width} × ${img.height} to fit the paste`);

@@ -47,11 +47,12 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await P(() => {
       const p = window.__paint;
       p.newDoc(300, 200);
-      const c = document.querySelector('#image'), g = c.getContext('2d');
+      const c = p.base, g = c.getContext('2d'); // the pixels; #image shows them once repainted
       const im = g.createImageData(c.width, c.height);
       let s = 12345; const rnd = () => ((s = Math.imul(s, 1103515245) + 12345 >>> 0) >>> 16) & 255;
       for (let i = 0; i < im.data.length; i += 4) { im.data[i] = rnd(); im.data[i + 1] = rnd(); im.data[i + 2] = rnd(); im.data[i + 3] = (i / 4) % 7 === 0 ? 0 : rnd(); }
       g.putImageData(im, 0, 0);
+      p.markAll();
       p.hist.clear(); p.fitZoom(false);
     });
     await frame();
@@ -124,11 +125,12 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await P(() => {
       const p = window.__paint;
       p.newDoc(1000, 700);
-      const c = document.querySelector('#image'), g = c.getContext('2d');
+      const c = p.base, g = c.getContext('2d'); // the pixels; #image shows them once repainted
       const im = g.createImageData(c.width, c.height);
       let s = 777; const rnd = () => ((s = Math.imul(s, 1103515245) + 12345 >>> 0) >>> 16) & 255;
       for (let i = 0; i < im.data.length; i += 4) { im.data[i] = rnd(); im.data[i + 1] = rnd(); im.data[i + 2] = rnd(); im.data[i + 3] = (i / 4) % 5 === 0 ? 0 : rnd(); }
       g.putImageData(im, 0, 0);
+      p.markAll();
       p.hist.clear(); p.fitZoom(false); p.S.fillMode = 'both'; p.S.primary = 'rgba(0,0,0,1)';
     });
     await frame();
@@ -169,11 +171,12 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     const noise = () => P(() => {
       const p = window.__paint;
       p.newDoc(1000, 700);
-      const c = document.querySelector('#image'), g = c.getContext('2d');
+      const c = p.base, g = c.getContext('2d'); // the pixels; #image shows them once repainted
       const im = g.createImageData(c.width, c.height);
       let s = 4242; const rnd = () => ((s = Math.imul(s, 1103515245) + 12345 >>> 0) >>> 16) & 255;
       for (let i = 0; i < im.data.length; i += 4) { im.data[i] = rnd(); im.data[i + 1] = rnd(); im.data[i + 2] = rnd(); im.data[i + 3] = (i / 4) % 5 === 0 ? 0 : rnd(); }
       g.putImageData(im, 0, 0);
+      p.markAll();
       p.hist.clear(); p.fitZoom(false); p.S.fillMode = 'both'; p.S.primary = 'rgba(0,0,0,1)';
     });
     await noise(); await frame();
@@ -211,7 +214,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await P(() => { window.__paint.S.primary = 'rgba(200,30,30,1)'; });
     await drag('fill', [[350, 250]]); // C, inside A and B
     ok(await pending() > 0, 'B is still on the GPU');
-    await P(() => document.querySelector('#image').dispatchEvent(new Event('contextlost')));
+    await P(() => window.__paint.base.dispatchEvent(new Event('contextlost'))); // the base holds the pixels undo swaps
     await frame();
     ok(await P(() => window.__paint.hist.undoStack.length) === 1, 'context loss drops the lost step and those behind it');
     ok(await P(() => document.body.innerText.includes('undo steps were lost')), 'context loss is reported');
@@ -222,9 +225,17 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     // context loss with a float up and its op on the GPU: both are abandoned, no errors
     await drag('select', [[100, 100], [300, 300]]);
     await drag('select', [[150, 150], [400, 420]]);
-    await P(() => document.querySelector('#image').dispatchEvent(new Event('contextlost')));
+    await P(() => window.__paint.base.dispatchEvent(new Event('contextlost')));
     await frame();
     ok(await P(() => !window.__paint.op && !window.__paint.sel), 'context loss abandons a float whose op was on the GPU');
+    // #image is only a cache: when its context comes back (blank), the scene is repainted into it
+    {
+      const before = await hash();
+      const n0 = await P(() => window.__paint.redrawCount);
+      await P(() => { const c = document.querySelector('#image'); c.getContext('2d').clearRect(0, 0, c.width, c.height); c.dispatchEvent(new Event('contextrestored')); });
+      await frame();
+      ok(await P(() => window.__paint.redrawCount) > n0 && await hash() === before, 'a restored #image is repainted from the scene');
+    }
     await page.waitForTimeout(1500);
     ok(!errs.length, `no errors after context loss: ${errs.join('; ')}`);
 

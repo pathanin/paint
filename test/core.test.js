@@ -899,3 +899,64 @@ test('odd stroke widths: hit tests and handles follow the drawn stroke, half a p
   const e = obj('rect', { x: 5, y: 20 }, { x: 25, y: 30 }, { size: 2 });
   assert.equal(Core.drawnObj(e), e); // even widths are drawn on the points themselves
 });
+
+test('zBetween: a key strictly between its neighbours, at either end, and after many inserts in one gap', () => {
+  const a = Core.zBetween(null, null);
+  assert.equal(typeof a, 'string');
+  const top = Core.zBetween(a, null), bottom = Core.zBetween(null, a);
+  assert.ok(bottom < a && a < top);
+  let lo = a, hi = top;
+  for (let i = 0; i < 200; i++) { const m = Core.zBetween(lo, hi); assert.ok(lo < m && m < hi, `${lo} < ${m} < ${hi}`); if (i % 2) lo = m; else hi = m; }
+  let k = a; // appending stays short
+  for (let i = 0; i < 5000; i++) { const n = Core.zBetween(k, null); assert.ok(n > k); k = n; }
+  assert.ok(k.length <= 6, 'append key length ' + k.length);
+  let b = a; // and so does prepending
+  for (let i = 0; i < 2000; i++) { const n = Core.zBetween(null, b); assert.ok(n < b); b = n; }
+  assert.throws(() => Core.zBetween(top, a));
+});
+
+test('dirtyTiles: each grid tile a dirty pixel falls in, once, whole (clipped at the image edge)', () => {
+  const W = 1000, H = 700, T = 256;
+  let s = 3;
+  const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+  for (let n = 0; n < 30; n++) {
+    const rects = [];
+    for (let i = 0; i < 1 + n % 7; i++) rects.push({ x: rnd() * 1100 - 50, y: rnd() * 800 - 50, w: rnd() * 400, h: rnd() * 300 });
+    const tiles = Core.dirtyTiles(rects, W, H, T);
+    const want = new Set();
+    for (const r of rects) {
+      const x0 = Math.max(0, Math.floor(r.x)), y0 = Math.max(0, Math.floor(r.y)), x1 = Math.min(W, Math.ceil(r.x + r.w)), y1 = Math.min(H, Math.ceil(r.y + r.h));
+      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) want.add(Math.floor(y / T) * 4 + Math.floor(x / T));
+    }
+    assert.deepEqual(new Set(tiles.map((t) => t.key)), want);
+    assert.equal(tiles.length, want.size);
+    for (const t of tiles) {
+      assert.equal(t.x % T, 0); assert.equal(t.y % T, 0);
+      assert.equal(t.w, Math.min(T, W - t.x)); assert.equal(t.h, Math.min(T, H - t.y));
+    }
+  }
+  assert.deepEqual(Core.dirtyTiles([], W, H, T), []);
+});
+
+test('diffObjs / applyPairs: an entry holds only what changed, and swapping it undoes and redoes', () => {
+  let z = null;
+  const mk = (id) => { z = Core.zBetween(z, null); return { id, z, t: 'rect', a: { x: id, y: 0 }, b: { x: id + 5, y: 5 } }; };
+  const A = Array.from({ length: 50 }, (_, i) => mk(i + 1));
+  const moved = { ...A[10], a: { x: 99, y: 9 } };
+  const B = A.map((o) => (o.id === 11 ? moved : o)); // one edit
+  let pairs = Core.diffObjs(A, B);
+  assert.equal(pairs.length, 1);
+  assert.deepEqual(Core.applyPairs(B, pairs), A);
+  const swapped = pairs.map(([n, t]) => [t, n]);
+  assert.deepEqual(Core.applyPairs(A, swapped), B);
+  // add, delete and reorder in one step
+  const top = mk(99);
+  const C = B.filter((o) => o.id !== 3).concat(top);
+  const [x, y] = [C[5], C[6]];
+  C[5] = { ...y, z: x.z }; C[6] = { ...x, z: y.z };
+  pairs = Core.diffObjs(B, C);
+  assert.equal(pairs.length, 4); // the deleted one, the two that traded keys, the new one
+  assert.deepEqual(Core.applyPairs(C, pairs), B);
+  assert.deepEqual(Core.applyPairs(B, pairs.map(([n, t]) => [t, n])), C);
+  assert.deepEqual(Core.diffObjs(A, A), []);
+});

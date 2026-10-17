@@ -1,7 +1,7 @@
 import Core from './core.js';
-import { ctx, img } from './doc.js';
+import { base, bctx } from './doc.js';
 import { $, clamp, makeCanvas, ring, setAttr, setData, stage, toHex } from './dom.js';
-import { objs, restyleObj, selObj, selectObj } from './objects.js';
+import { composite, restyleObj, selObj, selectObj } from './objects.js';
 import { dropSelection } from './selection.js';
 import { S } from './state.js';
 import { commitText, placeTextBox, textAt } from './text.js';
@@ -57,10 +57,10 @@ function setColor(which, hex, key) {
 function stampLine(a, b, color, size) {
   const off = Math.floor(size / 2);
   touch(Math.min(a.x, b.x) - off, Math.min(a.y, b.y) - off, Math.abs(b.x - a.x) + size, Math.abs(b.y - a.y) + size);
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  for (const [x, y] of Core.line(a.x, a.y, b.x, b.y)) ctx.rect(x - off, y - off, size, size);
-  ctx.fill();
+  bctx.fillStyle = color;
+  bctx.beginPath();
+  for (const [x, y] of Core.line(a.x, a.y, b.x, b.y)) bctx.rect(x - off, y - off, size, size);
+  bctx.fill();
 }
 // Brush: Core.Stroke segments ({a, c, b}, c = quadratic control or null) as one path, so joins blend
 // once; a segment that doesn't start where the last one ended starts a new subpath (same shape:
@@ -96,25 +96,25 @@ function brushCommit(d, segs) {
     x1 = Math.max(x1, g.box.x + g.box.w); y1 = Math.max(y1, g.box.y + g.box.h);
   }
   x0 = Math.max(0, Math.floor(x0)); y0 = Math.max(0, Math.floor(y0));
-  x1 = Math.min(img.width, Math.ceil(x1)); y1 = Math.min(img.height, Math.ceil(y1));
+  x1 = Math.min(base.width, Math.ceil(x1)); y1 = Math.min(base.height, Math.ceil(y1));
   if (x1 <= x0 || y1 <= y0) return;
   const r = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
   touch(r.x, r.y, r.w, r.h); // before drawing
-  if (!op) { brushPath(ctx, segs, d.color, d.size); return; } // the op was abandoned (GPU context lost)
-  for (const p of Core.tileParts(r, img.width, img.height, TILE)) {
+  if (!op) { brushPath(bctx, segs, d.color, d.size); return; } // the op was abandoned (GPU context lost)
+  for (const p of Core.tileParts(r, base.width, base.height, TILE)) {
     const t = op.tiles.get(p.key);
     if (t.cv) {
-      ctx.clearRect(p.x, p.y, p.w, p.h);
-      ctx.drawImage(t.cv, t.cx + p.x - t.x, t.cy + p.y - t.y, p.w, p.h, p.x, p.y, p.w, p.h);
-    } else ctx.putImageData(t.data, t.x, t.y, p.x - t.x, p.y - t.y, p.w, p.h);
+      bctx.clearRect(p.x, p.y, p.w, p.h);
+      bctx.drawImage(t.cv, t.cx + p.x - t.x, t.cy + p.y - t.y, p.w, p.h, p.x, p.y, p.w, p.h);
+    } else bctx.putImageData(t.data, t.x, t.y, p.x - t.x, p.y - t.y, p.w, p.h);
   }
   const hit = d.all.filter(({ box: b }) => b.x < x1 && b.x + b.w > x0 && b.y < y1 && b.y + b.h > y0);
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(r.x, r.y, r.w, r.h);
-  ctx.clip();
-  brushPath(ctx, hit, d.color, d.size);
-  ctx.restore();
+  bctx.save();
+  bctx.beginPath();
+  bctx.rect(r.x, r.y, r.w, r.h);
+  bctx.clip();
+  brushPath(bctx, hit, d.color, d.size);
+  bctx.restore();
 }
 // Bounding box of segments grown by h (a quadratic stays inside the hull of its points).
 function segsBox(segs, h) {
@@ -130,11 +130,10 @@ function segsBox(segs, h) {
 
 
 function pick(p, right) {
-  if (p.x < 0 || p.y < 0 || p.x >= img.width || p.y >= img.height) return;
-  const one = makeCanvas(1, 1), g = one.getContext('2d', { willReadFrequently: true }); // what is seen: pixels + objects
-  g.drawImage(img, p.x, p.y, 1, 1, 0, 0, 1, 1);
-  g.translate(-p.x, -p.y);
-  for (const o of objs) drawObj(g, o);
+  const c = composite(); // what is seen: pixels + objects
+  if (p.x < 0 || p.y < 0 || p.x >= c.width || p.y >= c.height) return;
+  const one = makeCanvas(1, 1), g = one.getContext('2d', { willReadFrequently: true });
+  g.drawImage(c, p.x, p.y, 1, 1, 0, 0, 1, 1);
   const d = g.getImageData(0, 0, 1, 1).data;
   if (d[3] === 0) { flash('That pixel is transparent. No color picked.'); return; }
   setColor(right ? 'secondary' : 'primary', toHex(d[0], d[1], d[2]));

@@ -1,5 +1,5 @@
 import Core from './core.js';
-import { docOp, hist, img } from './doc.js';
+import { base, docOp, hist, img } from './doc.js';
 import { $, makeCanvas } from './dom.js';
 import { loadPica, used } from './libs.js';
 import { dropSelection } from './selection.js';
@@ -18,7 +18,7 @@ function transformDoc(kind) {
   else if (kind === 'rotL') { g.translate(0, dims.h); g.rotate(-Math.PI / 2); }
   else if (kind === 'flipH') { g.translate(w, 0); g.scale(-1, 1); }
   else if (kind === 'flipV') { g.translate(0, h); g.scale(1, -1); }
-  g.drawImage(img, 0, 0);
+  g.drawImage(base, 0, 0);
   docOp(c, (o) => Core.transformObj(o, kind, w, h));
 }
 // Scale with pica's Lanczos-3 filter (in workers); past its budget, or if it fails, the built-in
@@ -63,12 +63,12 @@ function resample(src, w, h) {
 let scaling = null;
 async function scaleDoc(w, h) {
   if (scaling) { flash('Still resizing'); return; }
-  const src = img, top = hist.top();
+  const src = base, top = hist.top();
   let shown = false; // say so only if it takes a noticeable time, then confirm when done
   const slow = setTimeout(() => { shown = true; flash('Resizing…'); }, 300);
   try {
     const out = await (scaling = scaleImage(src, w, h));
-    if (img !== src || hist.top() !== top || drag || (sel && sel.float) || textAt) {
+    if (base !== src || hist.top() !== top || drag || (sel && sel.float) || textAt) {
       out.width = 0;
       flash('Resize failed: the image changed while it ran', true);
       return;
@@ -91,7 +91,7 @@ function resizeDoc(w, h, mode, anchor) {
   g.fillStyle = S.secondary;
   g.fillRect(0, 0, w, h);
   const { dx, dy } = Core.anchorOffset(img.width, img.height, w, h, anchor);
-  g.drawImage(img, dx, dy);
+  g.drawImage(base, dx, dy);
   docOp(c, (o) => Core.moveObj(o, dx, dy));
 }
 

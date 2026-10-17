@@ -3,7 +3,8 @@ import { img } from './doc.js';
 import { $, clamp, ov, ring, setProp, stage, textBox, vp } from './dom.js';
 import { doFill } from './fill.js';
 import { endCanvasDrag } from './handles.js';
-import { addObj, commitObjDrag, newObjId, objSel, objs, selObj, selectObj, showObjs } from './objects.js';
+import { addObj, commitObjDrag, newObjId, objSel, objs, selObj, selectObj, showObjs, zAbove } from './objects.js';
+import { hitAt } from './scene.js';
 import { dropSelection, inside, liftSelection } from './selection.js';
 import { S, SHAPES, drag, sel, setDrag, setSel } from './state.js';
 import { commitText, startText } from './text.js';
@@ -25,8 +26,8 @@ function objTarget(p) {
     if (Core.hitsObject(o, p, objTol())) return { o, h: null };
   }
   if (S.tool !== 'move') return null;
-  const i = Core.hitObject(objs, p, objTol());
-  return i < 0 ? null : { o: objs[i], h: null };
+  const o2 = hitAt(p, objTol());
+  return o2 ? { o: o2, h: null } : null;
 }
 const HANDLE_CURSORS = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', a: 'move', b: 'move' };
 // ⌥ over a shape with the Move tool: a drag duplicates it (copy cursor).
@@ -43,7 +44,7 @@ function objPointerDown(p, e) {
   selectObj(hit.o.id);
   // q: the pointer now. Nothing moves until it has gone 3 screen px (moved), so a click only selects.
   // ⌥-drag on the body (Move tool, as in Figma) moves a copy, put just above the original.
-  const dup = !hit.h && e.altKey && S.tool === 'move' ? { ...hit.o, id: newObjId() } : null;
+  const dup = !hit.h && e.altKey && S.tool === 'move' ? { ...hit.o, id: newObjId(), z: zAbove(hit.o) } : null;
   setDrag({ t: hit.h ? 'objsize' : 'objmove', h: hit.h, o: dup || hit.o, src: hit.o, dup: !!dup, p, q: p, sx: e.clientX, sy: e.clientY, moved: false, shift: e.shiftKey, before: objs });
   return true;
 }

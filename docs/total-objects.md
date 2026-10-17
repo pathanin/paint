@@ -1,6 +1,6 @@
 # Total objects: every mark is an object
 
-A plan (2026-10-17) for making **everything** in Paint an object: pencil and brush strokes, the eraser, fills, text, pasted images and the opened picture, not only lines, rectangles and ellipses. Any mark could then be selected, moved, restyled, reordered or deleted after it was drawn. Nothing here is built yet.
+A plan (2026-10-17) for making **everything** in Paint an object: pencil and brush strokes, the eraser, fills, text, pasted images and the opened picture, not only lines, rectangles and ellipses. Any mark could then be selected, moved, restyled, reordered or deleted after it was drawn. The user took the ten recommended defaults; it is being built on branch `total-objects-plan` (progress under "Status" at the end).
 
 It builds on `docs/objects.md` (the live-shapes work, merged) and on reading three apps:
 
@@ -193,8 +193,10 @@ Transforms keep their current rules (`Core.moveObj`, `scaleObj`, `transformObj`)
 ## Invariants every phase keeps
 
 1. **Screen = saved file** at zoom ≥ 1: `#image` is the composite, and save, copy and the picker read it directly.
-2. **Parity:** an object's pixels at creation are byte-identical to what `master` paints for the same input. This is checked by the parity harness (Phase 0).
-3. **One-path brush:** the image equals the stroke drawn as one path (`test/e2e/filledge.js`), including across `redraw()` block edges. Blocks have integer edges.
+2. **Parity:** an object's pixels at creation match what `master` paints for the same input. This is checked by the parity harness (Phase 0).
+   - *Corrected in Phase 1 (2026-10-17):* byte-identical holds for the raster and the object records, not for composites with path objects. Chrome's GPU canvas anti-aliases a path differently depending on what else is in its batch and where on the canvas it lands (a line's edge pixel: 28 alone, 128 after an ellipse). `master`'s composite has the same dependence, so composites are compared within anti-aliasing. Evidence in `task.md`, Phase 0.
+   - **The cache is a pure function of the scene** instead: it is repainted in whole 512² tiles, each composed from scratch the same way, so any sequence of repaints equals `__paint.freshRender()` byte for byte.
+3. **One-path brush:** the image equals the stroke drawn as one path (`test/e2e/filledge.js`), including across tile edges. Tiles have integer edges.
 4. **No DOM writes in `pointermove`.** All writes happen in `render()`, as now.
 5. **No document readback during a stroke.**
 6. **`isDirty()` comes from history only**, plus a float and open text, as now.
@@ -337,3 +339,9 @@ These are proposed; Phase 0 confirms them against `master` on the M4. `task` noi
   - `docs/objects.md`
   - `task.md` (performance numbers and decisions)
   - `src/js/{objects,tools,view,selection,tiles}.js`
+
+## Status
+
+- **Phase 0 (done):** `test/e2e/parity.js`, the 5k bench rows, the gate measured and passed (`task.md`).
+- **Phase 1 (done):** `scene.js` (R-tree from `rbush` 4.0.1, z-keys, geometry cache, whole-tile repaint, visible tiles first), `base` + `#image` as the cache, diff entries for objects. The redraw primitive differs from the sketch above: whole 512² tiles instead of grouped blocks, for the reason in Invariant 2.
+

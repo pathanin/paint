@@ -3,16 +3,17 @@ import { hist, img, redo, undo } from './doc.js';
 import { $, antsEl, clamp, ov, setAttr, setData, setProp, setText, stage, vp } from './dom.js';
 import { isDirty, save } from './fileio.js';
 import { showGhost } from './handles.js';
-import { objSel, objVer, objs, selObj } from './objects.js';
+import { objSel, objs, selObj } from './objects.js';
 import { objCursor, objGap, objTarget, updateRing } from './pointer.js';
 import { crop, inside } from './selection.js';
 import { S, SHAPES, drag, sel } from './state.js';
 import { placeTextBox, textAt } from './text.js';
-import { brushPath, drawObj, drawShape, segsBox } from './tools.js';
+import { brushPath, drawShape, segsBox } from './tools.js';
 
 // ---------- view ----------
-// #overlay is only the pointer target (never drawn, so it has no backing store). Shape previews
-// and floating selections are drawn on #preview, which covers just the visible part of the image
+// #overlay is only the pointer target (never drawn, so it has no backing store). Objects are in
+// #image's cache (scene.js), so pan and zoom redraw nothing. Shape previews, the brush tail and
+// floating selections are drawn on #preview, which covers just the visible part of the image
 // (marching ants are the #ants element, at screen resolution). A document-sized overlay costs
 // 400 MB at 100 MP, and twice that once shown.
 const pv = $('#preview');
@@ -127,11 +128,10 @@ function render() {
     shape ? [drag.t, drag.start, drag.end, drag.shift, drag.color, drag.alt, S.sizes[drag.t], S.fillMode] : 0,
     mq || 0,
     sel && sel.float ? [sel.x, sel.y, sel.w, sel.h, floatId(sel.float)] : 0,
-    objVer,
   ]);
   placeAnts(mq || sel);
   placeObjSel(selObj());
-  if (shape || (sel && sel.float) || (tail && tail.length) || objs.length) placePreview();
+  if (shape || (sel && sel.float) || (tail && tail.length)) placePreview();
   if (key !== ovKey) {
     ovKey = key;
     if (ovBox) octx.clearRect(ovBox.x, ovBox.y, ovBox.w, ovBox.h);
@@ -143,10 +143,9 @@ function render() {
       const x1 = Math.max(box.x + box.w, b.x + b.w), y1 = Math.max(box.y + box.h, b.y + b.h);
       box.x = Math.min(box.x, b.x); box.y = Math.min(box.y, b.y); box.w = x1 - box.x; box.h = y1 - box.y;
     };
-    // Pixels-to-be (a floating selection, the brush tail) under the objects; a shape being drawn on top.
+    // Pixels-to-be (a floating selection, the brush tail), then a shape being drawn, over the image.
     if (sel && sel.float) { octx.drawImage(sel.float, sel.x, sel.y); add(sel); }
     if (tail && tail.length) { brushPath(octx, tail, drag.color, drag.size); add(segsBox(tail, drag.size / 2 + 1)); }
-    for (const o of objs) { drawObj(octx, o); add(Core.objBox(o)); }
     if (shape) add(drawShape(octx, drag));
     ovBox = box;
   }

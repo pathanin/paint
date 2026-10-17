@@ -1,6 +1,7 @@
 import Core from './core.js';
-import { ctx, hist, img, pushHist } from './doc.js';
+import { base, bctx, hist, pushHist } from './doc.js';
 import { makeCanvas } from './dom.js';
+import { markDirty } from './scene.js';
 import { drag, sel, setSel } from './state.js';
 import { flash } from './toast.js';
 import { requestRender, updateChrome } from './view.js';
@@ -40,7 +41,7 @@ function snapshot(items) {
   for (const g of Core.groupRects(items, 1)) {
     const cv = makeCanvas(g.w, g.h);
     cv.addEventListener('contextlost', gpuLost);
-    cv.getContext('2d').drawImage(img, g.x, g.y, g.w, g.h, 0, 0, g.w, g.h); // onto transparent: exact, alpha too
+    cv.getContext('2d').drawImage(base, g.x, g.y, g.w, g.h, 0, 0, g.w, g.h); // onto transparent: exact, alpha too
     cv.refs = g.items.length;
     for (const i of g.items) { const t = items[i]; t.cv = cv; t.cx = t.x - g.x; t.cy = t.y - g.y; }
   }
@@ -61,15 +62,18 @@ function drawBack(items, rect) {
     const area = rs.reduce((n, r) => n + r.w * r.h, 0), dx = rs[0].sx - rs[0].x, dy = rs[0].sy - rs[0].y;
     const one = area === (x1 - x0) * (y1 - y0) && rs.every((r) => r.sx - r.x === dx && r.sy - r.y === dy);
     for (const r of one ? [{ x: x0, y: y0, w: x1 - x0, h: y1 - y0, sx: x0 + dx, sy: y0 + dy }] : rs) {
-      ctx.clearRect(r.x, r.y, r.w, r.h);
-      ctx.drawImage(cv, r.sx, r.sy, r.w, r.h, r.x, r.y, r.w, r.h);
+      bctx.clearRect(r.x, r.y, r.w, r.h);
+      bctx.drawImage(cv, r.sx, r.sy, r.w, r.h, r.x, r.y, r.w, r.h);
+      markDirty(r);
     }
   }
 }
+// Every write to the base goes through here first, so it also marks the rect for #image's redraw.
 function touch(x, y, w, h) {
+  markDirty({ x, y, w, h });
   if (!op) return;
   const fresh = [];
-  for (const p of Core.tileParts({ x, y, w, h }, img.width, img.height, TILE)) {
+  for (const p of Core.tileParts({ x, y, w, h }, base.width, base.height, TILE)) {
     const t = op.tiles.get(p.key);
     if (t) {
       t.x0 = Math.min(t.x0, p.x); t.y0 = Math.min(t.y0, p.y);
@@ -77,7 +81,7 @@ function touch(x, y, w, h) {
       continue;
     }
     const ox = p.tx * TILE, oy = p.ty * TILE;
-    const t2 = { cv: null, cx: 0, cy: 0, data: null, x: ox, y: oy, w: Math.min(TILE, img.width - ox), h: Math.min(TILE, img.height - oy), x0: p.x, y0: p.y, x1: p.x + p.w, y1: p.y + p.h };
+    const t2 = { cv: null, cx: 0, cy: 0, data: null, x: ox, y: oy, w: Math.min(TILE, base.width - ox), h: Math.min(TILE, base.height - oy), x0: p.x, y0: p.y, x1: p.x + p.w, y1: p.y + p.h };
     op.tiles.set(p.key, t2);
     fresh.push(t2);
   }
@@ -184,7 +188,7 @@ function dropOp(restore) {
   const tiles = [...o.tiles.values()];
   if (restore) {
     drawBack(tiles.filter((t) => t.cv), (t) => ({ x: t.x0, y: t.y0, w: t.x1 - t.x0, h: t.y1 - t.y0, sx: t.cx + t.x0 - t.x, sy: t.cy + t.y0 - t.y }));
-    for (const t of tiles) if (t.data) ctx.putImageData(t.data, t.x, t.y, t.x0 - t.x, t.y0 - t.y, t.x1 - t.x0, t.y1 - t.y0);
+    for (const t of tiles) if (t.data) { bctx.putImageData(t.data, t.x, t.y, t.x0 - t.x, t.y0 - t.y, t.x1 - t.x0, t.y1 - t.y0); markDirty({ x: t.x0, y: t.y0, w: t.x1 - t.x0, h: t.y1 - t.y0 }); }
   }
   tiles.forEach(release);
 }
@@ -200,7 +204,7 @@ function swapParts(parts) {
   const old = parts.map((p) => ({ x: p.x, y: p.y, w: p.w, h: p.h, cv: p.cv, cx: p.cx, cy: p.cy, data: p.data }));
   snapshot(parts);
   drawBack(old.filter((o) => o.cv), (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, sx: o.cx, sy: o.cy }));
-  for (const o of old) { if (o.data) ctx.putImageData(o.data, o.x, o.y); release(o); }
+  for (const o of old) { if (o.data) { bctx.putImageData(o.data, o.x, o.y); markDirty(o); } release(o); }
   for (const p of parts) p.data = null;
   queueToData(parts);
 }

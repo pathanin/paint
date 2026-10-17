@@ -1,7 +1,8 @@
 import Core from './core.js';
-import { ctx, hist, img, pushHist } from './doc.js';
+import { base, bctx as ctx, hist, pushHist } from './doc.js';
 import { hexToU32 } from './dom.js';
 import { startWorker, used, workerCall } from './libs.js';
+import { markDirty } from './scene.js';
 import { S, sel } from './state.js';
 import { op } from './tiles.js';
 import { flash } from './toast.js';
@@ -14,7 +15,7 @@ import { flash } from './toast.js';
 let worker = null; // created on the first fill; false once it has failed
 let filling = null; // the running fill's promise (for the tests)
 function doFill(p, color) {
-  const W = img.width, H = img.height;
+  const W = base.width, H = base.height;
   if (p.x < 0 || p.y < 0 || p.x >= W || p.y >= H) return;
   if (filling) { flash('Still filling'); return; }
   const c = hexToU32(color);
@@ -23,12 +24,12 @@ function doFill(p, color) {
   filling = runFill(p, c, S.tolerance).finally(() => { filling = null; });
 }
 async function runFill(p, c, tolerance) {
-  const src = img, top = hist.top(), openOp = op, float = sel && sel.float;
+  const src = base, top = hist.top(), openOp = op, float = sel && sel.float;
   const W = src.width, H = src.height;
   // Every way pixels change shows here: a stroke opens an op, a lift makes a float, crop/resize/New
-  // swap img, everything else commits to history. Drags that write no pixels (pan, marquee, a shape
+  // swap the base, everything else commits to history. Drags that write no pixels (pan, marquee, a shape
   // before release) don't count, so panning around while a big fill runs keeps it.
-  const changed = () => img !== src || hist.top() !== top || op !== openOp || (sel && sel.float) !== float;
+  const changed = () => base !== src || hist.top() !== top || op !== openOp || (sel && sel.float) !== float;
   const job = (buf) => ({ buf, w: W, h: H, x: p.x, y: p.y, color: c, tolerance });
   let shown = false; // say so only if it takes a noticeable time
   const slow = setTimeout(() => { shown = true; flash('Filling…'); }, 300);
@@ -56,6 +57,7 @@ async function runFill(p, c, tolerance) {
     if (changed()) return dropped();
     const box = plan.box;
     ctx.putImageData(new ImageData(new Uint8ClampedArray(buf), W, H), 0, 0, box.x, box.y, box.w, box.h);
+    markDirty(box);
     const before = new ImageData(new Uint8ClampedArray(plan.before.buffer), box.w, box.h);
     pushHist({ type: 'fill', x: box.x, y: box.y, before, bits: plan.bits, color: c, ek: plan.ek, ev: plan.ev, undone: false, bytes: before.data.length + plan.bits.length + plan.ek.length * 8 });
     if (shown) flash('Filled');
@@ -66,6 +68,7 @@ async function runFill(p, c, tolerance) {
 const dropped = () => flash('Fill cancelled: the image changed while it ran', true);
 // Undo/redo of a fill entry: put back the pixels before, or recompute the filled ones.
 function applyFill(e) {
+  markDirty({ x: e.x, y: e.y, w: e.before.width, h: e.before.height });
   // Redo: the box holds exactly the before pixels, so painting the mask's runs in the (opaque) fill
   // colour, then each edge pixel in its (opaque) colour, gives the after state. Path fills of
   // whole-pixel rects are exact and cost no upload.

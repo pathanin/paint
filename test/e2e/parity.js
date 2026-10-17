@@ -4,8 +4,9 @@
 //   reference: usually a build of master; candidate: this branch (default http://localhost:8765/).
 //   --flatten-ref: flatten each shape on the reference as soon as it's drawn (⌘E), so both sides
 //   stack marks in drawing order. Needed once new marks go on top of shapes (docs/total-objects.md).
-// It compares decoded pixels (getImageData of what is seen), never file bytes: the PNG encoder and
-// a private chunk change the bytes without changing the picture.
+// It compares decoded pixels, never file bytes (the PNG encoder and a private chunk change the bytes
+// without changing the picture). Before the switch (no --flatten-ref) the raster and the object
+// records must be identical; what is seen must be identical or within anti-aliasing (see below).
 const { chromium } = require('playwright');
 const args = process.argv.slice(2);
 const urls = args.filter((a) => !a.startsWith('--'));
@@ -138,20 +139,31 @@ async function session(browser, url, flatten) {
       await settle();
     },
   };
-  // What is seen: the composite's pixels, as a hash plus the raw bytes for a diff on mismatch.
-  const shot = () => P(async () => {
-    const p = window.__paint, c = p.composite(), g = c.getContext('2d');
-    const d = g.getImageData(0, 0, c.width, c.height).data;
-    const h = await crypto.subtle.digest('SHA-256', d);
-    return { w: c.width, h: c.height, hash: [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join(''), b64: null };
-  });
-  const pixels = () => P(() => {
-    const c = window.__paint.composite();
+  // which: 'composite' (what is seen) or 'raster' (the pixels without objects: the base canvas where
+  // there is one, else #image, which on builds before the scene cache held only pixels).
+  const grab = (which) => P((which) => {
+    const p = window.__paint, c = which === 'raster' ? (p.base || p.img) : p.composite();
     const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
     let s = ''; for (let i = 0; i < d.length; i += 0x8000) s += String.fromCharCode.apply(null, d.subarray(i, i + 0x8000));
-    return btoa(s);
-  });
-  return { page, s, shot, pixels, errs };
+    return { w: c.width, h: c.height, b64: btoa(s) };
+  }, which);
+  const records = () => P(() => JSON.stringify(window.__paint.objs.map(({ z, ...o }) => o)));
+  s.page = page;
+  return { page, s, grab, records, errs };
+}
+
+// null when equal, else {size, n, worst, msg}.
+function diff(a, b) {
+  if (a.w !== b.w || a.h !== b.h) return { size: true, msg: `${a.w}x${a.h} vs ${b.w}x${b.h}` };
+  if (a.b64 === b.b64) return null;
+  const pa = Buffer.from(a.b64, 'base64'), pb = Buffer.from(b.b64, 'base64');
+  let n = 0, worst = 0, first = null;
+  for (let i = 0; i < pa.length; i += 4) {
+    let d = 0;
+    for (let k = 0; k < 4; k++) d = Math.max(d, Math.abs(pa[i + k] - pb[i + k]));
+    if (d) { n++; worst = Math.max(worst, d); if (!first) first = [(i / 4) % a.w, Math.floor(i / 4 / a.w)]; }
+  }
+  return { size: false, n, worst, msg: `${n} px differ, worst channel ${worst}, first at ${first}` };
 }
 
 (async () => {
@@ -161,26 +173,30 @@ async function session(browser, url, flatten) {
     const A = await session(browser, ref, flattenRef), B = await session(browser, cand, false);
     for (const [name, step] of STEPS) {
       await step(A.s); await step(B.s);
-      const a = await A.shot(), b = await B.shot();
-      if (a.w === b.w && a.h === b.h && a.hash === b.hash) { console.log('same  ', name); continue; }
-      fails++;
-      let msg = `${a.w}x${a.h} vs ${b.w}x${b.h}`;
-      if (a.w === b.w && a.h === b.h) {
-        const pa = Buffer.from(await A.pixels(), 'base64'), pb = Buffer.from(await B.pixels(), 'base64');
-        let n = 0, worst = 0, first = null;
-        for (let i = 0; i < pa.length; i += 4) {
-          let d = 0;
-          for (let k = 0; k < 4; k++) d = Math.max(d, Math.abs(pa[i + k] - pb[i + k]));
-          if (d) { n++; worst = Math.max(worst, d); if (!first) first = [(i / 4) % a.w, Math.floor(i / 4 / a.w)]; }
-        }
-        msg = `${n} px differ, worst channel ${worst}, first at ${first}`;
+      if (process.env.FRESH) console.log('   cache vs fresh render:', await B.s.page.evaluate(() => { const p = window.__paint, A = p.composite().getContext('2d').getImageData(0, 0, p.img.width, p.img.height).data, F = p.freshRender().getContext('2d').getImageData(0, 0, p.img.width, p.img.height).data; let n = 0, w = 0, f = null; for (let i = 0; i < A.length; i++) { const d = Math.abs(A[i] - F[i]); if (d) { n++; if (d > w) { w = d; f = [(i >> 2) % p.img.width, (i >> 2) / p.img.width | 0]; } } } return n + ' differ, worst ' + w + ' at ' + f; }));
+      const bad = [], notes = [];
+      // Exact: the raster and the object records (before the switch: --flatten-ref is off).
+      if (!flattenRef) {
+        const ra = await A.grab('raster'), rb = await B.grab('raster');
+        const d = diff(ra, rb);
+        if (d) bad.push('raster ' + d.msg);
+        if (await A.records() !== await B.records()) bad.push('object records differ');
       }
-      console.log('FAIL: ', name, '-', msg);
+      // What is seen: equal, or within anti-aliasing. Chrome's GPU canvas anti-aliases a path differently
+      // depending on what else is in its batch (task.md, Phase 0), so a composite with path objects can't
+      // match another build's bit for bit. Tolerance as for turned shapes in objects.js: no channel off by
+      // half the range, and at most 0.5% of the pixels differ.
+      const ca = await A.grab('composite'), cb = await B.grab('composite');
+      const d = diff(ca, cb);
+      if (d && (d.size || d.worst >= 128 || d.n > 0.005 * ca.w * ca.h)) bad.push('composite ' + d.msg);
+      else if (d) notes.push('composite within anti-aliasing: ' + d.msg);
+      if (bad.length) { fails++; console.log('FAIL: ', name, '-', bad.join('; ')); }
+      else console.log(notes.length ? 'aa    ' : 'same  ', name, notes.length ? '- ' + notes.join('; ') : '');
     }
     for (const [k, X] of [['reference', A], ['candidate', B]]) if (X.errs.length) { fails++; console.log(`FAIL: page errors (${k}):`, X.errs); }
   } finally {
     await browser.close();
   }
-  console.log(fails ? `${fails} step(s) differ` : `all ${STEPS.length} steps identical`);
+  console.log(fails ? `${fails} step(s) differ` : `all ${STEPS.length} steps match`);
   process.exit(fails ? 1 : 0);
 })();

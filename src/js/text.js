@@ -1,4 +1,4 @@
-import { ctx } from './doc.js';
+import { bctx as ctx } from './doc.js';
 import { $, stage, textBox } from './dom.js';
 import { S } from './state.js';
 import { beginOp, endOp, touch } from './tiles.js';

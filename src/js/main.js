@@ -11,6 +11,7 @@ import './view.js';
 import './tools.js';
 import './fill.js';
 import './objects.js';
+import './scene.js';
 import './text.js';
 import './selection.js';
 import './clipboard.js';
@@ -27,15 +28,17 @@ import './help.js';
 import './pwa.js';
 
 import { pasteImage } from './clipboard.js';
-import { hist, img, newDoc, redo, undo } from './doc.js';
+import Core from './core.js';
+import { base, hist, img, newDoc, redo, undo } from './doc.js';
 import { $, MAC, keyLabel } from './dom.js';
 import { decodeFile, loadFile, save } from './fileio.js';
 import { filling } from './fill.js';
 import { used } from './libs.js';
 import { openLaunched, setUpPwa } from './pwa.js';
-import { composite, flattenObjs, objSel, objs } from './objects.js';
+import { composite, flattenObjs, objSel, objs, selectObj } from './objects.js';
 import { crop, selectAll } from './selection.js';
 import { MAX_PIXELS, S, drag, sel } from './state.js';
+import { flushRedraw, freshRender, hitAt, markAll, objsIn, redrawCount } from './scene.js';
 import { flushToData, op, pendingParts } from './tiles.js';
 import { flash } from './toast.js';
 import { setColor, setTool } from './tools.js';
@@ -65,4 +68,4 @@ if (window.launchQueue) window.launchQueue.setConsumer(openLaunched);
 window.addEventListener('load', setUpPwa, { once: true });
 
 // Handle for scripted smoke tests in the console.
-window.__paint = { S, hist, used, decodeFile, scaleImage, resample, get img() { return img; }, newDoc, flash, save, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, loadFile, setZoom, fitZoom, MAX_PIXELS, flushToData, get op() { return op; }, get objs() { return objs; }, get objSel() { return objSel; }, flattenObjs, composite, openLaunched, get filling() { return filling; }, get pendingParts() { return [...pendingParts].filter((p) => p.cv).length; } };
+window.__paint = { S, hist, used, decodeFile, scaleImage, resample, get img() { flushRedraw(); return img; }, get base() { return base; }, get redrawCount() { return redrawCount; }, flushRedraw, markAll, objsIn, freshRender, hitAt, selectObj, Core, newDoc, flash, save, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, loadFile, setZoom, fitZoom, MAX_PIXELS, flushToData, get op() { return op; }, get objs() { return objs; }, get objSel() { return objSel; }, flattenObjs, composite, openLaunched, get filling() { return filling; }, get pendingParts() { return [...pendingParts].filter((p) => p.cv).length; } };

@@ -16,8 +16,8 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.waitForTimeout(300);
     const P = (f, a) => page.evaluate(f, a);
     const frame = () => P(() => new Promise((r) => requestAnimationFrame(() => r())));
-    const hash = () => P(() => {
-      const c = document.querySelector('#image');
+    const hash = () => P(() => { // the pixels (the base), without the objects
+      const c = window.__paint.base;
       const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
       let h = 2166136261;
       for (let i = 0; i < d.length; i++) h = Math.imul(h ^ d[i], 16777619);
@@ -41,7 +41,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     const depth = () => P(() => window.__paint.hist.undoStack.length);
     // RGBA of what is seen at an image px: the pixels with the objects drawn over them.
     const seen = (x, y) => P(([x, y]) => [...window.__paint.composite().getContext('2d').getImageData(x, y, 1, 1).data], [x, y]);
-    const pixel = (x, y) => P(([x, y]) => [...document.querySelector('#image').getContext('2d').getImageData(x, y, 1, 1).data], [x, y]);
+    const pixel = (x, y) => P(([x, y]) => [...window.__paint.base.getContext('2d').getImageData(x, y, 1, 1).data], [x, y]);
     const isBlack = (c) => c[0] < 60 && c[1] < 60 && c[2] < 60 && c[3] === 255;
     const isWhite = (c) => c[0] === 255 && c[1] === 255 && c[2] === 255;
 
@@ -430,6 +430,64 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     const selBox = await page.locator('#objsel').boundingBox(), [sx0, sy0] = await at16(5.5, 20.5), [sx1, sy1] = await at16(25.5, 30.5);
     ok(Math.abs(selBox.x - sx0) <= 1 && Math.abs(selBox.y - sy0) <= 1 && Math.abs(selBox.x + selBox.width - sx1) <= 1 && Math.abs(selBox.y + selBox.height - sy1) <= 1,
       'the outline of a 3 px rectangle runs along the middle of its stroke: ' + JSON.stringify([selBox, [sx0, sy0, sx1, sy1]]));
+
+    // ---- 23. the scene cache (docs/total-objects.md): #image = base + objects, repainted by tile ----
+    await P(() => { const p = window.__paint; p.newDoc(900, 600); p.fitZoom(false); p.S.pristine = false; });
+    await P(() => { // 300 shapes of every kind and mode, by synthetic pointer events (the tools make them)
+      const p = window.__paint, ov = document.querySelector('#overlay'), r = ov.getBoundingClientRect(), z = r.width / 900;
+      const ev = (type, x, y) => ov.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: r.left + x * z, clientY: r.top + y * z, isPrimary: true }));
+      let s = 11; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+      const kinds = ['line', 'rect', 'ellipse'], modes = ['outline', 'fill', 'both'];
+      for (let i = 0; i < 300; i++) {
+        p.setTool(kinds[i % 3]); p.S.fillMode = modes[(i / 3 | 0) % 3]; p.S.sizes[kinds[i % 3]] = 1 + (i % 7);
+        p.S.primary = ['#000000', '#ed1c24', '#3f48cc', '#22b14c'][i % 4];
+        const x = rnd() * 860, y = rnd() * 560;
+        ev('pointerdown', x, y); ev('pointermove', x + 5 + rnd() * 80, y + 5 + rnd() * 60); ev('pointerup', x + 5 + rnd() * 80, y + 5 + rnd() * 60);
+      }
+      p.setTool('move');
+    });
+    await frame();
+    const cacheDiff = () => P(() => {
+      const p = window.__paint, W = p.img.width, H = p.img.height;
+      const a = p.img.getContext('2d').getImageData(0, 0, W, H).data, b = p.freshRender().getContext('2d').getImageData(0, 0, W, H).data;
+      let n = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) n++;
+      return n;
+    });
+    ok((await objs()).length === 300 && await cacheDiff() === 0, 'the cache equals a fresh render of 300 shapes');
+    ok(await P(() => { const c = document.querySelector('#preview'); if (!c.width) return true; const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; for (let i = 3; i < d.length; i += 4) if (d[i]) return false; return true; }),
+      'objects are not drawn on #preview');
+    await P(() => { const p = window.__paint; p.selectObj(p.objs[150].id); document.querySelector('#viewport').focus(); });
+    await page.keyboard.press('ArrowLeft');
+    ok(await P(() => { const e = window.__paint.hist.top(); return e.type === 'obj' && e.pairs.length === 1 && e.bytes <= 256 && !e.objs; }),
+      'a nudge among 300 shapes is a one-object diff entry, not a copy of the list');
+    // random edits by keyboard and pointer: nudge, restyle, reorder, duplicate, delete, move, undo, redo
+    await P(() => document.querySelector('#viewport').focus());
+    const keys = ['ArrowRight', 'Shift+ArrowDown', 'Meta+BracketRight', 'Delete', 'Meta+BracketLeft', 'Meta+KeyD', 'Delete', 'Meta+KeyZ', 'Meta+Shift+KeyZ', 'Delete', 'Meta+KeyZ'];
+    for (let i = 0; i < 60; i++) {
+      await P((i) => { const p = window.__paint, o = p.objs[(i * 37) % p.objs.length]; if (o) p.selectObj(o.id); }, i);
+      if (i % 5 === 4) { // drag the selected one with the Move tool
+        const c = await P(() => { const o = window.__paint.objs.find((x) => x.id === window.__paint.objSel); return o && { x: (o.a.x + o.b.x) / 2, y: o.a.y }; });
+        if (c) await drag([[c.x, c.y], [c.x + (i % 2 ? 310 : -280), c.y + (i % 3 ? 170 : -150)]]);
+      } else if (i % 7 === 3) await page.locator('#palette [data-color="#ffc90e"]').click();
+      else await page.keyboard.press(keys[i % keys.length]);
+      if (i % 3 === 0) await P(() => document.querySelector('#viewport').focus());
+    }
+    await frame();
+    ok((await objs()).length < 300 && await cacheDiff() === 0, 'after 60 random edits (long moves, deletes), undos and redos the cache still equals a fresh render (exact)');
+    const rc0 = await P(() => window.__paint.redrawCount);
+    await P(() => { window.__paint.setZoom(0.25); window.__paint.setZoom(4); const v = document.querySelector('#viewport'); v.scrollLeft = 900; v.scrollTop = 600; });
+    await frame(); await frame();
+    ok(await P(() => window.__paint.redrawCount) === rc0, 'zooming and scrolling repaint nothing');
+    ok(await P(() => {
+      const p = window.__paint, list = p.objs; let s = 5; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+      for (let i = 0; i < 400; i++) {
+        const q = { x: rnd() * 900, y: rnd() * 600 }, tol = 2;
+        const j = p.Core.hitObject(list, q, tol), h = p.hitAt(q, tol);
+        if ((j < 0 ? null : list[j]) !== h) return false;
+      }
+      return true;
+    }), 'the R-tree hit test agrees with a linear scan, topmost first');
+    ok(await P(() => { const p = window.__paint; for (let i = 1; i < p.objs.length; i++) if (!(p.objs[i - 1].z < p.objs[i].z)) return false; return true; }), 'the object list stays in z-key order');
 
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));
   } catch (e) {

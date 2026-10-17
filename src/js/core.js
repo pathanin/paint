@@ -606,7 +606,118 @@
     return { ...o, a: f(o.a), b: f(o.b), size };
   }
 
-  const Core = { rgbaToU32, colorDistance, floodMask, fillEdge, floodFill, fillPlan, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History,
+  // Fractional z-keys (as Figma and tldraw order siblings): strings that sort in stacking order, so
+  // an object can go between two others without renumbering the rest. zBetween(a, b) is a key
+  // strictly between a and b (null: no bound on that side). The scheme is David Greenspan's
+  // "fractional indexing" (also in tldraw): an integer part whose first character gives its length
+  // (a0..az, b00.., and downwards Zz..), then a fraction. So appending or prepending stays short (5,000
+  // appends: 4 characters) and only inserting into one gap again and again makes keys longer.
+  // Digits are 0-9A-Za-z, in ASCII order, so plain string comparison sorts them.
+  const ZD = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+  function zMid(a, b) { // fractions a < b (b null: 1), no trailing zeros
+    if (b != null) {
+      let n = 0;
+      while ((a[n] || '0') === b[n]) n++;
+      if (n > 0) return b.slice(0, n) + zMid(a.slice(n), b.slice(n));
+    }
+    const da = a ? ZD.indexOf(a[0]) : 0, db = b != null ? ZD.indexOf(b[0]) : ZD.length;
+    if (db - da > 1) return ZD[Math.round((da + db) / 2)];
+    if (b && b.length > 1) return b.slice(0, 1);
+    return ZD[da] + zMid(a.slice(1), null);
+  }
+  function zIntLen(h) {
+    if (h >= 'a' && h <= 'z') return h.charCodeAt(0) - 95;
+    if (h >= 'A' && h <= 'Z') return 92 - h.charCodeAt(0);
+    throw new Error('bad z-key head ' + h);
+  }
+  const zInt = (k) => k.slice(0, zIntLen(k[0]));
+  function zInc(x) {
+    const ds = x.slice(1).split('');
+    let i = ds.length - 1;
+    for (; i >= 0; i--) { const d = ZD.indexOf(ds[i]) + 1; if (d < ZD.length) { ds[i] = ZD[d]; break; } ds[i] = '0'; }
+    if (i >= 0) return x[0] + ds.join('');
+    if (x[0] === 'Z') return 'a0';
+    if (x[0] === 'z') return null;
+    const h = String.fromCharCode(x.charCodeAt(0) + 1);
+    if (h > 'a') ds.push('0'); else ds.pop();
+    return h + ds.join('');
+  }
+  function zDec(x) {
+    const ds = x.slice(1).split('');
+    let i = ds.length - 1;
+    for (; i >= 0; i--) { const d = ZD.indexOf(ds[i]) - 1; if (d >= 0) { ds[i] = ZD[d]; break; } ds[i] = 'z'; }
+    if (i >= 0) return x[0] + ds.join('');
+    if (x[0] === 'a') return 'Zz';
+    if (x[0] === 'A') return null;
+    const h = String.fromCharCode(x.charCodeAt(0) - 1);
+    if (h < 'Z') ds.push('z'); else ds.pop();
+    return h + ds.join('');
+  }
+  function zBetween(a, b) {
+    if (a != null && b != null && !(a < b)) throw new Error(`zBetween: ${a} is not below ${b}`);
+    if (a == null && b == null) return 'a0';
+    if (a == null) {
+      const ib = zInt(b), fb = b.slice(ib.length);
+      if (ib === 'A' + '0'.repeat(26)) return ib + zMid('', fb);
+      if (ib < b) return ib;
+      const r = zDec(ib);
+      if (r == null) throw new Error('zBetween: no key below ' + b);
+      return r;
+    }
+    const ia = zInt(a), fa = a.slice(ia.length);
+    if (b == null) { const r = zInc(ia); return r == null ? ia + zMid(fa, null) : r; }
+    const ib = zInt(b), fb = b.slice(ib.length);
+    if (ia === ib) return ia + zMid(fa, fb);
+    const r = zInc(ia);
+    return r != null && r < b ? r : ia + zMid(fa, null);
+  }
+  // Undo entries for objects are diffs: pairs [now, then] by id, where now is the object in the live
+  // list (null: absent) and then the one to put back (null: none). diffObjs(prev, next) gives the
+  // pairs that turn next back into prev; applyPairs(list, pairs) does it, keeping z order (lists are
+  // sorted by o.z), and the swapped pairs [then, now] undo that again. Same ids in the same order (a
+  // move, a restyle) is one reference walk; otherwise a map by id.
+  function diffObjs(prev, next) {
+    const pairs = [];
+    if (prev.length === next.length) {
+      let same = true;
+      for (let i = 0; i < prev.length && same; i++) same = prev[i].id === next[i].id;
+      if (same) {
+        for (let i = 0; i < prev.length; i++) if (prev[i] !== next[i]) pairs.push([next[i], prev[i]]);
+        return pairs;
+      }
+    }
+    const was = new Map(prev.map((o) => [o.id, o]));
+    for (const o of next) { const p = was.get(o.id); was.delete(o.id); if (p !== o) pairs.push([o, p || null]); }
+    for (const p of was.values()) pairs.push([null, p]);
+    return pairs;
+  }
+  function applyPairs(list, pairs) {
+    const ids = new Set(pairs.map(([n, t]) => (n || t).id));
+    const out = list.filter((o) => !ids.has(o.id));
+    for (const [, t] of pairs) {
+      if (!t) continue;
+      let lo = 0, hi = out.length;
+      while (lo < hi) { const m = (lo + hi) >> 1; if (out[m].z < t.z) lo = m + 1; else hi = m; }
+      out.splice(lo, 0, t);
+    }
+    return out;
+  }
+
+  // The tiles redraw() repaints for dirty rects: every T x T grid tile of the W x H image that a rect
+  // (grown to whole pixels) touches, once each, as {key, x, y, w, h} (edge tiles are clipped).
+  function dirtyTiles(rects, W, H, T) {
+    const seen = new Map();
+    for (const r of rects) {
+      for (const p of tileParts(r, W, H, T)) {
+        if (seen.has(p.key)) continue;
+        const x = p.tx * T, y = p.ty * T;
+        seen.set(p.key, { key: p.key, x, y, w: Math.min(T, W - x), h: Math.min(T, H - y) });
+      }
+    }
+    return [...seen.values()];
+  }
+
+  const Core = { rgbaToU32, colorDistance, floodMask, fillEdge, floodFill, fillPlan, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History, zBetween, dirtyTiles, diffObjs, applyPairs,
     objBox, drawnObj, hitsObject, hitObject, objHandles, handleAt, resizeObj, moveObj, transformObj, scaleObj };
   module.exports = Core;
 })();
