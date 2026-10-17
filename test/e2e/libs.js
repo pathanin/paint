@@ -298,6 +298,38 @@ function hugeTiff() {
       return { running, px: [...p.img.getContext('2d').getImageData(0, 0, 1, 1).data].join(), kinds: p.userObjs.map((o) => o.t).join(), toast: document.querySelector('#toast').textContent };
     });
     ok(pick.running && pick.px === '0,0,255,255' && pick.kinds === 'rect,fill' && !/cancelled/.test(pick.toast), 'a fill lands when only the selection changed meanwhile: ' + JSON.stringify(pick));
+    // The worker reads the picture back in 2 MP strips (699 rows at 3000 wide, the last one short): a fill
+    // over anti-aliased lines crossing every strip edge must give what the same plan gives on pixels read here.
+    const strips = await P(async () => {
+      const p = window.__paint, W = 3000, H = 2400;
+      p.newDoc(W, H); p.fitZoom(false); p.S.pristine = false;
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const g = c.getContext('2d'); g.strokeStyle = 'rgba(30, 30, 160, 0.8)'; g.lineWidth = 3;
+      for (let i = -H; i < W; i += 170) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i + H * 0.7, H); g.stroke(); }
+      g.beginPath(); g.arc(1500, 1398, 900, 0, 7); g.stroke();
+      p.pasteImage(c); p.setTool('fill'); // the tool switch commits the paste
+      p.S.tolerance = 10; p.S.primary = '#ff7f27';
+      const x = 1490, y = 1390, before = new Uint32Array(p.img.getContext('2d').getImageData(0, 0, W, H).data.buffer);
+      const plan = p.Core.fillPlan(before, W, H, x, y, p.Core.colorToU32('#ff7f27'), 10);
+      return { x, y, region: plan && plan.box, ok: !!plan };
+    });
+    ok(strips.ok && strips.region.y < 699 && strips.region.y + strips.region.h > 2097, 'the strip test fill spans every strip edge: ' + JSON.stringify(strips.region));
+    const sb = await page.locator('#overlay').boundingBox(), sz = await P(() => window.__paint.S.zoom);
+    await page.mouse.click(sb.x + strips.x * sz + sz / 2, sb.y + strips.y * sz + sz / 2);
+    const stripRes = await P(async ([x0, y0]) => {
+      const p = window.__paint, W = 3000, H = 2400;
+      await p.filling;
+      const fill = p.userObjs.at(-1);
+      p.undo();
+      const seen = new Uint32Array(p.img.getContext('2d').getImageData(0, 0, W, H).data.buffer);
+      p.redo();
+      const after = new Uint32Array(p.img.getContext('2d').getImageData(0, 0, W, H).data.buffer);
+      const want = p.Core.fillPlan(seen, W, H, x0, y0, after[y0 * W + x0], 10); // seen becomes the expected picture
+      let diff = 0;
+      for (let i = 0; i < after.length; i++) if (after[i] !== seen[i]) diff++;
+      return { used: p.used.fill, kind: fill.t, planned: !!want, diff };
+    }, [strips.x, strips.y]);
+    ok(stripRes.used === 'worker' && stripRes.kind === 'fill' && stripRes.planned && stripRes.diff === 0, 'a fill read back in strips equals the plan on pixels read in the page: ' + JSON.stringify(stripRes));
 
     ok(remote.length === 0, 'no requests leave the machine: ' + remote.slice(0, 3).join(' '));
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));
