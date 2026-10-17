@@ -554,6 +554,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       const v = document.querySelector('#viewport'); v.scrollLeft = v.scrollTop = 0; });
     await page.keyboard.press('KeyB'); await drag([[20, 150], [120, 120], [200, 170]]);
     await page.keyboard.press('KeyR'); await drag([[30, 30], [120, 90]]);
+    await page.keyboard.press('KeyP'); await drag([[250, 140], [290, 190], [260, 195]]);
     await page.keyboard.press('KeyT'); await page.mouse.click(...await at(150, 20)); await page.keyboard.type('Saved'); await page.keyboard.press('Enter');
     await P(() => { window.__paint.setTool('fill'); window.__paint.S.primary = '#ffc90e'; window.__paint.S.tolerance = 10; });
     await page.mouse.click(...await at(250, 100)); await P(() => window.__paint.filling); await frame(); // the background, outside the shapes
@@ -562,10 +563,10 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     const kinds = await P(() => window.__paint.userObjs.map((o) => o.t).join());
     const seen25 = await chash();
     const b64 = await P(async () => { const b = await window.__paint.encodeFor('scene.png'); const u = new Uint8Array(await b.arrayBuffer()); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); });
-    ok(kinds === 'brush,rect,text,fill,image' && Buffer.from(b64, 'base64').includes(Buffer.from('paNt')), 'the PNG carries a paNt chunk for ' + kinds);
+    ok(kinds === 'brush,rect,pencil,text,fill,image' && Buffer.from(b64, 'base64').includes(Buffer.from('paNt')), 'the PNG carries a paNt chunk for ' + kinds);
     await P(() => { const p = window.__paint; p.setTool('move'); p.selectAll && p.setTool('move'); });
     await P(() => { const p = window.__paint; p.selectMany(p.userObjs.map((o) => o.id)); }); // a group selected before opening
-    ok(await P(() => window.__paint.selList().length) === 5, 'all five selected');
+    ok(await P(() => window.__paint.selList().length) === 6, 'all six selected');
     await P(() => { window.__clip = null; navigator.clipboard.write = async (items) => { window.__clip = await items[0].getType('image/png'); }; });
     await page.keyboard.press('Meta+KeyC');
     await page.waitForFunction(() => window.__clip);
@@ -584,7 +585,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     ok(await P(() => window.__paint.selList().length) === 0, 'and nothing is selected (no stale group from before)');
     await P(() => { const p = window.__paint; p.setTool('move'); const o = p.userObjs.find((x) => x.t === 'rect'); p.selectObj(o.id); document.querySelector('#viewport').focus(); });
     await page.keyboard.press('Delete'); await frame();
-    ok(await P(() => window.__paint.userObjs.length === 4 && !window.__paint.userObjs.some((o) => o.t === 'rect')), 'and they are editable (the rectangle can be deleted on its own)');
+    ok(await P(() => window.__paint.userObjs.length === 5 && !window.__paint.userObjs.some((o) => o.t === 'rect')), 'and they are editable (the rectangle can be deleted on its own)');
     // the same picture re-encoded elsewhere: a chunk copied along no longer matches its image data
     const other = await P(async (b64) => {
       const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
@@ -713,6 +714,18 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     ok(await P(() => window.__paint.userObjs[0].a.x === 20 && window.__paint.objs[0].t === 'base'), '⌘⇧[ sends it to the back, still above the picture');
     await P(() => window.__paint.selectObj(null)); await frame();
     ok(await page.locator('[data-cmd="toFront"]').isDisabled(), 'and disabled with nothing selected');
+
+    // ---- 31. a pasted image survives a GPU context loss of its canvas (its asset keeps a CPU copy) ----
+    await P(() => { const p = window.__paint; p.newDoc(200, 150); p.S.pristine = false; const c = document.createElement('canvas'); c.width = 50; c.height = 40; const g = c.getContext('2d');
+      g.fillStyle = '#3f48cc'; g.fillRect(0, 0, 50, 40); g.fillStyle = '#ffc90e'; g.fillRect(10, 10, 20, 15); p.pasteImage(c); p.selectAll(); p.setTool('move'); });
+    await page.waitForTimeout(300); // the asset's copy is read at idle
+    const seen31 = await chash();
+    await P(() => { const o = window.__paint.userObjs.find((x) => x.t === 'image'), cv = o.asset.cv; cv.getContext('2d').clearRect(0, 0, cv.width, cv.height); window.__paint.markAll(); });
+    await frame();
+    ok(await chash() !== seen31, 'a blanked asset canvas shows as blank once repainted (the loss is real)');
+    await P(() => window.__paint.userObjs.find((x) => x.t === 'image').asset.cv.dispatchEvent(new Event('contextrestored')));
+    await frame();
+    ok(await chash() === seen31, 'after its canvas comes back blank, the image object is refilled and repainted exactly');
 
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));
   } catch (e) {

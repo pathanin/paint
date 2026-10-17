@@ -9,6 +9,7 @@ import { makeCanvas } from './dom.js';
 // then JSON (the objects, with each bitmap as an index into the blobs), then the blobs: the base and
 // each asset as a nested PNG. It also records a hash of the file's own IDAT bytes: an app that
 // re-encodes the picture (any edit elsewhere) leaves a chunk that no longer matches, so it's ignored.
+// Strokes are packed compactly (Core.packObj: pencil points as deltas, brush segments flat).
 const CHUNK = 'paNt';
 const idatHash = (u8) => {
   let h = 2166136261;
@@ -28,7 +29,7 @@ async function withScene(png, objs, nextId) {
     at.set(o.asset, blobs.length);
     blobs.push(await toPng(o.asset.cv));
   }
-  const list = objs.map((o) => (o.asset ? { ...o, asset: at.get(o.asset) } : o));
+  const list = objs.map((o) => Core.packObj(o.asset ? { ...o, asset: at.get(o.asset) } : o));
   const head = new TextEncoder().encode(JSON.stringify({ v: 1, w: base.width, h: base.height, idat: idatHash(png), nextId, objs: list, blobs: blobs.map((b) => b.length) }));
   const data = new Uint8Array(4 + head.length + blobs.reduce((n, b) => n + b.length, 0));
   new DataView(data.buffer).setUint32(0, head.length);
@@ -58,7 +59,7 @@ async function readScene(u8) {
     const assets = cvs.map((cv, k) => (k ? makeAsset(cv) : null));
     const fillOf = new Set(head.objs.filter((o) => o.t === 'fill').map((o) => o.asset));
     for (const k of fillOf) assets[k] = fillAsset(cvs[k]);
-    return { base: cvs[0], objs: head.objs.map((o) => (o.asset != null ? { ...o, asset: assets[o.asset] } : o)), nextId: head.nextId };
+    return { base: cvs[0], objs: head.objs.map((p) => { const o = Core.unpackObj(p); return o.asset != null ? { ...o, asset: assets[o.asset] } : o; }), nextId: head.nextId };
   } catch {
     return null;
   }

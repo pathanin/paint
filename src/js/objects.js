@@ -40,7 +40,7 @@ function selectMany(ids) {
 // reordered or deleted. It's replaced whenever the base canvas is (syncBase(), from doc.js).
 const BASE_Z = 'A' + '0'.repeat(26);
 const isBase = (o) => o.t === 'base';
-const baseRec = () => ({ t: 'base', id: 0, z: BASE_Z, locked: true, x: 0, y: 0, w: base.width, h: base.height, asset: makeAsset(base) });
+const baseRec = () => ({ t: 'base', id: 0, z: BASE_Z, locked: true, x: 0, y: 0, w: base.width, h: base.height, asset: { cv: base, bytes: 0 } }); // the base canvas itself: no copy (it'd be the whole picture again)
 const hasObjs = () => objs.some((o) => !isBase(o));
 function syncBase() {
   if (objs[0] && isBase(objs[0]) && objs[0].asset.cv === base) return;

@@ -873,6 +873,35 @@
     return out;
   }
 
+  // Strokes in the saved chunk (persist.js): pencil and eraser points as deltas from the previous
+  // point (small integers), brush segments as one flat array [ax, ay, cx, cy, bx, by, ...] (c: null,
+  // null). Exact both ways: the brush's float coordinates are kept as they are, not delta-coded.
+  function packObj(o) {
+    if (o.pts) {
+      const { pts, ...rest } = o, pd = pts.map((v, i) => (i < 2 ? v : v - pts[i - 2]));
+      return { ...rest, pd };
+    }
+    if (o.segs) {
+      const { segs, ...rest } = o, sg = [];
+      for (const g of segs) sg.push(g.a.x, g.a.y, g.c ? g.c.x : null, g.c ? g.c.y : null, g.b.x, g.b.y);
+      return { ...rest, sg };
+    }
+    return o;
+  }
+  function unpackObj(o) {
+    if (o.pd) {
+      const { pd, ...rest } = o, pts = [];
+      pd.forEach((d, i) => pts.push(i < 2 ? d : pts[i - 2] + d));
+      return { ...rest, pts };
+    }
+    if (o.sg) {
+      const { sg, ...rest } = o, segs = [];
+      for (let i = 0; i < sg.length; i += 6) segs.push({ a: { x: sg[i], y: sg[i + 1] }, c: sg[i + 2] == null ? null : { x: sg[i + 2], y: sg[i + 3] }, b: { x: sg[i + 4], y: sg[i + 5] } });
+      return { ...rest, segs };
+    }
+    return o;
+  }
+
   // The tiles redraw() repaints for dirty rects: every T x T grid tile of the W x H image that a rect
   // (grown to whole pixels) touches, once each, as {key, x, y, w, h} (edge tiles are clipped).
   function dirtyTiles(rects, W, H, T) {
@@ -887,7 +916,7 @@
     return [...seen.values()];
   }
 
-  const Core = { rgbaToU32, colorDistance, floodMask, fillEdge, floodFill, fillPlan, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History, zBetween, dirtyTiles, diffObjs, applyPairs, crc32, pngChunks, readChunk, withChunk,
+  const Core = { rgbaToU32, colorDistance, floodMask, fillEdge, floodFill, fillPlan, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History, zBetween, dirtyTiles, diffObjs, applyPairs, crc32, pngChunks, readChunk, withChunk, packObj, unpackObj,
     objBox, objFrame, insideShape, segsBox, drawnObj, hitsObject, hitObject, objHandles, handleAt, resizeObj, moveObj, transformObj, scaleObj };
   module.exports = Core;
 })();

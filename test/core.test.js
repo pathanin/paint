@@ -1016,3 +1016,16 @@ test('PNG chunks: crc32, read, and a private chunk spliced in before IEND (repla
   assert.deepEqual([...Core.readChunk(b, 'paNt')], [1]);
   assert.equal(Core.pngChunks(new Uint8Array([1, 2, 3])), null); // not a PNG
 });
+
+test('packObj / unpackObj: strokes stored compactly for the saved chunk, and restored exactly', () => {
+  const pen = { t: 'pencil', id: 3, z: 'a1', pts: [100, 200, 101, 205, 90, 190, 90, 190], size: 3, color: '#000' };
+  const pp = Core.packObj(pen);
+  assert.ok(!pp.pts && Array.isArray(pp.pd) && pp.pd.slice(2).every((d) => Math.abs(d) < 20), 'pencil points as deltas');
+  assert.deepEqual(Core.unpackObj(JSON.parse(JSON.stringify(pp))), pen);
+  const br = { t: 'brush', id: 4, z: 'a2', size: 6, color: '#123', segs: [{ a: { x: 1.123456789, y: 2.5 }, c: null, b: { x: 3.25, y: 4 } }, { a: { x: 3.25, y: 4 }, c: { x: 5.1, y: 6.2 }, b: { x: 7.0000001, y: 8 } }] };
+  const bp = Core.packObj(br);
+  assert.ok(!bp.segs && Array.isArray(bp.sg), 'brush segments flattened');
+  assert.deepEqual(Core.unpackObj(JSON.parse(JSON.stringify(bp))), br);
+  const r = { t: 'rect', id: 5, z: 'a3', a: { x: 1, y: 2 }, b: { x: 3, y: 4 }, size: 2 };
+  assert.deepEqual(Core.unpackObj(Core.packObj(r)), r);
+});

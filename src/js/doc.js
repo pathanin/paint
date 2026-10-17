@@ -5,6 +5,7 @@ import { commitSelection } from './selection.js';
 import { S, drag, sel, setDrag, setSel } from './state.js';
 import { commitText } from './text.js';
 import { gpuLost } from './gpu.js';
+import { turned } from './transforms.js';
 import { markAll } from './scene.js';
 import { flash } from './toast.js';
 import { fitZoom, layout, requestRender, updateChrome } from './view.js';
@@ -67,6 +68,15 @@ function docOp(next, map) {
   const objsBefore = map ? mapObjs(map, base.width, base.height) : null;
   pushDocHist(before, objsBefore);
 }
+// A turn or flip: like docOp, but the entry keeps no canvas; it records how to turn the picture back.
+const INVERSE = { rotR: 'rotL', rotL: 'rotR', flipH: 'flipH', flipV: 'flipV' };
+function turnDoc(next, map, kind) {
+  commitText();
+  commitSelection();
+  setDoc(next);
+  const objsBefore = map ? mapObjs(map, base.width, base.height) : null;
+  pushHist({ type: 'turn', kind: INVERSE[kind], bytes: 64, ...(objsBefore && { objs: objsBefore }) });
+}
 const pushDocHist = (before, objs) => pushHist({ type: 'doc', canvas: before, bytes: before.width * before.height * 4, ...(objs && { objs }) });
 function pushHist(e) {
   if (hist.push(e) && !S.trimWarned) {
@@ -80,7 +90,10 @@ function pushHist(e) {
 // the redo stack); applying it swaps them with what's on the canvas, so one copy serves both ways.
 function applyHist(e) {
   applyObjHist(e); // obj entries, a flatten's region entry, and a crop/resize/rotate/flip's doc entry
-  if (e.type === 'doc') {
+  if (e.type === 'turn') { // turn the picture back (exact for 90° turns and flips); next time, forward
+    setDoc(turned(e.kind));
+    e.kind = INVERSE[e.kind];
+  } else if (e.type === 'doc') {
     const other = e.canvas;
     e.canvas = base;
     setDoc(other);
@@ -115,4 +128,4 @@ function newDoc(w, h) {
   updateChrome();
 }
 
-export { base, bctx, ctx, docOp, hist, img, newDoc, pushDocHist, pushHist, redo, setDoc, undo };
+export { base, bctx, ctx, docOp, turnDoc, hist, img, newDoc, pushDocHist, pushHist, redo, setDoc, undo };

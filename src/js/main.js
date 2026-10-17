@@ -12,7 +12,7 @@ import './tools.js';
 import './fill.js';
 import './objects.js';
 import './scene.js';
-import './assets.js';
+import { onRestored } from './assets.js';
 import './persist.js';
 import './text.js';
 import './selection.js';
@@ -65,6 +65,7 @@ setColor('secondary', S.secondary);
 $('#stIntro').textContent = `Draw, or drop or paste an image · ${keyLabel('⌘O')} opens a file`;
 newDoc(800, 600);
 setTool('pencil');
+onRestored(markAll); // a bitmap asset came back from a context loss: repaint the scene
 if (window.launchQueue) window.launchQueue.setConsumer(openLaunched);
 window.addEventListener('load', setUpPwa, { once: true });
 

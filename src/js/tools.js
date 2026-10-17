@@ -100,7 +100,7 @@ function segsIn(o, r) {
 }
 const segsBox = Core.segsBox;
 // Text, images and fills draw at (x, y) through m.
-function drawFramed(c, o) {
+function drawFramed(c, o, r) {
   c.save();
   const m = o.m || [1, 0, 0, 1];
   c.transform(m[0], m[1], m[2], m[3], o.x, o.y);
@@ -110,12 +110,21 @@ function drawFramed(c, o) {
     c.textBaseline = 'alphabetic';
     o.lines.forEach((ln, i) => c.fillText(ln, 0, i * o.fs * 1.2 + o.base));
   } else {
-    if (o.asset.maskCv) { // a fill that isn't opaque everywhere replaces its pixels: clear them first
+    const bd = o.asset.banded;
+    if (bd && r) { // a tile: only the bands (in the fill's own rows, through m) that it overlaps
+      const m = o.m || [1, 0, 0, 1], det = m[0] * m[3] - m[1] * m[2], ys = [];
+      for (const [px, py] of [[r.x, r.y], [r.x + r.w, r.y], [r.x, r.y + r.h], [r.x + r.w, r.y + r.h]]) ys.push((-m[1] * (px - o.x) + m[0] * (py - o.y)) / det);
+      for (let k = Math.floor(Math.min(...ys) / 256); k * 256 < Math.max(...ys); k++) {
+        const b = bd.bands.get(k);
+        if (b) for (const [col, p] of b) { c.fillStyle = col || bd.color; c.fill(p); }
+      }
+    } else if (o.asset.paths) for (const [col, p] of o.asset.paths) { c.fillStyle = col; c.fill(p); }
+    else if (o.asset.maskCv) { // a fill that isn't opaque everywhere replaces its pixels: clear them first
       c.globalCompositeOperation = 'destination-out';
       c.drawImage(o.asset.maskCv, 0, 0);
       c.globalCompositeOperation = 'source-over';
     }
-    c.drawImage(o.asset.cv, 0, 0);
+    if (!o.asset.paths) c.drawImage(o.asset.cv, 0, 0);
   }
   c.restore();
 }
@@ -140,7 +149,7 @@ function drawShape(c, d) { const o = shapeObj(d); drawObj(c, o); return Core.obj
 function drawObj(c, o, r) {
   if (o.t === 'pencil' || o.t === 'eraser') { drawStamps(c, o, r); return; }
   if (o.t === 'brush') { brushPath(c, segsIn(o, r), o.color, o.size); return; }
-  if (o.t === 'text' || o.t === 'image' || o.t === 'fill') { drawFramed(c, o); return; }
+  if (o.t === 'text' || o.t === 'image' || o.t === 'fill') { drawFramed(c, o, r); return; }
   const a = o.a, b = o.b, lw = o.size, off = lw % 2 ? 0.5 : 0;
   c.save();
   c.lineWidth = lw;
