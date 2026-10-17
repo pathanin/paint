@@ -1,11 +1,10 @@
 import Core from './core.js';
 import { base, docOp, img, setDoc } from './doc.js';
 import { $, clamp, cloneCanvas, makeCanvas, vp } from './dom.js';
-import { composite, deleteObj, selObj, selectObj } from './objects.js';
+import { composite, deleteObj, objs, selObj, selectObj } from './objects.js';
 import { deleteSelection, dropSelection } from './selection.js';
 import { S, sel, setSel, sizeProblem } from './state.js';
 import { commitText } from './text.js';
-import { beginOp } from './tiles.js';
 import { errText, flash } from './toast.js';
 import { drawObj, setTool } from './tools.js';
 import { fitZoom, requestRender, updateChrome } from './view.js';
@@ -66,8 +65,7 @@ function pasteImage(bmp) {
   const x = clamp(Math.floor((v.left - r.left) / S.zoom), 0, img.width - bmp.width);
   const y = clamp(Math.floor((v.top - r.top) / S.zoom), 0, img.height - bmp.height);
   setTool('select');
-  beginOp();
-  setSel({ x, y, w: bmp.width, h: bmp.height, float: cloneCanvas(bmp), growFrom });
+  setSel({ x, y, w: bmp.width, h: bmp.height, float: cloneCanvas(bmp), growFrom, before: objs });
   updateChrome();
   requestRender();
 }

@@ -2,6 +2,7 @@ import Core from './core.js';
 import { base, bctx, hist, pushHist } from './doc.js';
 import { makeCanvas } from './dom.js';
 import { markDirty } from './scene.js';
+import { unlift } from './selection.js';
 import { drag, sel, setSel } from './state.js';
 import { flash } from './toast.js';
 import { requestRender, updateChrome } from './view.js';
@@ -171,10 +172,8 @@ function flushToData() { const all = [...pendingParts].filter((p) => p.cv); pend
 function gpuLost() {
   const onGpu = (e) => e.type === 'doc' || (e.type === 'region' && e.parts.some((p) => p.cv));
   let n = hist.dropLost(onGpu);
-  if (op && [...op.tiles.values()].some((t) => t.cv)) {
-    dropOp(); n++;
-    if (sel && sel.float) setSel(null);
-  }
+  if (op && [...op.tiles.values()].some((t) => t.cv)) { dropOp(); n++; }
+  if (sel && sel.float) { unlift(); setSel(null); n++; } // its canvas came back blank
   pendingParts.clear();
   if (!n) return;
   flash('Graphics were reset; some undo steps were lost');

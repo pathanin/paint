@@ -26,7 +26,8 @@ function install(next, pairs) {
 // History entries hold diffs, not lists (Core.diffObjs / applyPairs), so an entry's size is per
 // object changed, not per object in the scene.
 const { diffObjs, applyPairs } = Core;
-const pairBytes = (n) => 64 + 64 * n;
+// An entry costs ~64 bytes per object changed, plus the bitmap of any asset it brings in.
+const pairBytes = (pairs) => pairs.reduce((b, [n, t]) => b + 64 + (n && n.asset && (!t || t.asset !== n.asset) ? n.asset.bytes : 0), 64);
 // Replace the object list as one undo step. Edits that arrive as a stream (held arrows, a colour
 // well being dragged, [ and ]) pass a key: while the newest entry is the one pushed with that key,
 // they fold into it, so a gesture is one step and can't push other history out. Not on the save
@@ -47,7 +48,7 @@ function setObjs(next, key, known) {
     requestRender();
     return;
   }
-  const entry = { type: 'obj', pairs, bytes: pairBytes(pairs.length) };
+  const entry = { type: 'obj', pairs, bytes: pairBytes(pairs) };
   pushHist(entry);
   objRun = key ? { key, entry } : null;
   install(next, pairs);
@@ -89,7 +90,7 @@ function commitObjDrag(before) {
   const pairs = diffObjs(before, objs);
   if (!pairs.length) return;
   objRun = null;
-  pushHist({ type: 'obj', pairs, bytes: pairBytes(pairs.length) });
+  pushHist({ type: 'obj', pairs, bytes: pairBytes(pairs) });
 }
 const withObj = (o) => objs.map((x) => (x.id === o.id ? o : x));
 // A new object goes on top, selected (opt.keepSel: a stroke leaves the selection as it was).
@@ -172,4 +173,4 @@ function composite() {
   return img;
 }
 
-export { addObj, applyObjHist, commitObjDrag, composite, cycleObj, deleteObj, duplicateObj, flattenObjs, mapObjs, newObjId, nudgeObj, objs, objSel, objVer, reorderObj, resetObjs, restyleObj, selectObj, selObj, showObjs, zAbove };
+export { addObj, applyObjHist, commitObjDrag, composite, cycleObj, deleteObj, duplicateObj, flattenObjs, mapObjs, newObjId, nudgeObj, objs, objSel, objVer, reorderObj, resetObjs, restyleObj, selectObj, selObj, setObjs, showObjs, zAbove };

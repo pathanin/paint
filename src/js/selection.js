@@ -1,42 +1,55 @@
 import Core from './core.js';
-import { base, bctx, docOp, img, pushDocHist } from './doc.js';
+import { base, docOp, img, pushDocHist } from './doc.js';
 import { makeCanvas } from './dom.js';
-import { selectObj } from './objects.js';
+import { makeAsset } from './assets.js';
+import { composite, newObjId, objs, selectObj, setObjs, showObjs } from './objects.js';
 import { S, sel, setSel } from './state.js';
 import { commitText } from './text.js';
-import { beginOp, dropOp, endOp, touch } from './tiles.js';
 import { flash } from './toast.js';
 import { setTool } from './tools.js';
 import { requestRender, updateChrome } from './view.js';
 
 // ---------- selection ----------
 const inside = (p, r) => p.x >= r.x && p.y >= r.y && p.x < r.x + r.w && p.y < r.y + r.h;
+// A colour-2 rectangle over r: what a lift leaves behind and what Delete paints (decision 7a). A
+// filled rect on whole pixels (even width, so no half-pixel offset): crisp, the same as fillRect.
+const patchObj = (r) => ({ t: 'rect', a: { x: r.x, y: r.y }, b: { x: r.x + r.w, y: r.y + r.h }, color: S.secondary, alt: S.secondary, size: 2, mode: 'fill' });
+// Lift what is seen under the selection into a float, leaving a colour-2 patch object (shown at once,
+// recorded with the float's commit as one undo step).
 function liftSelection() {
-  beginOp();
   const f = makeCanvas(sel.w, sel.h);
-  f.getContext('2d').drawImage(base, sel.x, sel.y, sel.w, sel.h, 0, 0, sel.w, sel.h);
-  touch(sel.x, sel.y, sel.w, sel.h);
-  bctx.fillStyle = S.secondary;
-  bctx.fillRect(sel.x, sel.y, sel.w, sel.h);
+  f.getContext('2d').drawImage(composite(), sel.x, sel.y, sel.w, sel.h, 0, 0, sel.w, sel.h);
+  sel.before = objs;
+  const patch = { ...patchObj(sel), id: newObjId(), z: Core.zBetween(objs.length ? objs[objs.length - 1].z : null, null) };
+  showObjs(objs.concat(patch));
   sel.float = f;
   updateChrome();
 }
+// Commit a float: it becomes an image object on top (docs/objects.md, item 10), in one undo step
+// with its lift's patch. A paste that grew the canvas becomes one whole-document step (original
+// canvas and objects -> grown + pasted), so a single undo reverts both.
 function commitSelection() {
   if (!sel || !sel.float) return;
-  touch(sel.x, sel.y, sel.w, sel.h);
-  bctx.drawImage(sel.float, sel.x, sel.y);
+  const img2 = { t: 'image', x: sel.x, y: sel.y, w: sel.w, h: sel.h, asset: makeAsset(sel.float) };
   sel.float = null;
-  finishFloat();
+  finishFloat([img2]);
   requestRender();
 }
-// Close the undo step of a floating selection. A paste that grew the canvas becomes one
-// whole-document step (original canvas -> grown + pasted), so a single undo reverts both.
-function finishFloat() {
-  if (!sel.growFrom) { endOp(); return; }
-  const before = sel.growFrom;
-  sel.growFrom = null;
-  dropOp();
-  pushDocHist(before);
+function finishFloat(add) {
+  const before = sel.before || objs, now = objs;
+  let top = now.length ? now[now.length - 1].z : null;
+  const extra = add.map((o) => { top = Core.zBetween(top, null); return { ...o, id: newObjId(), z: top }; });
+  const next = now.concat(extra);
+  sel.before = null;
+  if (sel.growFrom) {
+    const from = sel.growFrom;
+    sel.growFrom = null;
+    showObjs(next);
+    pushDocHist(from, before);
+    return;
+  }
+  showObjs(before); // the patch was only shown: record lift + commit from the list before it
+  if (next !== before) setObjs(next);
 }
 function dropSelection() {
   commitSelection();
@@ -44,16 +57,16 @@ function dropSelection() {
 }
 function deleteSelection() {
   if (!sel) return;
-  if (sel.float) { sel.float = null; finishFloat(); }
-  else {
-    beginOp();
-    touch(sel.x, sel.y, sel.w, sel.h);
-    bctx.fillStyle = S.secondary;
-    bctx.fillRect(sel.x, sel.y, sel.w, sel.h);
-    endOp();
-  }
+  if (sel.float) { sel.float = null; finishFloat([]); } // a lift: just its patch; a paste: nothing
+  else setObjs(objs.concat({ ...patchObj(sel), id: newObjId(), z: Core.zBetween(objs.length ? objs[objs.length - 1].z : null, null) }));
   setSel(null);
   requestRender();
+}
+// Esc during the drag that lifted it: take the patch away again, no history entry.
+function unlift() {
+  if (sel.before) showObjs(sel.before);
+  sel.before = null;
+  sel.float = null;
 }
 function selectAll() {
   commitText();
@@ -79,4 +92,4 @@ function crop() {
   docOp(c, (o) => Core.moveObj(o, -r.x, -r.y));
 }
 
-export { commitSelection, crop, deleteSelection, dropSelection, inside, liftSelection, nudge, selectAll };
+export { commitSelection, crop, deleteSelection, dropSelection, inside, liftSelection, nudge, selectAll, unlift };

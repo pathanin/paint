@@ -12,6 +12,7 @@ import './tools.js';
 import './fill.js';
 import './objects.js';
 import './scene.js';
+import './assets.js';
 import './text.js';
 import './selection.js';
 import './clipboard.js';

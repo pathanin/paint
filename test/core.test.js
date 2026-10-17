@@ -983,7 +983,7 @@ test('stroke, text and bitmap objects: boxes, hit tests, moves, turns and flips'
   assert.deepEqual(Core.objBox(r), { x: 40, y: 5, w: 4, h: 10 });
   assert.ok(Core.hitsObject(r, { x: 42, y: 14 }, 0) && !Core.hitsObject(r, { x: 46, y: 14 }, 0));
   assert.deepEqual(Core.objBox(four(im)), Core.objBox(im));
-  const fl = { t: 'fill', x: 0, y: 0, w: 2, h: 1, asset: { mask: new Uint8Array([1, 0]) } };
+  const fl = { t: 'fill', x: 0, y: 0, w: 2, h: 1, asset: { bits: new Uint8Array([1]) } };
   assert.ok(Core.hitsObject(fl, { x: 0.5, y: 0.5 }, 0) && !Core.hitsObject(fl, { x: 1.5, y: 0.5 }, 0), 'a fill hits only its own pixels');
   const tx = { t: 'text', x: 10, y: 10, lines: ['ab'], fs: 20, w: 30, base: 18, color: '#000', font: 'x' };
   assert.deepEqual(Core.objBox(tx), { x: 0, y: 0, w: 50, h: 44 });

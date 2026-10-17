@@ -493,6 +493,60 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     }), 'the R-tree hit test agrees with a linear scan, topmost first');
     ok(await P(() => { const p = window.__paint; for (let i = 1; i < p.objs.length; i++) if (!(p.objs[i - 1].z < p.objs[i].z)) return false; return true; }), 'the object list stays in z-key order');
 
+    // ---- 24. text, pasted images and the select tool make objects (docs/total-objects.md, Phase 2) ----
+    await P(() => { const p = window.__paint; p.newDoc(300, 200); p.setZoom(2); p.S.pristine = false; p.S.primary = '#000000'; p.S.fontSize = 24;
+      const v = document.querySelector('#viewport'); v.scrollLeft = v.scrollTop = 0; });
+    await frame();
+    await page.keyboard.press('KeyT');
+    await page.mouse.click(...await at(20, 20));
+    await page.keyboard.type('Hello');
+    await page.keyboard.press('Enter');
+    await frame();
+    let tx = await P(() => window.__paint.objs.map((o) => ({ t: o.t, lines: o.lines, id: o.id })));
+    ok(tx.length === 1 && tx[0].t === 'text' && tx[0].lines[0] === 'Hello' && await hash() === await P(() => { const c = document.createElement('canvas'); c.width = 300; c.height = 200; const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, 300, 200); const d = g.getImageData(0, 0, 300, 200).data; let h = 2166136261; for (let i = 0; i < d.length; i++) h = Math.imul(h ^ d[i], 16777619); return `300x200:${h >>> 0}`; }) && !isWhite(await seen(25, 35)),
+      'typed text becomes a text object (shown, not in the pixels)');
+    const seenText = await chash();
+    await page.mouse.click(...await at(30, 30)); // the text tool on that text: edit it again
+    ok(await P(() => !document.querySelector('#textInput').hidden && document.querySelector('#textInput').value === 'Hello' && window.__paint.objs.length === 0),
+      'clicking it with the text tool reopens it (hidden from the canvas while editing)');
+    await page.keyboard.press('End'); await page.keyboard.type(' you');
+    await page.keyboard.press('Enter');
+    await frame();
+    tx = await P(() => window.__paint.objs.map((o) => ({ t: o.t, lines: o.lines, id: o.id })));
+    ok(tx.length === 1 && tx[0].lines[0] === 'Hello you' && tx[0].id === (await P(() => window.__paint.hist.top().pairs[0][1].id)), 'Enter replaces it: same object, one undo step');
+    await page.keyboard.press('Meta+KeyZ'); await frame();
+    ok(await P(() => window.__paint.objs.length === 1 && window.__paint.objs[0].lines[0] === 'Hello') && await chash() === seenText, 'one undo brings the old text back exactly');
+    await page.mouse.click(...await at(30, 30)); await page.keyboard.press('Escape'); await frame();
+    ok(await P(() => window.__paint.objs.length === 1 && window.__paint.objs[0].lines[0] === 'Hello') && await chash() === seenText, 'Esc while editing it puts it back unchanged');
+    // a paste: a float, then an image object; the Move tool moves it; undo removes it
+    await P(() => { const c = document.createElement('canvas'); c.width = 40; c.height = 30; const g = c.getContext('2d'); g.fillStyle = '#ed1c24'; g.fillRect(0, 0, 40, 30); window.__paint.pasteImage(c); });
+    await P(() => { window.__paint.selectAll(); window.__paint.setTool('move'); }); // commits the float
+    await frame();
+    let im = await P(() => window.__paint.objs.filter((o) => o.t === 'image').map((o) => [o.x, o.y, o.w, o.h]));
+    ok(im.length === 1 && im[0][2] === 40 && isWhite(await pixel(im[0][0] + 5, im[0][1] + 5)) && !isWhite(await seen(im[0][0] + 5, im[0][1] + 5)), 'a committed paste is an image object: ' + JSON.stringify(im));
+    await drag([[im[0][0] + 20, im[0][1] + 15], [im[0][0] + 120, im[0][1] + 95]]);
+    const im2 = await P(() => window.__paint.objs.filter((o) => o.t === 'image').map((o) => [o.x, o.y]));
+    ok(im2[0][0] === im[0][0] + 100 && im2[0][1] === im[0][1] + 80 && isWhite(await seen(im[0][0] + 5, im[0][1] + 5)), 'the Move tool moves the pasted image later');
+    await page.keyboard.press('Meta+KeyZ'); await page.keyboard.press('Meta+KeyZ'); await frame();
+    ok(await P(() => window.__paint.objs.length === 1) && await chash() === seenText, 'undo moves it back, then removes it');
+    // the select tool: a lift leaves a colour-2 patch object and commits an image object, one step
+    await P(() => { window.__paint.S.secondary = '#ffc90e'; });
+    const dS = await depth();
+    await page.keyboard.press('KeyS');
+    await drag([[10, 10], [80, 50]]);
+    await drag([[20, 20], [140, 120]]);
+    await page.keyboard.press('Escape'); await frame();
+    const ks = await P(() => window.__paint.objs.map((o) => o.t + (o.t === 'rect' ? ':' + o.color + ':' + o.mode : '')));
+    ok(ks.join() === 'text,rect:#ffc90e:fill,image' && await depth() === dS + 1, 'lift + move + commit: a colour-2 patch and an image object, in one undo step: ' + ks.join());
+    ok(isWhite(await pixel(15, 15)), 'and the pixels underneath are untouched');
+    await page.keyboard.press('Meta+KeyZ'); await frame();
+    ok(await chash() === seenText, 'one undo takes back the whole move');
+    await drag([[100, 100], [150, 150]]);
+    const sr = await P(() => { const q = window.__paint.sel; return q && [q.x, q.y, q.w, q.h]; });
+    await page.keyboard.press('Delete'); await frame();
+    ok(sr && await P((r) => { const p = window.__paint, o = p.objs[p.objs.length - 1]; return !p.sel && o.t === 'rect' && o.mode === 'fill' && o.color === '#ffc90e' && o.a.x === r[0] && o.a.y === r[1] && o.b.x === r[0] + r[2] && o.b.y === r[1] + r[3]; }, sr),
+      'Delete clears the selection with a colour-2 patch object over exactly the selection');
+
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));
   } catch (e) {
     fails++; console.log('FAIL: threw', e);

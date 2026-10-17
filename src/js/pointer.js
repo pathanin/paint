@@ -5,10 +5,9 @@ import { doFill } from './fill.js';
 import { endCanvasDrag } from './handles.js';
 import { addObj, commitObjDrag, newObjId, objSel, objs, selObj, selectObj, showObjs, zAbove } from './objects.js';
 import { endLive, flushRedraw, hitAt, markDirty, setLive } from './scene.js';
-import { dropSelection, inside, liftSelection } from './selection.js';
+import { dropSelection, inside, liftSelection, unlift } from './selection.js';
 import { S, SHAPES, drag, sel, setDrag, setSel } from './state.js';
 import { commitText, startText } from './text.js';
-import { dropOp } from './tiles.js';
 import { pick, shapeObj } from './tools.js';
 import { imgPt, requestRender, setCursor, setHover, setZoom, updateChrome, updateStatus } from './view.js';
 
@@ -105,7 +104,11 @@ ov.addEventListener('pointerdown', (e) => {
     case 'line': case 'rect': case 'ellipse':
       setDrag({ t, start: ip, end: ip, shift: e.shiftKey, color, alt });
       break;
-    case 'text': startText(ip, color); break;
+    case 'text': { // on a text object: edit it again
+      const hit = hitAt(p, objTol());
+      startText(ip, color, hit && hit.t === 'text' ? hit : null);
+      break;
+    }
     case 'move': break; // right button: nothing
     case 'select': {
       const rp = { x: clamp(Math.round(p.x), 0, img.width), y: clamp(Math.round(p.y), 0, img.height) };
@@ -202,10 +205,7 @@ function cancelDrag() {
   setDrag(null);
   if (d.t === 'objmove' || d.t === 'objsize') showObjs(d.before, d.src.id);
   if (d.t === 'move' && sel) {
-    if (d.lifted) { // undo the lift this drag made: restore the pixels, drop the float, no history entry
-      dropOp(true);
-      sel.float = null;
-    }
+    if (d.lifted) unlift(); // undo the lift this drag made: no patch, no float, no history entry
     sel.x = d.ox; sel.y = d.oy;
     updateChrome();
   }

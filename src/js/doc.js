@@ -1,6 +1,5 @@
 import Core from './core.js';
 import { $ } from './dom.js';
-import { applyFill } from './fill.js';
 import { applyObjHist, mapObjs, resetObjs } from './objects.js';
 import { commitSelection } from './selection.js';
 import { S, drag, sel, setDrag, setSel } from './state.js';
@@ -83,7 +82,6 @@ function pushHist(e) {
 function applyHist(e) {
   applyObjHist(e); // obj entries, a flatten's region entry, and a crop/resize/rotate/flip's doc entry
   if (e.type === 'region') swapParts(e.parts);
-  else if (e.type === 'fill') applyFill(e);
   else if (e.type === 'doc') {
     const other = e.canvas;
     e.canvas = base;

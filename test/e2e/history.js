@@ -183,8 +183,8 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     const f0 = await hash();
     await drag('select', [[100, 100], [600, 500]]);
     await drag('select', [[300, 300], [450, 380]]); // lift and move: the op stays open under the float
-    ok(await P(() => !!(window.__paint.op && window.__paint.sel && window.__paint.sel.float)), 'moved selection floats with its op open');
-    ok(await pending() > 0, 'the open op\'s tiles are queued for readback');
+    ok(await P(() => { const p = window.__paint, o = p.objs[p.objs.length - 1]; return !p.op && !!(p.sel && p.sel.float) && o.t === 'rect' && o.mode === 'fill' && o.a.x === 100 && o.b.y === 500; }),
+      'a moved selection floats; the lift left a colour-2 patch object, with no undo tiles');
     await page.waitForTimeout(2500);
     ok(await pending() === 0, 'idle readback drains an open op\'s tiles while the float stays up');
     await drag('select', [[950, 650], [960, 660]]); // commits the float
@@ -227,7 +227,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await drag('select', [[150, 150], [400, 420]]);
     await P(() => window.__paint.base.dispatchEvent(new Event('contextlost')));
     await frame();
-    ok(await P(() => !window.__paint.op && !window.__paint.sel), 'context loss abandons a float whose op was on the GPU');
+    ok(await P(() => !window.__paint.op && !window.__paint.sel && !window.__paint.objs.some((o) => o.t === 'rect' && o.a.x === 150 && o.b.x === 400)), 'context loss abandons a float (its canvas is blank) and its patch');
     // #image is only a cache: when its context comes back (blank), the scene is repainted into it
     {
       const before = await hash();

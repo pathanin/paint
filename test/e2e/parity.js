@@ -157,13 +157,19 @@ function diff(a, b) {
   if (a.w !== b.w || a.h !== b.h) return { size: true, msg: `${a.w}x${a.h} vs ${b.w}x${b.h}` };
   if (a.b64 === b.b64) return null;
   const pa = Buffer.from(a.b64, 'base64'), pb = Buffer.from(b.b64, 'base64');
-  let n = 0, worst = 0, first = null;
+  let n = 0, worst = 0, first = null, at = null, inkA = 0, inkB = 0;
+  for (let i = 0; i < pa.length; i++) if ((i & 3) !== 3) { inkA += 255 - pa[i]; inkB += 255 - pb[i]; }
   for (let i = 0; i < pa.length; i += 4) {
     let d = 0;
     for (let k = 0; k < 4; k++) d = Math.max(d, Math.abs(pa[i + k] - pb[i + k]));
-    if (d) { n++; worst = Math.max(worst, d); if (!first) first = [(i / 4) % a.w, Math.floor(i / 4 / a.w)]; }
+    if (d) {
+      n++;
+      if (!first) first = [(i / 4) % a.w, Math.floor(i / 4 / a.w)];
+      if (d > worst) { worst = d; at = `${(i / 4) % a.w},${Math.floor(i / 4 / a.w)} (${[...pa.subarray(i, i + 4)]} vs ${[...pb.subarray(i, i + 4)]})`; }
+    }
   }
-  return { size: false, n, worst, msg: `${n} px differ, worst channel ${worst}, first at ${first}` };
+  const ink = Math.abs(inkA - inkB) / Math.max(1, inkA);
+  return { size: false, n, worst, ink, msg: `${n} px differ, ink ${(ink * 100).toFixed(2)}% apart, worst channel ${worst} at ${at}, first at ${first}` };
 }
 
 (async () => {
@@ -183,12 +189,14 @@ function diff(a, b) {
         if (await A.records() !== await B.records()) bad.push('object records differ');
       }
       // What is seen: equal, or within anti-aliasing. Chrome's GPU canvas anti-aliases a path differently
-      // depending on what else is in its batch (task.md, Phase 0), so a composite with path objects can't
-      // match another build's bit for bit. Tolerance as for turned shapes in objects.js: no channel off by
-      // half the range, and at most 0.5% of the pixels differ.
+      // depending on what else is in its batch (task.md, Phase 0): once a batch switches to multisampling,
+      // an edge pixel of a 5 px ellipse comes out 58 instead of 200. So a composite with path objects can't
+      // match another build's bit for bit, nor within a fixed channel limit. Edges only, then: at most 1% of
+      // the pixels differ, and the total ink agrees within 0.5%. A mark missing, doubled or a pixel off
+      // fails both (a 1 px shift of one shape moves its whole outline).
       const ca = await A.grab('composite'), cb = await B.grab('composite');
       const d = diff(ca, cb);
-      if (d && (d.size || d.worst >= 128 || d.n > 0.005 * ca.w * ca.h)) bad.push('composite ' + d.msg);
+      if (d && (d.size || d.n > 0.01 * ca.w * ca.h || d.ink > 0.005)) bad.push('composite ' + d.msg);
       else if (d) notes.push('composite within anti-aliasing: ' + d.msg);
       if (bad.length) { fails++; console.log('FAIL: ', name, '-', bad.join('; ')); }
       else console.log(notes.length ? 'aa    ' : 'same  ', name, notes.length ? '- ' + notes.join('; ') : '');

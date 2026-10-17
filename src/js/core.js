@@ -492,7 +492,7 @@
   //  - brush: {segs: [{a, c, b}] (Core.Stroke segments; c null for a straight one), color, size};
   //  - text: {x, y, lines, font, fs, color, base (px from a line's top to its baseline), w};
   //  - image, fill: {x, y, w, h, asset} (a canvas held by asset.cv; a fill's asset also keeps its
-  //    mask for hit tests).
+  //    region's bitset, bits, for hit tests).
   //  text, image and fill may carry m = [a, b, c, d], a linear map about (x, y) (rotate, flip, scale).
   const STROKES = new Set(['pencil', 'eraser', 'brush']), SHAPE_KINDS = new Set(['line', 'rect', 'ellipse']);
   // The content rect of a text, image or fill before m: (x, y) is its origin.
@@ -593,10 +593,11 @@
     const u = (m[3] * dx - m[2] * dy) / det, v = (-m[1] * dx + m[0] * dy) / det;
     const f = frameSize(o), t = tol / Math.sqrt(Math.abs(det));
     if (u < f.x - t || v < f.y - t || u > f.x + f.w + t || v > f.y + f.h + t) return false;
-    if (o.t !== 'fill' || !o.asset.mask) return true;
+    if (o.t !== 'fill' || !o.asset.bits) return true;
     const x = Math.floor(u), y = Math.floor(v);
     if (x < 0 || y < 0 || x >= o.w || y >= o.h) return true; // the tolerance band around it
-    return !!o.asset.mask[y * o.w + x];
+    const k = y * o.w + x;
+    return !!(o.asset.bits[k >> 3] & (1 << (k & 7))); // the filled region (its soft edge is next to it)
   }
   // Index of the topmost object (the list runs bottom to top) at p, or -1.
   function hitObject(objs, p, tol) {

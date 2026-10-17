@@ -1,7 +1,7 @@
 import { bctx as ctx } from './doc.js';
+import { addObj, objs, setObjs, showObjs } from './objects.js';
 import { $, stage, textBox } from './dom.js';
 import { S } from './state.js';
-import { beginOp, endOp, touch } from './tiles.js';
 import { updateChrome } from './view.js';
 
 // ---------- text ----------
@@ -15,9 +15,20 @@ function placeTextBox() {
     color: textAt.color,
   });
 }
-function startText(p, color) {
-  textAt = { x: p.x, y: p.y, color };
+// o: a text object to edit again (the text tool clicked it). It is hidden while the box is open, and
+// committing replaces it in one undo step.
+function startText(p, color, o) {
+  textAt = { x: p.x, y: p.y, color, o: null };
   textBox.value = '';
+  if (o && !o.m) {
+    textAt = { x: o.x, y: o.y, color: o.color, o, before: objs };
+    S.font = o.font; S.fontSize = o.fs;
+    const f = $('#font'), fs = $('#fontSize');
+    if (f) f.value = o.font;
+    if (fs) fs.value = o.fs;
+    textBox.value = o.lines.join('\n');
+    showObjs(objs.filter((x) => x !== o));
+  }
   textBox.hidden = false;
   placeTextBox();
   textBox.focus(); // the overlay's mousedown default is suppressed, so focus sticks immediately
@@ -48,21 +59,21 @@ function commitText() {
   $('#stIntro').hidden = !S.pristine;
   const lines = textBox.value.split('\n');
   textBox.value = '';
-  if (!lines.join('').trim()) return;
-  const fs = S.fontSize, lh = fs * 1.2;
-  const base = textBaseline(fs);
-  beginOp();
+  const empty = !lines.join('').trim();
+  if (t.o) showObjs(t.before); // put the edited one back, so the change below is one diff from it
+  if (empty) { if (t.o) setObjs(objs.filter((x) => x.id !== t.o.id)); return; }
+  const fs = S.fontSize;
   ctx.save();
   ctx.font = `${fs}px ${S.font}`;
-  ctx.fillStyle = t.color;
-  ctx.textBaseline = 'alphabetic';
   const w = lines.reduce((m, ln) => Math.max(m, ctx.measureText(ln).width), 0); // not Math.max(...): huge pastes overflow the stack
-  touch(t.x - fs / 2, t.y - fs / 2, w + fs, lines.length * lh + fs);
-  lines.forEach((ln, i) => ctx.fillText(ln, t.x, t.y + i * lh + base));
   ctx.restore();
-  endOp();
+  // The baseline is measured now and kept, so a repaint at another zoom draws the text in place.
+  const o = { t: 'text', x: t.x, y: t.y, lines, font: S.font, fs, color: t.color, base: textBaseline(fs), w };
+  if (t.o) setObjs(objs.map((x) => (x.id === t.o.id ? { ...o, id: t.o.id, z: t.o.z } : x)));
+  else addObj(o, { keepSel: true }); // on top, as a text object (docs/objects.md, item 9)
 }
 function cancelText() {
+  if (textAt && textAt.o) showObjs(textAt.before);
   textAt = null;
   textBox.hidden = true;
   $('#stHint').hidden = true;
