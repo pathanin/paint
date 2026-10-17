@@ -991,3 +991,28 @@ test('stroke, text and bitmap objects: boxes, hit tests, moves, turns and flips'
   assert.equal(Core.handleAt(tx, { x: 10, y: 10 }, 5), null);
   assert.deepEqual(Core.scaleObj(im, 2, 2).m, [2, 0, 0, 2]);
 });
+
+test('PNG chunks: crc32, read, and a private chunk spliced in before IEND (replacing an old one)', () => {
+  assert.equal(Core.crc32(new TextEncoder().encode('IEND')), 0xae426082);
+  const chunk = (type, data) => {
+    const t = new TextEncoder().encode(type), out = new Uint8Array(12 + data.length), dv = new DataView(out.buffer);
+    dv.setUint32(0, data.length); out.set(t, 4); out.set(data, 8);
+    const c = new Uint8Array(4 + data.length); c.set(t); c.set(data, 4);
+    dv.setUint32(8 + data.length, Core.crc32(c));
+    return out;
+  };
+  const sig = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+  const cat = (...a) => { const n = a.reduce((s, x) => s + x.length, 0), o = new Uint8Array(n); let i = 0; for (const x of a) { o.set(x, i); i += x.length; } return o; };
+  const png = cat(sig, chunk('IHDR', new Uint8Array(13)), chunk('IDAT', new Uint8Array([1, 2, 3])), chunk('IEND', new Uint8Array(0)));
+  assert.deepEqual(Core.pngChunks(png).map((c) => c.type), ['IHDR', 'IDAT', 'IEND']);
+  assert.equal(Core.readChunk(png, 'paNt'), null);
+  const data = new Uint8Array([9, 8, 7, 6]);
+  const a = Core.withChunk(png, 'paNt', data);
+  assert.deepEqual(Core.pngChunks(a).map((c) => c.type), ['IHDR', 'IDAT', 'paNt', 'IEND']);
+  assert.deepEqual([...Core.readChunk(a, 'paNt')], [9, 8, 7, 6]);
+  assert.ok(Core.pngChunks(a).every((c) => c.crcOk));
+  const b = Core.withChunk(a, 'paNt', new Uint8Array([1]));
+  assert.deepEqual(Core.pngChunks(b).map((c) => c.type), ['IHDR', 'IDAT', 'paNt', 'IEND']);
+  assert.deepEqual([...Core.readChunk(b, 'paNt')], [1]);
+  assert.equal(Core.pngChunks(new Uint8Array([1, 2, 3])), null); // not a PNG
+});

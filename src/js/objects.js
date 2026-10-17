@@ -72,6 +72,9 @@ function mapObjs(map, w, h) {
   return before;
 }
 function resetObjs() { install([]); objSel = null; }
+// Objects read back from a saved file (persist.js): the list as it was, ids from where it left off.
+function loadObjs(list, nextId) { install(list); objSel = null; nextObjId = Math.max(nextId || 1, ...list.map((o) => o.id + 1)); }
+const objIdNext = () => nextObjId;
 // Undo/redo of an obj entry (a diff), or of a flatten's region entry or a whole-image op's doc entry
 // (a whole list, swapped in).
 function applyObjHist(e) {
@@ -173,4 +176,4 @@ function composite() {
   return img;
 }
 
-export { addObj, applyObjHist, commitObjDrag, composite, cycleObj, deleteObj, duplicateObj, flattenObjs, mapObjs, newObjId, nudgeObj, objs, objSel, objVer, reorderObj, resetObjs, restyleObj, selectObj, selObj, setObjs, showObjs, zAbove };
+export { addObj, loadObjs, objIdNext, applyObjHist, commitObjDrag, composite, cycleObj, deleteObj, duplicateObj, flattenObjs, mapObjs, newObjId, nudgeObj, objs, objSel, objVer, reorderObj, resetObjs, restyleObj, selectObj, selObj, setObjs, showObjs, zAbove };

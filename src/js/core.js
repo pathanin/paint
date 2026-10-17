@@ -811,6 +811,59 @@
     return out;
   }
 
+  // PNG chunks, for saving the objects inside a PNG (docs/total-objects.md, Phase 5): every other app
+  // sees the picture; Paint finds its private chunk, paNt (ancillary, private, safe to copy: the case of
+  // each letter says so), and restores the objects.
+  let CRC_T = null;
+  function crc32(u8) {
+    if (!CRC_T) {
+      CRC_T = new Uint32Array(256);
+      for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; CRC_T[n] = c >>> 0; }
+    }
+    let c = 0xffffffff;
+    for (let i = 0; i < u8.length; i++) c = CRC_T[(c ^ u8[i]) & 255] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  }
+  const PNG_SIG = [137, 80, 78, 71, 13, 10, 26, 10];
+  // [{type, start (of the length field), len (of the data), crcOk}], or null if u8 isn't a PNG.
+  function pngChunks(u8) {
+    if (u8.length < 8 || PNG_SIG.some((b, i) => u8[i] !== b)) return null;
+    const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength), out = [];
+    for (let i = 8; i + 12 <= u8.length;) {
+      const len = dv.getUint32(i), type = String.fromCharCode(u8[i + 4], u8[i + 5], u8[i + 6], u8[i + 7]);
+      if (i + 12 + len > u8.length) break;
+      out.push({ type, start: i, len, crcOk: crc32(u8.subarray(i + 4, i + 8 + len)) === dv.getUint32(i + 8 + len) });
+      i += 12 + len;
+      if (type === 'IEND') break;
+    }
+    return out;
+  }
+  // The data of the first chunk of this type with a good CRC, or null.
+  function readChunk(u8, type) {
+    const c = (pngChunks(u8) || []).find((x) => x.type === type && x.crcOk);
+    return c ? u8.slice(c.start + 8, c.start + 8 + c.len) : null;
+  }
+  // u8 with chunk (type, data) just before IEND, and no other chunk of that type.
+  function withChunk(u8, type, data) {
+    const cs = pngChunks(u8), parts = [u8.subarray(0, 8)];
+    for (const c of cs) {
+      if (c.type === type) continue;
+      if (c.type === 'IEND') {
+        const ch = new Uint8Array(12 + data.length), dv = new DataView(ch.buffer);
+        dv.setUint32(0, data.length);
+        for (let k = 0; k < 4; k++) ch[4 + k] = type.charCodeAt(k);
+        ch.set(data, 8);
+        dv.setUint32(8 + data.length, crc32(ch.subarray(4, 8 + data.length)));
+        parts.push(ch);
+      }
+      parts.push(u8.subarray(c.start, c.start + 12 + c.len));
+    }
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let i = 0;
+    for (const p of parts) { out.set(p, i); i += p.length; }
+    return out;
+  }
+
   // The tiles redraw() repaints for dirty rects: every T x T grid tile of the W x H image that a rect
   // (grown to whole pixels) touches, once each, as {key, x, y, w, h} (edge tiles are clipped).
   function dirtyTiles(rects, W, H, T) {
@@ -825,7 +878,7 @@
     return [...seen.values()];
   }
 
-  const Core = { rgbaToU32, colorDistance, floodMask, fillEdge, floodFill, fillPlan, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History, zBetween, dirtyTiles, diffObjs, applyPairs,
+  const Core = { rgbaToU32, colorDistance, floodMask, fillEdge, floodFill, fillPlan, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History, zBetween, dirtyTiles, diffObjs, applyPairs, crc32, pngChunks, readChunk, withChunk,
     objBox, objFrame, segsBox, drawnObj, hitsObject, hitObject, objHandles, handleAt, resizeObj, moveObj, transformObj, scaleObj };
   module.exports = Core;
 })();

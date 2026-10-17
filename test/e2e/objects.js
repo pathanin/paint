@@ -547,6 +547,44 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     ok(sr && await P((r) => { const p = window.__paint, o = p.objs[p.objs.length - 1]; return !p.sel && o.t === 'rect' && o.mode === 'fill' && o.color === '#ffc90e' && o.a.x === r[0] && o.a.y === r[1] && o.b.x === r[0] + r[2] && o.b.y === r[1] + r[3]; }, sr),
       'Delete clears the selection with a colour-2 patch object over exactly the selection');
 
+    // ---- 25. a PNG keeps the objects (private chunk); another app's re-encode drops them safely ----
+    await P(() => { const p = window.__paint; p.newDoc(300, 200); p.setZoom(2); p.S.pristine = false; p.S.primary = '#3f48cc'; p.S.secondary = '#ffffff';
+      const v = document.querySelector('#viewport'); v.scrollLeft = v.scrollTop = 0; });
+    await page.keyboard.press('KeyB'); await drag([[20, 150], [120, 120], [200, 170]]);
+    await page.keyboard.press('KeyR'); await drag([[30, 30], [120, 90]]);
+    await page.keyboard.press('KeyT'); await page.mouse.click(...await at(150, 20)); await page.keyboard.type('Saved'); await page.keyboard.press('Enter');
+    await P(() => { window.__paint.setTool('fill'); window.__paint.S.primary = '#ffc90e'; window.__paint.S.tolerance = 10; });
+    await page.mouse.click(...await at(60, 60)); await P(() => window.__paint.filling); await frame();
+    await P(() => { const c = document.createElement('canvas'); c.width = 30; c.height = 20; const g = c.getContext('2d'); g.fillStyle = 'rgba(237, 28, 36, 0.5)'; g.fillRect(0, 0, 30, 20); window.__paint.pasteImage(c); window.__paint.selectAll(); window.__paint.setTool('move'); });
+    await frame();
+    const kinds = await P(() => window.__paint.objs.map((o) => o.t).join());
+    const seen25 = await chash();
+    const b64 = await P(async () => { const b = await window.__paint.encodeFor('scene.png'); const u = new Uint8Array(await b.arrayBuffer()); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); });
+    ok(kinds === 'brush,rect,text,fill,image' && Buffer.from(b64, 'base64').includes(Buffer.from('paNt')), 'the PNG carries a paNt chunk for ' + kinds);
+    await P(() => window.__paint.newDoc(50, 50));
+    await page.setInputFiles('#fileInput', { name: 'scene.png', mimeType: 'image/png', buffer: Buffer.from(b64, 'base64') });
+    await page.waitForFunction(() => window.__paint.S.fileName === 'scene.png'); await frame();
+    ok(await P(() => window.__paint.objs.map((o) => o.t).join()) === kinds && await chash() === seen25 && await P(() => !window.__paint.hist.canUndo()),
+      'reopened, the objects come back and the picture is identical');
+    await P(() => { const p = window.__paint; p.setTool('move'); const o = p.objs.find((x) => x.t === 'rect'); p.selectObj(o.id); document.querySelector('#viewport').focus(); });
+    await page.keyboard.press('Delete'); await frame();
+    ok(await P(() => window.__paint.objs.length === 4 && !window.__paint.objs.some((o) => o.t === 'rect')), 'and they are editable (the rectangle can be deleted on its own)');
+    // the same picture re-encoded elsewhere: a chunk copied along no longer matches its image data
+    const other = await P(async (b64) => {
+      const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+      const bmp = await createImageBitmap(new Blob([u], { type: 'image/png' })), c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
+      const g = c.getContext('2d'); g.drawImage(bmp, 0, 0); g.fillStyle = '#000'; g.fillRect(0, 0, 1, 1); // an edit elsewhere
+      const fresh = new Uint8Array(await (await new Promise((r) => c.toBlob(r, 'image/png'))).arrayBuffer());
+      const P2 = window.__paint.Core, chunk = P2.readChunk(u, 'paNt'), out = P2.withChunk(fresh, 'paNt', chunk); // a tool that copies unknown chunks
+      let s = ''; for (let i = 0; i < out.length; i += 0x8000) s += String.fromCharCode.apply(null, out.subarray(i, i + 0x8000)); return btoa(s);
+    }, b64);
+    await page.setInputFiles('#fileInput', { name: 'edited.png', mimeType: 'image/png', buffer: Buffer.from(other, 'base64') });
+    await page.waitForFunction(() => window.__paint.S.fileName === 'edited.png'); await frame();
+    ok(await P(() => window.__paint.objs.length === 0 && window.__paint.base.width === 300), 'a PNG edited elsewhere opens as its pixels, without stale objects');
+    const jpg = await P(async () => { const p = window.__paint; p.newDoc(40, 40); p.setTool('rect'); return 0; });
+    await page.keyboard.press('KeyR'); await drag([[5, 5], [30, 30]]);
+    ok(await P(async () => { const u = new Uint8Array(await (await window.__paint.encodeFor('x.jpg')).arrayBuffer()); return u[0] === 0xff && u[1] === 0xd8; }) && jpg === 0, 'JPEG saves just the picture');
+
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));
   } catch (e) {
     fails++; console.log('FAIL: threw', e);

@@ -113,5 +113,5 @@ When smoke fails, read the **first** `FAIL` line, because later failures often c
 ## Constraints and conventions
 
 - `confirmDiscard()` uses the synchronous native `confirm()` on purpose. Open must call `showOpenFilePicker` within the user gesture, and New applies on the synchronous `submit`, not `close`. An async in-app dialog would break both.
-- Saving writes PNG, JPEG or WebP according to the file extension. Any other format (GIF, BMP) is saved as a PNG copy and never overwritten.
+- Saving writes PNG, JPEG or WebP according to the file extension. A PNG with objects also carries them in a private `paNt` chunk (`persist.js`, `Core.withChunk`), so they come back on reopen; one re-encoded by another app (its IDAT hash differs) opens as pixels. Any other format (GIF, BMP) is saved as a PNG copy and never overwritten.
 - Design decisions made during the UI polish, and why, are tabled in `task.md` along with the remaining backlog. Check it before changing UX behaviour.
