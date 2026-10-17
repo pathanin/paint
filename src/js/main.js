@@ -6,7 +6,7 @@ import './state.js';
 import './toast.js';
 import './libs.js';
 import './doc.js';
-import './tiles.js';
+import './gpu.js';
 import './view.js';
 import './tools.js';
 import './fill.js';
@@ -41,7 +41,6 @@ import { composite, flattenObjs, objSel, objs, selList, selectObj } from './obje
 import { crop, selectAll } from './selection.js';
 import { MAX_PIXELS, S, drag, sel } from './state.js';
 import { flushRedraw, freshRender, hitAt, markAll, objsIn, redrawCount } from './scene.js';
-import { flushToData, op, pendingParts } from './tiles.js';
 import { flash } from './toast.js';
 import { setColor, setTool } from './tools.js';
 import { resample, resizeDoc, scaleImage, transformDoc } from './transforms.js';
@@ -70,4 +69,4 @@ if (window.launchQueue) window.launchQueue.setConsumer(openLaunched);
 window.addEventListener('load', setUpPwa, { once: true });
 
 // Handle for scripted smoke tests in the console.
-window.__paint = { S, hist, used, decodeFile, scaleImage, resample, get img() { flushRedraw(); return img; }, get base() { return base; }, get redrawCount() { return redrawCount; }, flushRedraw, markAll, objsIn, freshRender, hitAt, selectObj, selList, Core, newDoc, flash, save, encodeFor, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, loadFile, setZoom, fitZoom, MAX_PIXELS, flushToData, get op() { return op; }, get objs() { return objs; }, get objSel() { return objSel; }, flattenObjs, composite, openLaunched, get filling() { return filling; }, get pendingParts() { return [...pendingParts].filter((p) => p.cv).length; } };
+window.__paint = { S, hist, used, decodeFile, scaleImage, resample, get img() { flushRedraw(); return img; }, get base() { return base; }, get redrawCount() { return redrawCount; }, flushRedraw, markAll, objsIn, freshRender, hitAt, selectObj, selList, Core, newDoc, flash, save, encodeFor, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, loadFile, setZoom, fitZoom, MAX_PIXELS, get objs() { return objs; }, get objSel() { return objSel; }, flattenObjs, composite, openLaunched, get filling() { return filling; } };

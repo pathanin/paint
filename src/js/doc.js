@@ -4,7 +4,7 @@ import { applyObjHist, mapObjs, resetObjs } from './objects.js';
 import { commitSelection } from './selection.js';
 import { S, drag, sel, setDrag, setSel } from './state.js';
 import { commitText } from './text.js';
-import { dropOp, gpuLost, release, swapParts } from './tiles.js';
+import { gpuLost } from './gpu.js';
 import { markAll } from './scene.js';
 import { flash } from './toast.js';
 import { fitZoom, layout, requestRender, updateChrome } from './view.js';
@@ -25,7 +25,6 @@ img.addEventListener('contextrestored', () => markAll()); // it comes back blank
 // Dropped doc entries hold whole canvases: free them now (width 0) rather than at some later GC.
 const hist = new Core.History({ maxBytes: 256 * 1024 * 1024, maxCount: 100, onDrop: (e) => {
   if (e.type === 'doc') e.canvas.width = 0;
-  else if (e.type === 'region') e.parts.forEach(release);
 } });
 
 // Make canvas c the base, without copying it; #image takes its size and is repainted.
@@ -49,7 +48,6 @@ function setDoc(source, w, h) {
     else { bctx.fillStyle = '#ffffff'; bctx.fillRect(0, 0, w, h); }
     fitView();
   }
-  dropOp();
   setSel(null); setDrag(null);
   layout();
   requestRender();
@@ -81,8 +79,7 @@ function pushHist(e) {
 // the redo stack); applying it swaps them with what's on the canvas, so one copy serves both ways.
 function applyHist(e) {
   applyObjHist(e); // obj entries, a flatten's region entry, and a crop/resize/rotate/flip's doc entry
-  if (e.type === 'region') swapParts(e.parts);
-  else if (e.type === 'doc') {
+  if (e.type === 'doc') {
     const other = e.canvas;
     e.canvas = base;
     setDoc(other);

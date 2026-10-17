@@ -1,9 +1,9 @@
 import Core from './core.js';
-import { bctx, hist, img, pushHist } from './doc.js';
+import { base, hist, img, pushDocHist, pushHist, setDoc } from './doc.js';
+import { cloneCanvas } from './dom.js';
 import { flushRedraw, sceneSwap } from './scene.js';
 import { commitSelection } from './selection.js';
 import { commitText } from './text.js';
-import { beginOp, endOp, touch } from './tiles.js';
 import { announce } from './toast.js';
 import { requestRender } from './view.js';
 
@@ -166,27 +166,19 @@ function reorderObj(dir) {
   next[i] = { ...nb, z: o.z }; next[j] = { ...o, z: nb.z };
   setObjs(next);
 }
-// Bake every object into the pixels as one undo step: a region entry that also keeps the object
-// list, so undo brings the objects back and un-bakes their pixels together. The pixels are copied
-// from the cache, so the base gets exactly what is on screen (drawing the objects again, in another
-// batch, could anti-alias their edges differently: see scene.js).
+// Bake every object into the pixels (⌘E) as one undo step: the base becomes a copy of the cache, so it
+// gets exactly what is on screen (drawing the objects again, in another batch, could anti-alias their
+// edges differently: see scene.js). A whole-document step, like a crop: it keeps the old base and the
+// object list, so undo brings both back.
 function flattenObjs() {
   if (!objs.length) return;
   commitText();
-  commitSelection(); // a floating selection sits under the objects
+  commitSelection(); // a floating selection is about to become an object too
   flushRedraw();
-  beginOp();
-  const W = img.width, H = img.height;
-  for (const o of objs) {
-    const r = Core.clampRect(Core.objBox(o), W, H);
-    if (!r) continue;
-    touch(r.x, r.y, r.w, r.h);
-    bctx.clearRect(r.x, r.y, r.w, r.h);
-    bctx.drawImage(img, r.x, r.y, r.w, r.h, r.x, r.y, r.w, r.h);
-  }
-  const before = objs;
-  install([]); objSel = null;
-  endOp({ objs: before });
+  const before = base, list = objs;
+  setDoc(cloneCanvas(img));
+  install([]); objSel = null; multi = [];
+  pushDocHist(before, list);
   requestRender();
 }
 // What the document looks like: #image, the scene's cache, once any pending redraw has landed.

@@ -119,9 +119,9 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await P(() => window.__paint.undo()); ok(await P(() => !window.__paint.hist.isClean()), 'dirty after undo past save');
     await P(() => window.__paint.redo()); ok(await P(() => window.__paint.hist.isClean()), 'clean again after redo to save point');
 
-    // ---- 1b. entries held on the GPU (undo/redo snapshot) vs read back at idle, mixed ----
-    // swapParts() snapshots onto GPU canvases and reads them back about a second later; every mix of
-    // the two states must stay pixel-exact, on multi-tile edits over semi-transparent noise.
+    // ---- 1b. over semi-transparent noise: object steps and whole-document steps (⌘E), any mix ----
+    // Every edit is an object except whole-document steps; ⌘E is one of those now (docs/total-objects.md,
+    // Phase 3): its entry keeps the previous base canvas and object list. No entry holds undo tiles.
     await P(() => {
       const p = window.__paint;
       p.newDoc(1000, 700);
@@ -135,39 +135,21 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     });
     await frame();
     const g1 = [await hash()];
-    // A shape is two steps: the object (pixels unchanged), then flattening it (a multi-tile region).
     const flat = async () => { g1.push(await hash()); await P(() => window.__paint.flattenObjs()); await frame(); g1.push(await hash()); };
     await drag('rect', [[30, 40], [900, 650]]); await flat();
+    ok(await P(() => { const e = window.__paint.hist.top(); return e.type === 'doc' && e.canvas && e.objs && e.objs.length === 1 && window.__paint.objs.length === 0; }) && g1[2] === g1[1],
+      '⌘E is a whole-document step that keeps the old base and objects, and the picture does not change');
     await drag('ellipse', [[100, 100], [700, 500]]); await flat();
     await drag('select', [[300, 200], [800, 600]]); await page.keyboard.press('Delete'); await frame(); g1.push(await hash());
-    const flush = () => P(() => window.__paint.flushToData());
-    const pending = () => P(() => window.__paint.pendingParts);
-    ok(await pending() > 0, 'fresh edits are held on the GPU until idle');
-    await flush();
-    ok(await pending() === 0, 'flushToData reads everything back');
+    ok(await P(() => window.__paint.hist.undoStack.every((e) => e.type === 'doc' || e.type === 'obj')), 'history holds only object diffs and whole-document steps');
     // states: 0 start, 1 rect object, 2 rect flattened, 3 ellipse object, 4 ellipse flattened, 5 deleted
-    const seq = [['undo', 4, false], ['undo', 3, true], ['undo', 2, false], ['redo', 3, false], ['redo', 4, true], ['undo', 3, false], ['undo', 2, false],
-      ['undo', 1, true], ['undo', 0, false], ['redo', 1, true], ['redo', 2, false], ['redo', 3, false], ['redo', 4, false], ['redo', 5, false], ['undo', 4, true], ['redo', 5, true]];
-    for (const [f, want, fl] of seq) {
+    const seq = [['undo', 4], ['undo', 3], ['undo', 2], ['redo', 3], ['redo', 4], ['undo', 3], ['undo', 2],
+      ['undo', 1], ['undo', 0], ['redo', 1], ['redo', 2], ['redo', 3], ['redo', 4], ['redo', 5], ['undo', 4], ['redo', 5]];
+    for (const [f, want] of seq) {
       await P((f) => window.__paint[f](), f); await frame();
-      if (fl) await flush();
-      ok(await hash() === g1[want], `GPU/CPU mix: ${f} to state ${want}${fl ? ' then read back' : ''} is pixel-exact`);
+      ok(await hash() === g1[want], `mix: ${f} to state ${want} is pixel-exact`);
     }
-    // the idle readback itself (no flush): wait for it, then undo
-    await page.waitForTimeout(2500);
-    ok(await pending() === 0, 'idle readback drains the GPU-held parts');
-    await P(() => window.__paint.undo()); await frame();
-    ok(await hash() === g1[4], 'undo after the idle readback is pixel-exact');
-    // entries dropped while their readback is pending: freed, and nothing left to read
-    await P(() => window.__paint.undo()); await frame();
-    ok(await pending() > 0, 'undo leaves a pending readback');
-    await P(() => window.__paint.newDoc(100, 100));
-    ok(await pending() === 0, 'clearing history drops pending readbacks');
-    await flush();
-    await page.waitForTimeout(1500);
-    ok(!errs.length, `no errors from pending readbacks of dropped entries: ${errs.join('; ')}`);
 
-    // ---- 1c. undo data must not sit on the GPU indefinitely, and a lost GPU context drops it honestly ----
     const noise = () => P(() => {
       const p = window.__paint;
       p.newDoc(1000, 700);
@@ -179,48 +161,21 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       p.markAll();
       p.hist.clear(); p.fitZoom(false); p.S.fillMode = 'both'; p.S.primary = 'rgba(0,0,0,1)';
     });
+    // context loss: the base (and kept base canvases) lose their pixels. A (⌘E, a kept canvas) goes;
+    // B (a stroke) and C (a fill) are objects and survive, and still undo exactly.
     await noise(); await frame();
-    const f0 = await hash();
-    await drag('select', [[100, 100], [600, 500]]);
-    await drag('select', [[300, 300], [450, 380]]); // lift and move: the op stays open under the float
-    ok(await P(() => { const p = window.__paint, o = p.objs[p.objs.length - 1]; return !p.op && !!(p.sel && p.sel.float) && o.t === 'rect' && o.mode === 'fill' && o.a.x === 100 && o.b.y === 500; }),
-      'a moved selection floats; the lift left a colour-2 patch object, with no undo tiles');
-    await page.waitForTimeout(2500);
-    ok(await pending() === 0, 'idle readback drains an open op\'s tiles while the float stays up');
-    await drag('select', [[950, 650], [960, 660]]); // commits the float
-    const f1 = await hash();
-    ok(f1 !== f0, 'the move changed the pixels');
-    await P(() => window.__paint.undo()); await frame();
-    ok(await hash() === f0, 'undo of a move read back while floating is pixel-exact');
-    await P(() => window.__paint.redo()); await frame();
-    ok(await hash() === f1, 'redo of a move read back while floating is pixel-exact');
-
-    // committed before its queued readback ran: the tiles' canvases now belong to the entry
-    await drag('select', [[520, 20], [560, 60]]); // inside one tile: a single-tile canvas
-    await drag('select', [[530, 30], [580, 90]]);
-    await drag('select', [[950, 650], [960, 660]]);
-    const f2 = await hash();
-    await flush();
-    await P(() => window.__paint.undo()); await frame();
-    ok(await hash() === f1, 'undo of a move committed before its readback is pixel-exact');
-    await P(() => window.__paint.redo()); await frame();
-    ok(await hash() === f2, 'redo of a move committed before its readback is pixel-exact');
-
-    // context loss: B (on the GPU) is lost, so B and the older A go; C (a fill: CPU data) survives
-    await noise(); await frame();
-    await drag('rect', [[30, 40], [500, 400]]); await P(() => window.__paint.flattenObjs()); await flush(); // A: read back
-    await drag('ellipse', [[200, 100], [900, 650]]); await P(() => window.__paint.flattenObjs()); // B: on the GPU
+    await drag('rect', [[30, 40], [500, 400]]); await P(() => window.__paint.flattenObjs()); // A
+    await drag('pencil', [[200, 100], [900, 650]]); // B
     const lb = await hash();
     await P(() => { window.__paint.S.primary = 'rgba(200,30,30,1)'; });
-    await drag('fill', [[350, 250]]); // C, inside A and B
-    ok(await pending() > 0, 'B is still on the GPU');
-    await P(() => window.__paint.base.dispatchEvent(new Event('contextlost'))); // the base holds the pixels undo swaps
+    await drag('fill', [[350, 250]]); // C, inside A
+    await P(() => window.__paint.base.dispatchEvent(new Event('contextlost'))); // the base holds the pixels
     await frame();
-    ok(await P(() => window.__paint.hist.undoStack.length) === 1, 'context loss drops the lost step and those behind it');
+    ok(await P(() => window.__paint.hist.undoStack.length) === 2, 'context loss drops the whole-document step, and keeps the object steps after it');
     ok(await P(() => document.body.innerText.includes('undo steps were lost')), 'context loss is reported');
-    ok(await pending() === 0, 'nothing left to read back after context loss');
     await P(() => window.__paint.undo()); await frame();
     ok(await hash() === lb, 'the surviving step still undoes pixel-exactly');
+    await P(() => window.__paint.undo()); await frame();
     ok(await P(() => !window.__paint.hist.canUndo()), 'nothing to undo past the lost step');
     // context loss with a float up and its op on the GPU: both are abandoned, no errors
     await drag('select', [[100, 100], [300, 300]]);
