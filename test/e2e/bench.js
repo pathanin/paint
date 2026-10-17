@@ -191,21 +191,26 @@ async function once() {
       results[`${tag} undo steps kept`] = { steps: await P(() => window.__paint.hist.canRedo() ? window.__paint.hist.redoStack.length : 0) };
     }
     // A long pencil stroke (10,000 points), drawn live: the cost of a move late in the stroke against
-    // one early on (each move plus the repaint it queues). It should stay flat as the stroke grows.
+    // one early on (each move plus the repaint it queues). A zigzag that leaves each tile behind should
+    // stay flat (a move repaints its tile's pieces, not the whole stroke); a curve that keeps crossing
+    // the same tiles still grows, since a tile is composed from scratch with every piece in it.
     if (!only || '4000x3000 long stroke'.includes(only) || only.includes('long stroke')) {
-      await P(() => { window.__paint.newDoc(4000, 3000); window.__paint.fitZoom(false); window.__paint.setTool('pencil'); window.__paint.S.sizes.pencil = 3; });
-      await settle();
-      results['4000x3000 long stroke ms/move'] = await P(async () => {
-        const ov = document.querySelector('#overlay'), r = ov.getBoundingClientRect();
-        const ev = (type, x, y) => ov.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: r.left + x, clientY: r.top + y, isPrimary: true }));
-        const at = (i) => [r.width / 2 + r.width * 0.45 * Math.sin(i / 97) * Math.cos(i / 31), r.height / 2 + r.height * 0.45 * Math.sin(i / 53)];
-        const N = 10000, t = new Float64Array(N);
-        ev('pointerdown', ...at(0));
-        for (let i = 1; i < N; i++) { const t0 = performance.now(); ev('pointermove', ...at(i)); await null; t[i] = performance.now() - t0; }
-        ev('pointerup', ...at(N));
-        const avg = (a, b) => { let s = 0; for (let i = a; i < b; i++) s += t[i]; return s / (b - a); };
-        return { early: avg(1, 1001), late: avg(N - 1000, N) };
-      });
+      for (const shape of ['zigzag', 'curve']) {
+        await P(() => { window.__paint.newDoc(4000, 3000); window.__paint.fitZoom(false); window.__paint.setTool('pencil'); window.__paint.S.sizes.pencil = 3; });
+        await settle();
+        results[`4000x3000 long stroke ms/move (${shape})`] = await P(async (shape) => {
+          const ov = document.querySelector('#overlay'), r = ov.getBoundingClientRect();
+          const ev = (type, x, y) => ov.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: r.left + x, clientY: r.top + y, isPrimary: true }));
+          const at = shape === 'zigzag' ? (i) => { const row = Math.floor(i / 1000), t = (i % 1000) / 1000; return [2 + r.width * 0.98 * (row % 2 ? 1 - t : t), 5 + row * r.height * 0.098]; }
+            : (i) => [r.width / 2 + r.width * 0.45 * Math.sin(i / 97) * Math.cos(i / 31), r.height / 2 + r.height * 0.45 * Math.sin(i / 53)];
+          const N = 10000, t = new Float64Array(N);
+          ev('pointerdown', ...at(0));
+          for (let i = 1; i < N; i++) { const t0 = performance.now(); ev('pointermove', ...at(i)); await null; t[i] = performance.now() - t0; }
+          ev('pointerup', ...at(N));
+          const avg = (a, b) => { let s = 0; for (let i = a; i < b; i++) s += t[i]; return s / (b - a); };
+          return { early: avg(1, 1001), late: avg(N - 1000, N) };
+        }, shape);
+      }
     }
     // A big paste (12 MP of noise, the canvas's size) committed, then the idle time after it: the longest main-thread task
     // while the asset's CPU copy is read (one 48 MB read stalls the page; strips shouldn't).
