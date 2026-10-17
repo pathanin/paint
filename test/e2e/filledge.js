@@ -129,7 +129,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       await page.mouse.down();
       for (const q of pts.slice(1)) { const [x, y] = await at(...q); await page.mouse.move(x, y, { steps: 3 }); }
       const diff = await P(() => {
-        const segs = window.__paint.drag.all, s = window.__paint.drag.size;
+        const segs = window.__paint.drag.o.segs, s = window.__paint.drag.size;
         const im = document.querySelector('#image');
         const c = document.createElement('canvas'); c.width = im.width; c.height = im.height;
         const g = c.getContext('2d');
@@ -150,10 +150,17 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       await page.mouse.up();
       await frame();
       ok(diff.segs > 20 && (diff.n === 0 || diff.dark < 8), `size ${size}: stroke over many moves = one path (${diff.segs} segments, ${diff.n} px differ, max ${diff.max}, darker by ${diff.dark.toFixed(1)} on average)`);
+      // the stroke is one object: moved away and back, its tiles repainted, it is the same pixels
+      const h1 = await P(() => { const p = window.__paint; return [p.objs.length, p.objs[0] && p.objs[0].t, p.img.getContext('2d').getImageData(0, 0, 400, 300).data.join()]; });
+      await P(() => { const p = window.__paint; p.setTool('move'); p.selectObj(p.objs[0].id); document.querySelector('#viewport').focus(); });
+      for (const k of ['Shift+ArrowRight', 'Shift+ArrowDown', 'Shift+ArrowLeft', 'Shift+ArrowUp']) await page.keyboard.press(k);
+      await frame();
+      const h2 = await P(() => window.__paint.img.getContext('2d').getImageData(0, 0, 400, 300).data.join());
+      ok(h1[0] === 1 && h1[1] === 'brush' && h2 === h1[2], `size ${size}: the stroke is one brush object, and moving it away and back repaints it exactly`);
     }
 
-    // A stroke over more than 512 tiles reads them back mid-stroke (touch()); later batches then
-    // restore from read-back data. Zigzag across a 6000 px image, then compare the last part.
+    // A long stroke over a big image: it is drawn live through the tile repaint, with no undo tiles,
+    // and its last part still equals the stroke drawn as one path. Zigzag across a 6000 px image.
     {
       await P(() => { const p = window.__paint; p.newDoc(6000, 6000); p.setTool('brush'); p.S.sizes.brush = 30; p.S.primary = '#000000'; p.fitZoom(false); });
       await frame();
@@ -164,11 +171,10 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       await page.mouse.down();
       for (const q of zig.slice(1)) { const [x, y] = await at(...q); await page.mouse.move(x, y, { steps: 12 }); }
       const r = await P(() => {
-        const p = window.__paint, segs = p.drag.all, s = p.drag.size;
-        const readBack = [...p.op.tiles.values()].some((t) => t.data);
-        const last = segs.slice(-40); // the box around the last segments, drawn after the readback
-        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-        for (const g of last) { x0 = Math.min(x0, g.box.x); y0 = Math.min(y0, g.box.y); x1 = Math.max(x1, g.box.x + g.box.w); y1 = Math.max(y1, g.box.y + g.box.h); }
+        const p = window.__paint, segs = p.drag.o.segs, s = p.drag.size;
+        const noOp = !p.op;
+        const lb = p.Core.segsBox(segs.slice(-40), s / 2 + 1); // the box around the last segments
+        let x0 = lb.x, y0 = lb.y, x1 = lb.x + lb.w, y1 = lb.y + lb.h;
         x0 = Math.max(0, Math.floor(x0)); y0 = Math.max(0, Math.floor(y0));
         const w = Math.min(6000, Math.ceil(x1)) - x0, h = Math.min(6000, Math.ceil(y1)) - y0;
         // the reference is as big as the image: a translated smaller canvas rasterises a few edge
@@ -189,12 +195,12 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
         let n = 0, max = 0, ink = 0, dark = 0;
         for (let i = 0; i < A.length; i += 4) { const d = B[i] - A[i]; if (Math.abs(d) > 2) n++; if (Math.abs(d) > max) max = Math.abs(d); dark += d; }
         for (let i = 0; i < A.length; i += 4) if (A[i] < 128) ink++;
-        return { readBack, tiles: p.op.tiles.size, n, max, dark: n ? dark / n : 0, ink, segs: segs.length };
+        return { noOp, n, max, dark: n ? dark / n : 0, ink, segs: segs.length };
       });
       await page.mouse.up();
       await frame();
-      ok(r.readBack && r.tiles > 512, `long stroke read its tiles back mid-stroke (${r.tiles} tiles, read back: ${r.readBack})`);
-      ok(r.ink > 1000 && (r.n === 0 || r.dark < 8), `after the readback, batches still equal one path (${r.segs} segments, ${r.n} px differ, max ${r.max}, darker by ${r.dark.toFixed(1)} on average, ${r.ink} ink px)`);
+      ok(r.noOp, 'a long stroke keeps no undo tiles (it is an object)');
+      ok(r.ink > 1000 && (r.n === 0 || r.dark < 8), `at the end of a long stroke, batches still equal one path (${r.segs} segments, ${r.n} px differ, max ${r.max}, darker by ${r.dark.toFixed(1)} on average, ${r.ink} ink px)`);
     }
 
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));

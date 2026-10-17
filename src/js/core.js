@@ -486,9 +486,62 @@
   // edit makes a new one with the same id. a and b are image px: the corners of the box (rect,
   // ellipse; either order) or the ends (line).
   // Everything drawing o can paint (as the shape tools' box).
+  // Other kinds (docs/total-objects.md):
+  //  - pencil, eraser: {pts: [x0, y0, x1, y1, ...] integer px, color, size}: square stamps along each
+  //    Bresenham line between consecutive points, as the tools paint (the eraser in colour 2);
+  //  - brush: {segs: [{a, c, b}] (Core.Stroke segments; c null for a straight one), color, size};
+  //  - text: {x, y, lines, font, fs, color, base (px from a line's top to its baseline), w};
+  //  - image, fill: {x, y, w, h, asset} (a canvas held by asset.cv; a fill's asset also keeps its
+  //    mask for hit tests).
+  //  text, image and fill may carry m = [a, b, c, d], a linear map about (x, y) (rotate, flip, scale).
+  const STROKES = new Set(['pencil', 'eraser', 'brush']), SHAPE_KINDS = new Set(['line', 'rect', 'ellipse']);
+  // The content rect of a text, image or fill before m: (x, y) is its origin.
+  function frameSize(o) {
+    if (o.t === 'text') return { x: -o.fs / 2, y: -o.fs / 2, w: o.w + o.fs, h: o.lines.length * o.fs * 1.2 + o.fs };
+    return { x: 0, y: 0, w: o.w, h: o.h };
+  }
+  // Integer bounding box of r = {x, y, w, h} (relative to o.x, o.y) after o.m.
+  function mappedBox(o, r) {
+    const m = o.m || [1, 0, 0, 1];
+    const xs = [], ys = [];
+    for (const [px, py] of [[r.x, r.y], [r.x + r.w, r.y], [r.x, r.y + r.h], [r.x + r.w, r.y + r.h]]) {
+      xs.push(o.x + m[0] * px + m[2] * py); ys.push(o.y + m[1] * px + m[3] * py);
+    }
+    const x = Math.floor(Math.min(...xs)), y = Math.floor(Math.min(...ys));
+    return { x, y, w: Math.ceil(Math.max(...xs)) - x, h: Math.ceil(Math.max(...ys)) - y };
+  }
   function objBox(o) {
+    if (o.t === 'pencil' || o.t === 'eraser') {
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (let i = 0; i < o.pts.length; i += 2) {
+        x0 = Math.min(x0, o.pts[i]); x1 = Math.max(x1, o.pts[i]); y0 = Math.min(y0, o.pts[i + 1]); y1 = Math.max(y1, o.pts[i + 1]);
+      }
+      const off = Math.floor(o.size / 2);
+      return { x: x0 - off, y: y0 - off, w: x1 - x0 + o.size, h: y1 - y0 + o.size };
+    }
+    if (o.t === 'brush') {
+      const b = segsBox(o.segs, o.size / 2 + 1), x = Math.floor(b.x), y = Math.floor(b.y);
+      return { x, y, w: Math.ceil(b.x + b.w) - x, h: Math.ceil(b.y + b.h) - y };
+    }
+    if (!SHAPE_KINDS.has(o.t)) return mappedBox(o, frameSize(o));
     const r = normRect(o.a, o.b), lw = o.size;
     return { x: r.x - lw, y: r.y - lw, w: r.w + 2 * lw + 1, h: r.h + 2 * lw + 1 };
+  }
+  // The outline the selection shows: a shape's drawn box, else the content's box.
+  function objFrame(o) {
+    if (SHAPE_KINDS.has(o.t)) { const g = drawnObj(o); return normRect(g.a, g.b); }
+    if (STROKES.has(o.t)) return objBox(o);
+    return mappedBox(o, o.t === 'text' ? { x: 0, y: 0, w: o.w, h: o.lines.length * o.fs * 1.2 } : frameSize(o));
+  }
+  // Bounding box of brush segments grown by h (a quadratic stays inside the hull of its points).
+  function segsBox(segs, h) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const g of segs) {
+      for (const q of g.c ? [g.a, g.b, g.c] : [g.a, g.b]) {
+        if (q.x < x0) x0 = q.x; if (q.y < y0) y0 = q.y; if (q.x > x1) x1 = q.x; if (q.y > y1) y1 = q.y;
+      }
+    }
+    return { x: x0 - h, y: y0 - h, w: x1 - x0 + 2 * h, h: y1 - y0 + 2 * h };
   }
   function segDist(p, a, b) {
     const dx = b.x - a.x, dy = b.y - a.y, n = dx * dx + dy * dy;
@@ -498,12 +551,13 @@
   // o as drawn: an odd stroke width is drawn on pixel centres (+0.5, see drawObj in objects.js) and an
   // even one on the points themselves. Hit tests and handles use this, so they sit on the stroke.
   function drawnObj(o) {
-    if (!(o.size % 2)) return o;
+    if (!SHAPE_KINDS.has(o.t) || !(o.size % 2)) return o;
     return { ...o, a: { x: o.a.x + 0.5, y: o.a.y + 0.5 }, b: { x: o.b.x + 0.5, y: o.b.y + 0.5 } };
   }
   // Is p on o? tol is extra reach in image px (callers pass a few screen px over the zoom), so thin
   // outlines stay clickable at any zoom. Filled shapes hit inside; outlines only near their edge.
   function hitsObject(o, p, tol) {
+    if (!SHAPE_KINDS.has(o.t)) return hitsOther(o, p, tol);
     o = drawnObj(o);
     const half = o.size / 2 + tol, filled = o.mode !== 'outline';
     if (o.t === 'line') return segDist(p, o.a, o.b) <= half;
@@ -519,6 +573,31 @@
     if (dx <= 0 && dy <= 0) return filled || -Math.max(dx, dy) <= half; // inside: distance to the nearest edge
     return Math.hypot(Math.max(dx, 0), Math.max(dy, 0)) <= half;
   }
+  function hitsOther(o, p, tol) {
+    const half = o.size / 2 + tol;
+    if (o.t === 'pencil' || o.t === 'eraser') {
+      const c = (o.size % 2 ? 0.5 : 0); // a stamp's centre: odd sizes centre on the pixel
+      const q = (i) => ({ x: o.pts[i] + c, y: o.pts[i + 1] + c });
+      if (o.pts.length === 2) return segDist(p, q(0), q(0)) <= half;
+      for (let i = 0; i + 3 < o.pts.length; i += 2) if (segDist(p, q(i), q(i + 2)) <= half) return true;
+      return false;
+    }
+    if (o.t === 'brush') {
+      for (const g of o.segs) {
+        if (g.c ? segDist(p, g.a, g.c) <= half || segDist(p, g.c, g.b) <= half : segDist(p, g.a, g.b) <= half) return true;
+      }
+      return false;
+    }
+    // text, image, fill: inside the content (mapped back through m), a fill only on its pixels
+    const m = o.m || [1, 0, 0, 1], det = m[0] * m[3] - m[1] * m[2], dx = p.x - o.x, dy = p.y - o.y;
+    const u = (m[3] * dx - m[2] * dy) / det, v = (-m[1] * dx + m[0] * dy) / det;
+    const f = frameSize(o), t = tol / Math.sqrt(Math.abs(det));
+    if (u < f.x - t || v < f.y - t || u > f.x + f.w + t || v > f.y + f.h + t) return false;
+    if (o.t !== 'fill' || !o.asset.mask) return true;
+    const x = Math.floor(u), y = Math.floor(v);
+    if (x < 0 || y < 0 || x >= o.w || y >= o.h) return true; // the tolerance band around it
+    return !!o.asset.mask[y * o.w + x];
+  }
   // Index of the topmost object (the list runs bottom to top) at p, or -1.
   function hitObject(objs, p, tol) {
     for (let i = objs.length - 1; i >= 0; i--) if (hitsObject(objs[i], p, tol)) return i;
@@ -526,7 +605,7 @@
   }
   // Resize handles: the two ends of a line; the corners, then the edge midpoints, of a box. gap (image
   // px) leaves out the midpoints of a side shorter than it, where they'd crowd the corners.
-  const objHandles = (o, gap = 0) => handlesOf(drawnObj(o), gap);
+  const objHandles = (o, gap = 0) => (SHAPE_KINDS.has(o.t) ? handlesOf(drawnObj(o), gap) : []);
   function handlesOf(o, gap) { // o: as drawn
     if (o.t === 'line') return [{ h: 'a', x: o.a.x, y: o.a.y }, { h: 'b', x: o.b.x, y: o.b.y }];
     const r = normRect(o.a, o.b), x1 = r.x + r.w, y1 = r.y + r.h, mx = r.x + r.w / 2, my = r.y + r.h / 2;
@@ -541,6 +620,7 @@
   // Inside the shape a handle reaches at most a quarter of its short side, so the middle of a small
   // box (or a short line) is left free for moving it.
   function handleAt(o, p, tol, gap = 0) {
+    if (!SHAPE_KINDS.has(o.t)) return null;
     o = drawnObj(o);
     let reach = tol;
     if (o.t === 'line') {
@@ -585,22 +665,49 @@
     }
     return { ...o, a: { x: x0, y: y0 }, b: { x: x1, y: y1 } };
   }
-  const moveObj = (o, dx, dy) => ({ ...o, a: { x: o.a.x + dx, y: o.a.y + dy }, b: { x: o.b.x + dx, y: o.b.y + dy } });
+  const mapPts = (pts, f) => { const out = []; for (let i = 0; i < pts.length; i += 2) { const q = f({ x: pts[i], y: pts[i + 1] }); out.push(q.x, q.y); } return out; };
+  const mapSegs = (segs, f) => segs.map((g) => ({ a: f(g.a), c: g.c && f(g.c), b: f(g.b) }));
+  function moveObj(o, dx, dy) {
+    const f = (q) => ({ x: q.x + dx, y: q.y + dy });
+    if (o.t === 'pencil' || o.t === 'eraser') return { ...o, pts: mapPts(o.pts, f) };
+    if (o.t === 'brush') return { ...o, segs: mapSegs(o.segs, f) };
+    if (!SHAPE_KINDS.has(o.t)) return { ...o, x: o.x + dx, y: o.y + dy };
+    return { ...o, a: f(o.a), b: f(o.b) };
+  }
   // o after a whole-image rotate or flip of a W × H image (Core.rotateDims gives the new size). Odd
   // stroke widths are drawn on pixel centres and even ones on pixel edges, so pixel x mirrors to
   // W - 1 - x for the first and W - x for the second: the shape lands on the pixels the image's did.
+  // Pencil and eraser stamps are squares of size px from (x - floor(size / 2)), so they map like a shape
+  // of the same width: k = 1 for odd sizes. A brush is continuous geometry (k = 0). Text, images and
+  // fills map their origin continuously and compose the turn or flip into m.
   function transformObj(o, kind, W, H) {
-    const k = o.size % 2 ? 1 : 0;
+    const k = SHAPE_KINDS.has(o.t) || o.t === 'pencil' || o.t === 'eraser' ? (o.size % 2 ? 1 : 0) : 0;
     const f = kind === 'rotR' ? (p) => ({ x: H - k - p.y, y: p.x })
       : kind === 'rotL' ? (p) => ({ x: p.y, y: W - k - p.x })
       : kind === 'flipH' ? (p) => ({ x: W - k - p.x, y: p.y })
       : (p) => ({ x: p.x, y: H - k - p.y });
+    if (o.t === 'pencil' || o.t === 'eraser') return { ...o, pts: mapPts(o.pts, f) };
+    if (o.t === 'brush') return { ...o, segs: mapSegs(o.segs, f) };
+    if (!SHAPE_KINDS.has(o.t)) {
+      const L = kind === 'rotR' ? [0, 1, -1, 0] : kind === 'rotL' ? [0, -1, 1, 0] : kind === 'flipH' ? [-1, 0, 0, 1] : [1, 0, 0, -1];
+      const m = o.m || [1, 0, 0, 1], q = f({ x: o.x, y: o.y });
+      return { ...o, x: q.x, y: q.y, m: [L[0] * m[0] + L[2] * m[1], L[1] * m[0] + L[3] * m[1], L[0] * m[2] + L[2] * m[3], L[1] * m[2] + L[3] * m[3]] };
+    }
     return { ...o, a: f(o.a), b: f(o.b) };
   }
   // o after scaling the image by (sx, sy): the drawn geometry scales, and so does the stroke (by the
   // geometric mean, at least 1 px), as it would have had the shape been pixels.
   function scaleObj(o, sx, sy) {
+    if (!SHAPE_KINDS.has(o.t) && !STROKES.has(o.t)) {
+      const m = o.m || [1, 0, 0, 1];
+      return { ...o, x: o.x * sx, y: o.y * sy, m: [m[0] * sx, m[1] * sy, m[2] * sx, m[3] * sy] };
+    }
     const size = Math.max(1, Math.round(o.size * Math.sqrt(sx * sy)));
+    if (o.t === 'brush') return { ...o, size, segs: mapSegs(o.segs, (p) => ({ x: p.x * sx, y: p.y * sy })) };
+    if (o.t === 'pencil' || o.t === 'eraser') {
+      const c = o.size % 2 ? 0.5 : 0, c2 = size % 2 ? 0.5 : 0;
+      return { ...o, size, pts: mapPts(o.pts, (p) => ({ x: Math.round((p.x + c) * sx - c2), y: Math.round((p.y + c) * sy - c2) })) };
+    }
     const off = o.size % 2 ? 0.5 : 0, off2 = size % 2 ? 0.5 : 0;
     const f = (p) => ({ x: Math.round((p.x + off) * sx - off2), y: Math.round((p.y + off) * sy - off2) });
     return { ...o, a: f(o.a), b: f(o.b), size };
@@ -718,6 +825,6 @@
   }
 
   const Core = { rgbaToU32, colorDistance, floodMask, fillEdge, floodFill, fillPlan, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History, zBetween, dirtyTiles, diffObjs, applyPairs,
-    objBox, drawnObj, hitsObject, hitObject, objHandles, handleAt, resizeObj, moveObj, transformObj, scaleObj };
+    objBox, objFrame, segsBox, drawnObj, hitsObject, hitObject, objHandles, handleAt, resizeObj, moveObj, transformObj, scaleObj };
   module.exports = Core;
 })();

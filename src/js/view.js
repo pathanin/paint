@@ -177,8 +177,8 @@ let objSelKey = '';
 function placeObjSel(o) {
   const z = S.zoom, d = devicePixelRatio, px = (v) => Math.round(v * z * d) / d;
   const g = o && Core.drawnObj(o); // on the stroke, not half a pixel off it (odd widths)
-  const r = o && Core.normRect(g.a, g.b);
-  const key = o ? [z, o.t, px(r.x), px(r.y), px(r.x + r.w), px(r.y + r.h), px(g.a.x), px(g.a.y), px(g.b.x), px(g.b.y)].join() : '';
+  const r = o && Core.objFrame(o), ends = o && o.a ? [px(g.a.x), px(g.a.y), px(g.b.x), px(g.b.y)] : [];
+  const key = o ? [z, o.t, px(r.x), px(r.y), px(r.x + r.w), px(r.y + r.h), ...ends].join() : '';
   if (key === objSelKey) return;
   objSelKey = key;
   objSelEl.hidden = !o;
@@ -199,20 +199,21 @@ const objHoverEl = $('#objhover');
 let objHoverKey = '';
 function placeObjHover(o) {
   const z = S.zoom, d = devicePixelRatio, px = (v) => Math.round(v * z * d) / d;
-  const key = o ? [z, o.t, o.a.x, o.a.y, o.b.x, o.b.y, o.size % 2].join() : '';
+  const f = o && Core.objFrame(o);
+  const key = o ? [z, o.t, o.id, f.x, f.y, f.w, f.h].join() : '';
   if (key === objHoverKey) return;
   objHoverKey = key;
   objHoverEl.hidden = !o;
   if (!o) return;
   o = Core.drawnObj(o);
-  objHoverEl.className = o.t;
+  objHoverEl.className = o.t === 'line' || o.t === 'ellipse' ? o.t : 'rect';
   if (o.t === 'line') {
     const ax = o.a.x * z, ay = o.a.y * z, len = Math.hypot(o.b.x - o.a.x, o.b.y - o.a.y) * z;
     Object.assign(objHoverEl.style, { left: ax + 'px', top: ay - 1 + 'px', width: len + 'px', height: '2px',
       transform: `rotate(${Math.atan2(o.b.y - o.a.y, o.b.x - o.a.x)}rad)` });
     return;
   }
-  const r = Core.normRect(o.a, o.b), x = px(r.x), y = px(r.y);
+  const r = f, x = px(r.x), y = px(r.y);
   Object.assign(objHoverEl.style, { left: x + 'px', top: y + 'px', width: px(r.x + r.w) - x + 'px', height: px(r.y + r.h) - y + 'px', transform: '' });
 }
 
@@ -229,9 +230,9 @@ const EL = {
 function updateStatus() {
   setText(EL.stPos, cursor ? `${cursor.x}, ${cursor.y} px` : '—');
   const so = selObj();
-  const r = drag && drag.t === 'select' ? Core.normRect(drag.start, drag.end) : sel || (so && Core.normRect(so.a, so.b));
+  const r = drag && drag.t === 'select' ? Core.normRect(drag.start, drag.end) : sel || (so && Core.objFrame(so));
   setProp(EL.stSelWrap, 'hidden', !r);
-  setText(EL.stSel, r ? `${r.w} × ${r.h} px` : '');
+  setText(EL.stSel, r ? `${Math.round(r.w)} × ${Math.round(r.h)} px` : '');
   setAttr(img, 'aria-label', `Image, ${img.width} × ${img.height} px`);
   setText(EL.stSize, drag && drag.t === 'canvas'
     ? `${img.width} × ${img.height} → ${drag.w} × ${drag.h} px · Esc to cancel`

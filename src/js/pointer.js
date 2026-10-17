@@ -4,12 +4,12 @@ import { $, clamp, ov, ring, setProp, stage, textBox, vp } from './dom.js';
 import { doFill } from './fill.js';
 import { endCanvasDrag } from './handles.js';
 import { addObj, commitObjDrag, newObjId, objSel, objs, selObj, selectObj, showObjs, zAbove } from './objects.js';
-import { hitAt } from './scene.js';
+import { endLive, flushRedraw, hitAt, markDirty, setLive } from './scene.js';
 import { dropSelection, inside, liftSelection } from './selection.js';
 import { S, SHAPES, drag, sel, setDrag, setSel } from './state.js';
 import { commitText, startText } from './text.js';
-import { beginOp, dropOp, endOp } from './tiles.js';
-import { brushCommit, pick, shapeObj, stampLine } from './tools.js';
+import { dropOp } from './tiles.js';
+import { pick, shapeObj } from './tools.js';
 import { imgPt, requestRender, setCursor, setHover, setZoom, updateChrome, updateStatus } from './view.js';
 
 // ---------- pointer ----------
@@ -85,18 +85,19 @@ ov.addEventListener('pointerdown', (e) => {
   if (!right && objPointerDown(p, e)) { requestRender(); return; }
   switch (t) {
     case 'pencil': case 'eraser': {
-      const c = t === 'eraser' ? S.secondary : color;
-      beginOp(true);
-      setDrag({ t, last: ip, color: c });
-      stampLine(ip, ip, c, S.sizes[t]);
+      // A stroke is one object (docs/total-objects.md): drawn live on top as it grows, added on release.
+      const o = { t, pts: [ip.x, ip.y], color: t === 'eraser' ? S.secondary : color, size: S.sizes[t] };
+      setDrag({ t, last: ip, o });
+      setLive(o);
+      markDirty(Core.objBox(o));
       break;
     }
     case 'brush': {
       // Smoothing radius is in screen px (2 per step), fixed for the stroke even if the zoom changes.
-      beginOp(true);
-      const size = S.sizes.brush;
-      setDrag({ t, color, size, ptr: p, all: [], stroke: new Core.Stroke(p, S.smoothing * 2 / S.zoom, 0.5 / S.zoom) });
-      brushCommit(drag, [{ a: p, c: null, b: { x: p.x + 1e-3, y: p.y } }]); // the dot under the pointer (a 0-length line draws nothing)
+      const o = { t, segs: [{ a: p, c: null, b: { x: p.x + 1e-3, y: p.y } }], color, size: S.sizes.brush }; // the dot under the pointer (a 0-length line draws nothing)
+      setDrag({ t, color, size: o.size, ptr: p, o, stroke: new Core.Stroke(p, S.smoothing * 2 / S.zoom, 0.5 / S.zoom) });
+      setLive(o);
+      markDirty(Core.objBox(o));
       break;
     }
     case 'fill': doFill(ip, color); break;
@@ -140,14 +141,15 @@ ov.addEventListener('pointermove', (e) => {
     if (!evs.length) evs = [e];
     for (const ev of evs) {
       const q = imgPt(ev, r);
-      if (d.t === 'brush') { d.segs = (d.segs || []).concat(d.stroke.add(q)); d.ptr = q; }
+      if (d.t === 'brush') { addSegs(d, d.stroke.add(q)); d.ptr = q; }
       else {
         const iq = { x: Math.floor(q.x), y: Math.floor(q.y) };
-        stampLine(d.last, iq, d.color, S.sizes[d.t]);
+        if (iq.x === d.last.x && iq.y === d.last.y) continue;
+        d.o.pts.push(iq.x, iq.y);
+        markDirty(Core.objBox({ ...d.o, pts: [d.last.x, d.last.y, iq.x, iq.y] }));
         d.last = iq;
       }
     }
-    if (d.segs) { brushCommit(d, d.segs); d.segs = null; }
   } else if (SHAPES.has(d.t)) {
     d.end = { x: Math.floor(p.x), y: Math.floor(p.y) };
     d.shift = e.shiftKey;
@@ -166,6 +168,13 @@ ov.addEventListener('pointermove', (e) => {
   }
   requestRender();
 });
+
+// Settled brush segments join the live stroke; only their box is repainted.
+function addSegs(d, segs) {
+  if (!segs.length) return;
+  for (const g of segs) d.o.segs.push(g);
+  markDirty(Core.objBox({ ...d.o, segs }));
+}
 
 // Outline of the brush footprint, so big sizes show what they'll cover.
 const RING_TOOLS = new Set(['pencil', 'brush', 'eraser']);
@@ -208,13 +217,13 @@ function finishDrag(e) {
   if (!d) return;
   setDrag(null);
   if (d.t === 'pan') { stage.classList.remove('dragging'); if (!S.panKey) stage.classList.remove('panning'); }
-  else if (d.t === 'brush') {
-    // The stroke ends exactly where the pointer lifted (pointercancel carries no reliable position).
-    const q = e && e.type === 'pointerup' ? imgPt(e) : d.ptr;
-    brushCommit(d, d.stroke.finish(q));
-    endOp();
+  else if (d.t === 'brush' || d.t === 'pencil' || d.t === 'eraser') {
+    // The brush ends exactly where the pointer lifted (pointercancel carries no reliable position).
+    if (d.t === 'brush') addSegs(d, d.stroke.finish(e && e.type === 'pointerup' ? imgPt(e) : d.ptr));
+    flushRedraw(); // the last piece on screen, so the object can join without a repaint
+    endLive();
+    addObj(d.o, { keepSel: true }); // on top of everything (decision 10)
   }
-  else if (d.t === 'pencil' || d.t === 'eraser') endOp();
   else if (d.t === 'objmove' || d.t === 'objsize') commitObjDrag(d.before);
   else if (SHAPES.has(d.t)) {
     if (d.t !== 'line' && d.start.x === d.end.x && d.start.y === d.end.y) { requestRender(); return; } // a click, not a shape

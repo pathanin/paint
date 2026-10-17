@@ -1,11 +1,9 @@
 import Core from './core.js';
-import { base, bctx } from './doc.js';
 import { $, clamp, makeCanvas, ring, setAttr, setData, stage, toHex } from './dom.js';
 import { composite, restyleObj, selObj, selectObj } from './objects.js';
 import { dropSelection } from './selection.js';
 import { S } from './state.js';
 import { commitText, placeTextBox, textAt } from './text.js';
-import { TILE, op, touch } from './tiles.js';
 import { flash } from './toast.js';
 import { requestRender } from './view.js';
 
@@ -54,17 +52,26 @@ function setColor(which, hex, key) {
   });
 }
 
-function stampLine(a, b, color, size) {
-  const off = Math.floor(size / 2);
-  touch(Math.min(a.x, b.x) - off, Math.min(a.y, b.y) - off, Math.abs(b.x - a.x) + size, Math.abs(b.y - a.y) + size);
-  bctx.fillStyle = color;
-  bctx.beginPath();
-  for (const [x, y] of Core.line(a.x, a.y, b.x, b.y)) bctx.rect(x - off, y - off, size, size);
-  bctx.fill();
+// Pencil and eraser: square stamps along the Bresenham line between each pair of points, as one
+// path (whole-pixel rects in one opaque colour: the same pixels as stamping them one by one).
+// r: only the segments whose stamps reach r (a tile being repainted).
+function drawStamps(c, o, r) {
+  const off = Math.floor(o.size / 2), s = o.size, pts = o.pts;
+  c.fillStyle = o.color;
+  c.beginPath();
+  const n = pts.length;
+  for (let i = 0; i < n; i += 2) {
+    const ax = pts[i], ay = pts[i + 1], bx = i + 2 < n ? pts[i + 2] : ax, by = i + 2 < n ? pts[i + 3] : ay;
+    if (i + 2 >= n && n > 2) break; // the last point ends the previous segment
+    if (r && (Math.max(ax, bx) - off + s <= r.x || Math.min(ax, bx) - off >= r.x + r.w || Math.max(ay, by) - off + s <= r.y || Math.min(ay, by) - off >= r.y + r.h)) continue;
+    for (const [x, y] of Core.line(ax, ay, bx, by)) c.rect(x - off, y - off, s, s);
+  }
+  c.fill();
 }
 // Brush: Core.Stroke segments ({a, c, b}, c = quadratic control or null) as one path, so joins blend
 // once; a segment that doesn't start where the last one ended starts a new subpath (same shape:
-// round caps meet like a round join). Draws the live tail on the preview; brushCommit() the image.
+// round caps meet like a round join). Draws the live tail on the preview, and brush objects (with r,
+// only the segments that reach r: as brushCommit used to, so a tile never inks an edge twice).
 function brushPath(c, segs, color, size) {
   if (!segs.length) return;
   c.save();
@@ -81,53 +88,37 @@ function brushPath(c, segs, color, size) {
   c.stroke();
   c.restore();
 }
-// Add segments to the brush stroke d and draw them into the image. Stroking each batch over the
-// last would ink the soft edge pixels where batches overlap twice: darker bumps along the edge,
-// and a fringe the fill can't match. So the batch's box is put back as it was before the stroke
-// (from the op's tiles) and every segment of the stroke that reaches it is stroked again as one
-// path, clipped to the box: the image always matches the stroke so far drawn as one path.
-function brushCommit(d, segs) {
-  if (!segs.length) return;
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  for (const g of segs) {
-    g.box = segsBox([g], d.size / 2 + 1);
-    d.all.push(g);
-    x0 = Math.min(x0, g.box.x); y0 = Math.min(y0, g.box.y);
-    x1 = Math.max(x1, g.box.x + g.box.w); y1 = Math.max(y1, g.box.y + g.box.h);
-  }
-  x0 = Math.max(0, Math.floor(x0)); y0 = Math.max(0, Math.floor(y0));
-  x1 = Math.min(base.width, Math.ceil(x1)); y1 = Math.min(base.height, Math.ceil(y1));
-  if (x1 <= x0 || y1 <= y0) return;
-  const r = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
-  touch(r.x, r.y, r.w, r.h); // before drawing
-  if (!op) { brushPath(bctx, segs, d.color, d.size); return; } // the op was abandoned (GPU context lost)
-  for (const p of Core.tileParts(r, base.width, base.height, TILE)) {
-    const t = op.tiles.get(p.key);
-    if (t.cv) {
-      bctx.clearRect(p.x, p.y, p.w, p.h);
-      bctx.drawImage(t.cv, t.cx + p.x - t.x, t.cy + p.y - t.y, p.w, p.h, p.x, p.y, p.w, p.h);
-    } else bctx.putImageData(t.data, t.x, t.y, p.x - t.x, p.y - t.y, p.w, p.h);
-  }
-  const hit = d.all.filter(({ box: b }) => b.x < x1 && b.x + b.w > x0 && b.y < y1 && b.y + b.h > y0);
-  bctx.save();
-  bctx.beginPath();
-  bctx.rect(r.x, r.y, r.w, r.h);
-  bctx.clip();
-  brushPath(bctx, hit, d.color, d.size);
-  bctx.restore();
+const segBoxes = new WeakMap(); // segment -> its box grown by the half width (segments are immutable)
+function segsIn(o, r) {
+  if (!r) return o.segs;
+  const h = o.size / 2 + 1;
+  return o.segs.filter((g) => {
+    let b = segBoxes.get(g);
+    if (!b || b.h0 !== h) { b = Core.segsBox([g], h); b.h0 = h; segBoxes.set(g, b); }
+    return b.x < r.x + r.w && b.x + b.w > r.x && b.y < r.y + r.h && b.y + b.h > r.y;
+  });
 }
-// Bounding box of segments grown by h (a quadratic stays inside the hull of its points).
-function segsBox(segs, h) {
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  for (const g of segs) {
-    for (const q of g.c ? [g.a, g.b, g.c] : [g.a, g.b]) {
-      if (q.x < x0) x0 = q.x; if (q.y < y0) y0 = q.y; if (q.x > x1) x1 = q.x; if (q.y > y1) y1 = q.y;
+const segsBox = Core.segsBox;
+// Text, images and fills draw at (x, y) through m.
+function drawFramed(c, o) {
+  c.save();
+  const m = o.m || [1, 0, 0, 1];
+  c.transform(m[0], m[1], m[2], m[3], o.x, o.y);
+  if (o.t === 'text') {
+    c.font = `${o.fs}px ${o.font}`;
+    c.fillStyle = o.color;
+    c.textBaseline = 'alphabetic';
+    o.lines.forEach((ln, i) => c.fillText(ln, 0, i * o.fs * 1.2 + o.base));
+  } else {
+    if (o.asset.maskCv) { // a fill that isn't opaque everywhere replaces its pixels: clear them first
+      c.globalCompositeOperation = 'destination-out';
+      c.drawImage(o.asset.maskCv, 0, 0);
+      c.globalCompositeOperation = 'source-over';
     }
+    c.drawImage(o.asset.cv, 0, 0);
   }
-  return { x: x0 - h, y: y0 - h, w: x1 - x0 + 2 * h, h: y1 - y0 + 2 * h };
+  c.restore();
 }
-
-
 
 function pick(p, right) {
   const c = composite(); // what is seen: pixels + objects
@@ -145,7 +136,11 @@ function shapeObj(d) {
   return { t: d.t, a: d.start, b: Core.constrainShape(d.start, d.end, d.shift, d.t), color: d.color, alt: d.alt, size: S.sizes[d.t], mode: S.fillMode };
 }
 function drawShape(c, d) { const o = shapeObj(d); drawObj(c, o); return Core.objBox(o); }
-function drawObj(c, o) {
+// Draw object o into c. r: the tile being repainted (strokes then draw only what reaches it).
+function drawObj(c, o, r) {
+  if (o.t === 'pencil' || o.t === 'eraser') { drawStamps(c, o, r); return; }
+  if (o.t === 'brush') { brushPath(c, segsIn(o, r), o.color, o.size); return; }
+  if (o.t === 'text' || o.t === 'image' || o.t === 'fill') { drawFramed(c, o); return; }
   const a = o.a, b = o.b, lw = o.size, off = lw % 2 ? 0.5 : 0;
   c.save();
   c.lineWidth = lw;
@@ -157,13 +152,13 @@ function drawObj(c, o) {
     c.lineTo(b.x + off, b.y + off);
     c.stroke();
   } else {
-    const r = Core.normRect(a, b);
-    if (o.t === 'rect') c.rect(r.x + off, r.y + off, r.w, r.h);
-    else c.ellipse(r.x + r.w / 2 + off, r.y + r.h / 2 + off, r.w / 2, r.h / 2, 0, 0, Math.PI * 2);
+    const q = Core.normRect(a, b);
+    if (o.t === 'rect') c.rect(q.x + off, q.y + off, q.w, q.h);
+    else c.ellipse(q.x + q.w / 2 + off, q.y + q.h / 2 + off, q.w / 2, q.h / 2, 0, 0, Math.PI * 2);
     if (o.mode !== 'outline') { c.fillStyle = o.mode === 'fill' ? o.color : o.alt; c.fill(); }
     if (o.mode !== 'fill') c.stroke();
   }
   c.restore();
 }
 
-export { brushCommit, brushPath, drawObj, drawShape, pick, segsBox, setColor, setSize, setTool, shapeObj, stampLine };
+export { brushPath, drawObj, drawShape, pick, segsBox, setColor, setSize, setTool, shapeObj };

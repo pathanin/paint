@@ -960,3 +960,34 @@ test('diffObjs / applyPairs: an entry holds only what changed, and swapping it u
   assert.deepEqual(Core.applyPairs(B, pairs.map(([n, t]) => [t, n])), C);
   assert.deepEqual(Core.diffObjs(A, A), []);
 });
+
+test('stroke, text and bitmap objects: boxes, hit tests, moves, turns and flips', () => {
+  const pen = { t: 'pencil', pts: [10, 10, 20, 10], size: 3, color: '#000' };
+  assert.deepEqual(Core.objBox(pen), { x: 9, y: 9, w: 13, h: 3 }); // stamps cover x 9..22, y 9..12
+  assert.ok(Core.hitsObject(pen, { x: 15, y: 11 }, 0) && !Core.hitsObject(pen, { x: 15, y: 14 }, 0));
+  assert.deepEqual(Core.moveObj(pen, 2, 3).pts, [12, 13, 22, 13]);
+  // a turned stamp covers the pixels the turned image would: flipH maps pixel x to W - 1 - x (odd size)
+  assert.deepEqual(Core.transformObj(pen, 'flipH', 100, 50).pts, [89, 10, 79, 10]);
+  assert.deepEqual(Core.transformObj({ ...pen, size: 2 }, 'flipH', 100, 50).pts, [90, 10, 80, 10]);
+  const four = (o) => ['rotR', 'rotR', 'rotR', 'rotR'].reduce((q, k, i) => Core.transformObj(q, k, i % 2 ? 50 : 100, i % 2 ? 100 : 50), o);
+  assert.deepEqual(four(pen).pts, pen.pts);
+
+  const br = { t: 'brush', segs: [{ a: { x: 10, y: 10 }, c: null, b: { x: 30, y: 10 } }], size: 4, color: '#000' };
+  assert.deepEqual(Core.objBox(br), { x: 7, y: 7, w: 26, h: 6 });
+  assert.ok(Core.hitsObject(br, { x: 20, y: 11.5 }, 0) && !Core.hitsObject(br, { x: 20, y: 13 }, 0));
+  assert.deepEqual(Core.transformObj(br, 'flipH', 100, 50).segs[0].a, { x: 90, y: 10 });
+
+  const im = { t: 'image', x: 5, y: 6, w: 10, h: 4, asset: {} };
+  assert.deepEqual(Core.objBox(im), { x: 5, y: 6, w: 10, h: 4 });
+  const r = Core.transformObj(im, 'rotR', 100, 50); // the 10 x 4 image turns into a 4 x 10 one
+  assert.deepEqual(Core.objBox(r), { x: 40, y: 5, w: 4, h: 10 });
+  assert.ok(Core.hitsObject(r, { x: 42, y: 14 }, 0) && !Core.hitsObject(r, { x: 46, y: 14 }, 0));
+  assert.deepEqual(Core.objBox(four(im)), Core.objBox(im));
+  const fl = { t: 'fill', x: 0, y: 0, w: 2, h: 1, asset: { mask: new Uint8Array([1, 0]) } };
+  assert.ok(Core.hitsObject(fl, { x: 0.5, y: 0.5 }, 0) && !Core.hitsObject(fl, { x: 1.5, y: 0.5 }, 0), 'a fill hits only its own pixels');
+  const tx = { t: 'text', x: 10, y: 10, lines: ['ab'], fs: 20, w: 30, base: 18, color: '#000', font: 'x' };
+  assert.deepEqual(Core.objBox(tx), { x: 0, y: 0, w: 50, h: 44 });
+  assert.deepEqual(Core.objHandles(tx), []);
+  assert.equal(Core.handleAt(tx, { x: 10, y: 10 }, 5), null);
+  assert.deepEqual(Core.scaleObj(im, 2, 2).m, [2, 0, 0, 2]);
+});

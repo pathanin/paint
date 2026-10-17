@@ -92,11 +92,12 @@ function commitObjDrag(before) {
   pushHist({ type: 'obj', pairs, bytes: pairBytes(pairs.length) });
 }
 const withObj = (o) => objs.map((x) => (x.id === o.id ? o : x));
-// A new object goes on top.
-function addObj(o) {
+// A new object goes on top, selected (opt.keepSel: a stroke leaves the selection as it was).
+function addObj(o, opt) {
   o = { ...o, id: nextObjId++, z: Core.zBetween(objs.length ? objs[objs.length - 1].z : null, null) };
   setObjs(objs.concat(o), undefined, [[o, null]]);
-  objSel = o.id;
+  if (!(opt && opt.keepSel)) objSel = o.id;
+  return o;
 }
 function selectObj(id) {
   if (objSel === id) return;
@@ -105,13 +106,13 @@ function selectObj(id) {
 }
 // Tab / ⇧Tab on the canvas with the Move tool: the next or previous shape, in drawing order. Past
 // either end it deselects and returns false, so the key moves focus on as usual (no focus trap).
-const OBJ_NAMES = { line: 'Line', rect: 'Rectangle', ellipse: 'Ellipse' };
+const OBJ_NAMES = { line: 'Line', rect: 'Rectangle', ellipse: 'Ellipse', pencil: 'Pencil stroke', eraser: 'Eraser stroke', brush: 'Brush stroke', text: 'Text', image: 'Image', fill: 'Fill' };
 function cycleObj(dir) {
   const i = objs.findIndex((o) => o.id === objSel), j = i < 0 ? (dir > 0 ? 0 : -1) : i + dir;
   if (j < 0 || j >= objs.length) { if (objSel != null) selectObj(null); return false; }
-  const o = objs[j], r = Core.normRect(o.a, o.b);
+  const o = objs[j], r = Core.objFrame(o);
   selectObj(o.id);
-  announce(`${OBJ_NAMES[o.t]}, ${r.w} × ${r.h} px at ${r.x}, ${r.y}. Shape ${j + 1} of ${objs.length}`);
+  announce(`${OBJ_NAMES[o.t]}, ${Math.round(r.w)} × ${Math.round(r.h)} px at ${Math.round(r.x)}, ${Math.round(r.y)}. Shape ${j + 1} of ${objs.length}`);
   return true;
 }
 function deleteObj() {

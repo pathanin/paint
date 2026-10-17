@@ -257,19 +257,19 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     { const n = await P(() => window.__paint.hist.undoStack.length); const [x, y] = await at(50, 50); await page.mouse.click(x, y); await frame();
       ok(await P(() => window.__paint.hist.undoStack.length) === n, 'no-op fill adds no undo step'); }
     await P(() => { window.__paint.S.primary = '#000000'; });
-    // ---- 3. one scribble over more tiles than the live-tile cap (512) still undoes exactly ----
+    // ---- 3. one big scribble is one object: a small undo entry, and undo/redo are pixel-exact ----
     await P(() => { window.__paint.newDoc(8000, 6000); window.__paint.fitZoom(false); window.__paint.S.sizes.brush = 100; });
     const before = await hash();
     const zig = [];
     for (let r = 0; r <= 24; r++) zig.push([r % 2 ? 7900 : 100, r * 245 + 50]);
     await drag('brush', zig);
-    const tiles = await P(() => window.__paint.hist.top().parts.length);
-    ok(tiles > 512, `scribble touched ${tiles} tiles (> 512)`);
+    const top = await P(() => { const e = window.__paint.hist.top(); return { type: e.type, n: e.pairs && e.pairs.length, bytes: e.bytes, t: e.pairs && e.pairs[0][0].t }; });
+    ok(top.type === 'obj' && top.n === 1 && top.t === 'brush' && top.bytes < 1024, `the scribble is one brush object in a ${top.bytes}-byte entry (it covered most of 8000 × 6000)`);
     const after = await hash();
     await P(() => window.__paint.undo()); await frame();
-    ok(await hash() === before, 'scribble over > 512 tiles: undo is pixel-exact');
+    ok(await hash() === before, 'big scribble: undo is pixel-exact');
     await P(() => window.__paint.redo()); await frame();
-    ok(await hash() === after, 'scribble over > 512 tiles: redo is pixel-exact');
+    ok(await hash() === after, 'big scribble: redo is pixel-exact');
     if (errs.length) { fails++; console.log('FAIL: page errors', errs); }
   } finally {
     await browser.close();

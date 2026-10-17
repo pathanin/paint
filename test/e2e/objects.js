@@ -144,11 +144,14 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.keyboard.press('Delete');
     ok((await objs()).length === 1 && await objSel() === null, 'Delete removes the selected object');
 
-    // ---- 7. pixel tools paint under the objects ----
+    // ---- 7. strokes are objects too, and new marks go on top (docs/total-objects.md, decision 10) ----
     await page.keyboard.press('KeyP');
     ok(await objSel() === null, 'a pixel tool drops the object selection');
     await drag([[5, 60], [200, 60]]);
-    ok(!isWhite(await pixel(5, 60)) && (await objs()).length === 1, 'the pencil paints the pixels; the object stays'); // colour 1 is still the palette red
+    { const ob = await objs(), at60 = await P(() => [...window.__paint.composite().getContext('2d').getImageData(85, 60, 1, 1).data]), red = await P(() => window.__paint.S.primary);
+      ok(isWhite(await pixel(5, 60)) && !isWhite(await seen(5, 60)) && ob.length === 2 && ob[1].t === 'pencil' && ob[1].color === red,
+        'the pencil makes a stroke object on top; the pixels underneath are untouched'); // colour 1 is still the palette red
+      ok(!isBlack(at60) || red === '#000000', 'the stroke shows over the filled shape it crosses: ' + at60); }
     await P(() => { window.__paint.S.primary = '#00a2e8'; });
     await page.keyboard.press('KeyI');
     await page.mouse.click(...await at(80, 70));
@@ -159,7 +162,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.keyboard.press('Meta+KeyE');
     ok((await objs()).length === 0 && isBlack(await pixel(80, 70)), '⌘E bakes the objects into the pixels');
     await page.keyboard.press('Meta+KeyZ');
-    ok((await objs()).length === 1 && await hash() === before, 'one undo brings the object back and un-bakes its pixels');
+    ok((await objs()).length === 2 && await hash() === before, 'one undo brings the objects back and un-bakes their pixels');
     await page.keyboard.press('Meta+Shift+KeyZ');
     ok((await objs()).length === 0 && isBlack(await pixel(80, 70)), 'redo flattens again');
     await page.keyboard.press('Meta+KeyZ');
@@ -183,7 +186,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       await page.keyboard.press('Meta+KeyZ'); await page.keyboard.press('Meta+KeyZ');
       const dk = await depth();
       await P((k) => window.__paint.transformDoc(k), k);
-      ok((await objs()).length === 3 && await depth() === dk + 1, k + ' keeps the shapes as objects, in one undo step');
+      ok((await objs()).length === 4 && await depth() === dk + 1, k + ' keeps the shapes and the stroke as objects, in one undo step');
       // What is seen vs flatten-then-transform. Not bit-exact: Chrome anti-aliases a shape's edge a
       // little differently when it is drawn turned than when its pixels are turned (up to ~110 on a
       // few edge pixels of the ellipse). A shape one pixel off would differ by 255 along the filled
@@ -203,25 +206,26 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       ok(JSON.stringify(await objs()) === JSON.stringify(o9) && await hash() === pix9 && await chash() === seen9, 'undo puts the image and the shapes back');
     }
     await P(() => window.__paint.resizeDoc(400, 300, 'canvas', 'c'));
-    ok(JSON.stringify((await objs()).map((x) => x.a)) === JSON.stringify(o9.map((x) => ({ x: x.a.x + 50, y: x.a.y + 50 }))), 'canvas size (centred) shifts the shapes with the pixels');
+    ok(JSON.stringify((await objs()).filter((x) => x.a).map((x) => x.a)) === JSON.stringify(o9.filter((x) => x.a).map((x) => ({ x: x.a.x + 50, y: x.a.y + 50 }))) && await P(() => window.__paint.objs[1].pts[0]) === 55, 'canvas size (centred) shifts the shapes and the stroke with the pixels');
     await page.keyboard.press('Meta+KeyZ');
     await P(() => window.__paint.resizeDoc(150, 100, 'scale'));
     await P(() => new Promise((r) => { const t = () => (window.__paint.img.width === 150 ? r() : setTimeout(t, 50)); t(); }));
-    o = await objs();
+    o = (await objs()).filter((x) => x.a); // the shapes (the pencil stroke is checked by its own kind)
     ok(o.length === 3 && o[0].a.x === 15 && o[0].size === 1 && o[2].size === 2, 'resize scales the shapes and their strokes (a 2 px edge at 31 is a 1 px one centred on 15.5): ' + JSON.stringify(o.map((x) => [x.a, x.size])));
     await page.keyboard.press('Meta+KeyZ');
     ok(JSON.stringify(await objs()) === JSON.stringify(o9), 'undo restores them');
     await page.keyboard.press('KeyS');
     await drag([[140, 20], [299, 199]]);
     await P(() => window.__paint.crop && document.querySelector('#cropBtn').click());
-    o = await objs();
-    ok(await P(() => window.__paint.img.width) === 159 && o.length === 2 && o.every((x) => x.t !== 'rect') && o[0].a.x === 9 && o[0].a.y === 9, 'crop (from 141, 21) shifts the shapes and drops one left wholly outside: ' + JSON.stringify(o.map((x) => [x.t, x.a])));
+    o = (await objs()).filter((x) => x.a);
+    ok(await P(() => window.__paint.img.width) === 159 && o.length === 2 && o.every((x) => x.t !== 'rect') && o[0].a.x === 9 && o[0].a.y === 9 &&
+      await P(() => window.__paint.objs[0].t === 'pencil' && window.__paint.objs[0].pts[0] === -136), 'crop (from 141, 21) shifts the shapes and the stroke that crosses it, and drops one left wholly outside: ' + JSON.stringify(o.map((x) => [x.t, x.a])));
     await page.keyboard.press('Meta+KeyZ');
     ok(JSON.stringify(await objs()) === JSON.stringify(o9) && await hash() === pix9, 'one undo brings the crop and the dropped shape back');
     // leave the rest of the run as it was: just the filled rectangle
     await page.keyboard.press('Meta+KeyZ'); await page.keyboard.press('Meta+KeyZ');
     await P(() => { const p = window.__paint; p.S.sizes.line = 2; p.S.sizes.ellipse = 2; });
-    ok((await objs()).length === 1 && await hash() === before, 'back to one shape');
+    ok((await objs()).length === 2 && await hash() === before, 'back to one shape and the stroke');
 
     // ---- 10. a line object: two end handles ----
     await page.keyboard.press('KeyL');

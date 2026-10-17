@@ -53,7 +53,8 @@ function sceneSwap(prev, next, pairs) {
     for (const o of came) tree.insert(entryOf(o));
   }
   for (const o of gone) markDirty(boxOf(o));
-  for (const o of came) markDirty(boxOf(o));
+  if (!quiet) for (const o of came) markDirty(boxOf(o));
+  quiet = false;
 }
 // Objects whose box meets r, bottom to top.
 function objsIn(r) {
@@ -66,6 +67,17 @@ function hitAt(p, tol) {
   for (let i = hits.length - 1; i >= 0; i--) if (Core.hitsObject(hits[i], p, tol)) return hits[i];
   return null;
 }
+
+// The stroke being drawn (pencil, eraser, brush): drawn on top of every object, through the same
+// tile repaint, so its pixels are already final when it joins the scene on release (endLive()).
+// Its arrays grow as the pointer moves; the caller marks each new piece dirty.
+let live = null, quiet = false;
+const meets = (b, r) => b.x < r.x + r.w && b.x + b.w > r.x && b.y < r.y + r.h && b.y + b.h > r.y;
+const liveBox = () => Core.objBox(live);
+function setLive(o) { live = o; }
+// The live stroke is about to join the scene on top, as the next object added: its pixels are on
+// screen already, so that add marks nothing.
+function endLive() { quiet = !!live; live = null; }
 
 let dirty = [], queued = false, redrawCount = 0;
 function markDirty(r) {
@@ -129,7 +141,7 @@ const TILE = 512; // 256 took 3.5x as long to rebuild 5k objects at 10000² (1,6
 const scratch = makeCanvas(TILE, TILE), sg = scratch.getContext('2d');
 function drawTile(g, t) {
   const hits = objsIn(t);
-  if (!hits.length) { // only the base: one exact copy (onto transparent, alpha too)
+  if (!hits.length && !(live && meets(liveBox(), t))) { // only the base: one exact copy (onto transparent, alpha too)
     g.clearRect(t.x, t.y, t.w, t.h);
     g.drawImage(base, t.x, t.y, t.w, t.h, t.x, t.y, t.w, t.h);
     return;
@@ -138,7 +150,8 @@ function drawTile(g, t) {
   sg.clearRect(0, 0, TILE, TILE);
   sg.drawImage(base, t.x, t.y, t.w, t.h, 0, 0, t.w, t.h);
   sg.translate(-t.x, -t.y);
-  for (const o of hits) drawObj(sg, o);
+  for (const o of hits) drawObj(sg, o, t);
+  if (live) drawObj(sg, live, t);
   g.clearRect(t.x, t.y, t.w, t.h);
   g.drawImage(scratch, 0, 0, t.w, t.h, t.x, t.y, t.w, t.h);
 }
@@ -150,4 +163,4 @@ function freshRender() {
   return c;
 }
 
-export { boxOf, freshRender, flushRedraw, hitAt, markAll, markDirty, objsIn, redrawCount, sceneSwap };
+export { boxOf, endLive, freshRender, setLive, flushRedraw, hitAt, markAll, markDirty, objsIn, redrawCount, sceneSwap };
