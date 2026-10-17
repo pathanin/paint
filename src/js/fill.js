@@ -62,7 +62,7 @@ async function runFill(p, c, tolerance) {
     if (worker !== false) {
       try {
         const snap = createImageBitmap(composite());
-        kickFrame();
+        // kickFrame(); PROBE-TEST
         const bmp = await snap;
         worker = worker || startWorker('fill-worker');
         res = await workerCall(worker, job({ bmp }), [bmp]);
