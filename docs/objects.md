@@ -4,6 +4,8 @@ An exploration (2026-10-14) of whether and how Paint could treat things as objec
 
 A thin spike of the recommended option is on branch `objects-spike`. See "The spike" below for what it does and doesn't cover.
 
+Follow-up (2026-10-17): `docs/total-objects.md` plans going further, to every mark as an object (option C below), now that `file://` is dropped.
+
 ## TL;DR
 
 - Today every tool bakes pixels into `#image` at once, and undo stores pixels (tiles, fill masks, whole canvases). So "objects" can't be added to the select tool. It is a second document model next to the raster.

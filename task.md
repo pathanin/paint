@@ -18,6 +18,7 @@ The design decisions behind the current UI, the evidence behind them, and what's
 ## Backlog
 
 0. **Objects (live shapes), exploration:** see `docs/objects.md`. Built on branch `objects-spike` (always on). It reopens "selection resize handles" (below) as feature work.
+   - **Total objects (plan, 2026-10-17):** every mark (strokes, eraser, fill, text, images, the opened picture) as an object, with tldraw-style indexing and history over a document-resolution cache. See `docs/total-objects.md`, which lists 10 open decisions. It would reverse the "no full scene graph" verdict in `docs/objects.md`.
 
 1. **Not yet verified:**
    - Firefox and Safari. Neither has the File System Access API, so the download-save path runs there. The `:has()`, `field-sizing` and `text-wrap: balance` CSS also needs checking.
