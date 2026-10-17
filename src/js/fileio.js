@@ -138,11 +138,13 @@ async function encodeFor(name) {
   if (!hasObjs()) return png;
   return new Blob([await withScene(new Uint8Array(await png.arrayBuffer()), userObjs(), objIdNext())], { type: 'image/png' });
 }
-let saving = false;
-async function save(as) {
-  if (saving) return; // one picker/write at a time
-  saving = true;
-  try { await saveNow(as); } finally { saving = false; }
+// The running save's promise, or null: one picker/write at a time (another Save meanwhile does nothing).
+// Tests await __paint.saving before reading what a save did.
+let saving = null;
+function save(as) {
+  if (saving) return saving;
+  saving = saveNow(as).finally(() => { saving = null; });
+  return saving;
 }
 async function saveNow(as) {
   commitText();
@@ -197,4 +199,4 @@ async function saveNow(as) {
   }
 }
 
-export { cantOpen, confirmDiscard, decodeFile, encodeFor, isDirty, loadFile, openFile, save, tooBigToOpen };
+export { cantOpen, confirmDiscard, decodeFile, encodeFor, isDirty, loadFile, openFile, save, saving, tooBigToOpen };

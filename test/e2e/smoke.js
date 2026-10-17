@@ -201,23 +201,27 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     // and the late toast then failed the Save As check below too).
     await page.waitForFunction(() => /Downloaded/.test(document.querySelector('#toast').textContent), null, { timeout: 5000 }).catch(() => {});
     ok(/Downloaded/.test(await page.locator('#toast').textContent()), 'download save shows toast');
-    // round 11: Save As on the download path asks for a name; cancel downloads nothing
+    // round 11: Save As on the download path asks for a name; cancel downloads nothing.
+    // Each save is async (encoding, maybe in a worker) and one more Save meanwhile does nothing, so
+    // every check waits for the save it started (__paint.saving), not a fixed delay (that flaked).
+    const saved = () => P(() => window.__paint.saving);
+    await saved();
     {
       const fn0 = await P(() => window.__paint.S.fileName);
       await P(() => { window.__realPrompt = window.prompt; window.prompt = () => null; window.__paint.flash('—'); });
-      await page.keyboard.press('Meta+Shift+KeyS'); await page.waitForTimeout(150);
+      await page.keyboard.press('Meta+Shift+KeyS'); await saved();
       ok(!/Downloaded/.test(await page.locator('#toast').textContent()) && await P(() => window.__paint.S.fileName) === fn0, 'cancelled Save As downloads nothing');
       await P(() => { window.prompt = (m, d) => { window.__promptDefault = d; return ' sketch '; }; });
-      await page.keyboard.press('Meta+Shift+KeyS'); await page.waitForTimeout(150);
+      await page.keyboard.press('Meta+Shift+KeyS'); await saved();
       ok(await P(() => window.__promptDefault) === fn0, 'Save As prompt suggests the current name');
       ok(/Downloaded sketch\.png/.test(await page.locator('#toast').textContent()) && await P(() => window.__paint.S.fileName) === 'sketch.png', 'Save As downloads under the typed name, .png added: ' + await page.locator('#toast').textContent());
       await P(() => { window.prompt = () => 'photo.jpg'; });
-      await page.keyboard.press('Meta+Shift+KeyS'); await page.waitForTimeout(150);
+      await page.keyboard.press('Meta+Shift+KeyS'); await saved();
       ok(await P(() => window.__paint.S.fileName) === 'photo.jpg', 'Save As keeps a writable extension');
       // round 12: a dot isn't an extension; names are sanitised so title and download agree; prompt says what's accepted
       for (const [typed, want] of [['report v1.2', 'report v1.2.png'], ['a/b.png', 'a_b.png']]) {
         await P((t) => { window.prompt = (m) => { window.__promptMsg = m; return t; }; }, typed);
-        await page.keyboard.press('Meta+Shift+KeyS'); await page.waitForTimeout(150);
+        await page.keyboard.press('Meta+Shift+KeyS'); await saved();
         ok(await P(() => window.__paint.S.fileName) === want, `Save As "${typed}" -> ${want}, got ` + await P(() => window.__paint.S.fileName));
       }
       ok(/PNG/.test(await P(() => window.__promptMsg)) && /JPEG/.test(await P(() => window.__promptMsg)), 'Save As prompt names the formats: ' + await P(() => window.__promptMsg));
@@ -587,7 +591,8 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.keyboard.press('Escape'); await page.waitForTimeout(150);
     // error toasts go to an assertive live region
     await page.evaluate(() => window.__paint.flash('Save failed: x', true));
-    await page.waitForTimeout(100);
+    // flash() clears the live region, then fills it 50 ms later: wait for it (a fixed 100 ms was flaky under load)
+    await page.waitForFunction(() => /Save failed/.test(document.querySelector('#srAlert').textContent), null, { timeout: 1000 }).catch(() => {});
     ok(/Save failed/.test(await page.locator('#srAlert').textContent()), 'error announced assertively');
     // canvas has an accessible name
     ok(/800 × 600/.test(await page.locator('#image').getAttribute('aria-label') || ''), 'image canvas labelled with size');
