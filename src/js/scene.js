@@ -109,38 +109,83 @@ function markDirty(r) {
 const markAll = () => markDirty({ x: 0, y: 0, w: img.width, h: img.height });
 // Tiles still to repaint once the visible ones are done, by key. A big repaint (rotate, resize, a
 // context restored, thousands of objects at once) paints what is on screen first and the rest in
-// slices of about SLICE_MS between frames, so the page answers meanwhile (OpenPencil's "visible
-// before overscan"). Anything that reads the cache (save, copy, the picker, flatten, the tests'
-// __paint.img) calls flushRedraw() first, which finishes them all.
+// slices between frames, so the page answers meanwhile (OpenPencil's "visible before overscan").
+// Anything that reads the cache (save, copy, the picker, flatten, the tests' __paint.img) calls
+// flushRedraw() first, which finishes them all.
+// The GPU, not the main thread, is what a big repaint costs: at 10000², 360 tiles take ~2 ms to
+// queue and ~50 ms to draw, and a frame waits for everything queued before it. So once over BIG tiles
+// are queued, a fence (gpuFence()) marks their end, and until it passes, another big repaint keeps
+// its rects dirty and slices wait: held arrows with 5k objects selected repaint once per GPU
+// round, with whatever came meanwhile, instead of stacking 50 ms per press. Small repaints (a
+// stroke, one object) never wait.
 const later = new Map();
 const SLICE_MS = 12, BIG = 64;
-let laterTimer = 0;
+let laterTimer = 0, fence = null;
 function paint(all) {
   queued = false;
+  const now = [];
   if (dirty.length) {
     const rs = dirty;
     dirty = [];
     const tiles = Core.dirtyTiles(rs, img.width, img.height, TILE);
+    if (!all && tiles.length > BIG && fence) { dirty = rs; queued = true; return; } // repainted when it passes
     if (!all && tiles.length > BIG) {
       const v = visibleRect();
       for (const t of tiles) {
-        if (v && t.x < v.x + v.w && t.x + t.w > v.x && t.y < v.y + v.h && t.y + t.h > v.y) { later.delete(t.key); redrawCount++; drawTile(ctx, t); }
+        if (v && t.x < v.x + v.w && t.x + t.w > v.x && t.y < v.y + v.h && t.y + t.h > v.y) { later.delete(t.key); now.push(t); }
         else later.set(t.key, t);
       }
-    } else for (const t of tiles) { later.delete(t.key); redrawCount++; drawTile(ctx, t); }
+    } else for (const t of tiles) { later.delete(t.key); now.push(t); }
   }
-  if (all) { for (const t of later.values()) { redrawCount++; drawTile(ctx, t); } later.clear(); }
-  if (later.size && !laterTimer) laterTimer = setTimeout(paintLater, 0);
+  if (all) { now.push(...later.values()); later.clear(); }
+  redrawCount += now.length;
+  drawTiles(ctx, now);
+  if (now.length > BIG) fenceAfter();
+  if (later.size && !laterTimer && !fence) laterTimer = setTimeout(paintLater, 0);
 }
 function paintLater() {
   laterTimer = 0;
+  if (fence) return; // fencePassed() comes back
   const end = performance.now() + SLICE_MS;
-  for (const [k, t] of later) {
-    later.delete(k);
-    redrawCount++; drawTile(ctx, t);
-    if (performance.now() > end) break;
+  let n = 0;
+  while (later.size && n < BIG && performance.now() <= end) {
+    const batch = [];
+    for (const [k, t] of later) { later.delete(k); batch.push(t); if (batch.length === POOL) break; }
+    n += batch.length;
+    drawTiles(ctx, batch);
   }
-  if (later.size) laterTimer = setTimeout(paintLater, 0);
+  redrawCount += n;
+  fenceAfter();
+  if (later.size && !fence) laterTimer = setTimeout(paintLater, 0);
+}
+// A WebGL2 fence after the work queued on #image so far: a 1 px copy of #image into a small canvas,
+// uploaded to a texture (GPU to GPU, so ordered after it), then fenceSync. Polling it never blocks.
+// Without WebGL2 there is no fence, and nothing waits.
+let gl = null, tiny = null, tex = null;
+function fenceAfter() {
+  if (gl === null) {
+    try { gl = new OffscreenCanvas(1, 1).getContext('webgl2') || false; } catch { gl = false; }
+    if (gl) { tiny = makeCanvas(1, 1).getContext('2d'); tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex); }
+  }
+  if (!gl || gl.isContextLost()) return;
+  tiny.clearRect(0, 0, 1, 1);
+  tiny.drawImage(img, 0, 0, 1, 1, 0, 0, 1, 1);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tiny.canvas);
+  const f = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+  if (!f) return;
+  gl.flush();
+  if (fence) { gl.deleteSync(fence.f); fence.f = f; fence.t = performance.now(); } // its poll goes on
+  else { fence = { f, t: performance.now() }; setTimeout(pollFence, 2); }
+}
+function pollFence() {
+  const f = fence;
+  if (!f) return;
+  // 2 s: a fence that never passes (a lost context) mustn't stop the repaint for good
+  if (!gl.isContextLost() && gl.getSyncParameter(f.f, gl.SYNC_STATUS) !== gl.SIGNALED && performance.now() - f.t < 2000) { setTimeout(pollFence, 2); return; }
+  if (!gl.isContextLost()) gl.deleteSync(f.f);
+  fence = null;
+  if (queued) paint(false);
+  else if (later.size && !laterTimer) laterTimer = setTimeout(paintLater, 0);
 }
 const flushRedraw = () => paint(true);
 // The image px rect on screen, or null if the view can't tell (not laid out).
@@ -160,28 +205,35 @@ function visibleRect() {
 //  - At 10000², a path drawn straight into the big canvas after a drawImage into it costs ~12 ms of
 //    GPU time; composed on the scratch, ~0.1 ms.
 const TILE = 512; // 256 took 3.5x as long to rebuild 5k objects at 10000² (1,600 copies, 575 ms vs 163 ms)
-const scratch = makeCanvas(TILE, TILE), sg = scratch.getContext('2d');
-function drawTile(g, t) {
-  const hits = objsIn(t), lv = live && liveAt.get(t.key);
-  if (!hits.length && !lv) { // only the base: one exact copy (onto transparent, alpha too)
-    g.clearRect(t.x, t.y, t.w, t.h);
-    g.drawImage(base, t.x, t.y, t.w, t.h, t.x, t.y, t.w, t.h);
-    return;
-  }
+// A pool of scratch canvases, filled in turn and then copied in together. With one scratch, each tile's
+// copy has to land before the next tile can clear it, so the GPU alternates between the scratch and
+// #image tile by tile; at 10000², 360 tiles took ~135 ms of GPU time that way, and ~65 ms in runs of 16.
+// Every tile goes through a scratch, even one with only the base: a 512² copy from the big base into
+// the big #image costs about as much as composing one (both canvases huge).
+const POOL = 16;
+const pool = Array.from({ length: POOL }, () => { const c = makeCanvas(TILE, TILE); return { c, g: c.getContext('2d') }; });
+function compose(s, t) {
+  const sg = s.g, hits = objsIn(t), lv = live && liveAt.get(t.key);
   sg.setTransform(1, 0, 0, 1, 0, 0);
   sg.clearRect(0, 0, TILE, TILE);
   sg.drawImage(base, t.x, t.y, t.w, t.h, 0, 0, t.w, t.h);
+  if (!hits.length && !lv) return;
   sg.translate(-t.x, -t.y);
   for (const o of hits) drawObj(sg, o, t);
   if (lv) drawPieces(sg, live, lv);
-  g.clearRect(t.x, t.y, t.w, t.h);
-  g.drawImage(scratch, 0, 0, t.w, t.h, t.x, t.y, t.w, t.h);
+}
+function drawTiles(g, tiles) {
+  for (let i = 0; i < tiles.length; i += POOL) {
+    const run = tiles.slice(i, i + POOL);
+    run.forEach((t, j) => compose(pool[j], t));
+    run.forEach((t, j) => { g.clearRect(t.x, t.y, t.w, t.h); g.drawImage(pool[j].c, 0, 0, t.w, t.h, t.x, t.y, t.w, t.h); });
+  }
 }
 // The whole scene drawn into a new canvas the same way, tile by tile: what the cache must equal after
 // any sequence of repaints (the tests compare the two).
 function freshRender() {
   const c = makeCanvas(base.width, base.height), g = c.getContext('2d');
-  for (const t of Core.dirtyTiles([{ x: 0, y: 0, w: c.width, h: c.height }], c.width, c.height, TILE)) drawTile(g, t);
+  drawTiles(g, Core.dirtyTiles([{ x: 0, y: 0, w: c.width, h: c.height }], c.width, c.height, TILE));
   return c;
 }
 
