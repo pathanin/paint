@@ -38,7 +38,7 @@ textBox.addEventListener('blur', (e) => {
 
 // Shortcuts follow the characters on the user's layout (AZERTY, Dvorak, German "+"), so the keys
 // match the labels. Non-Latin layouts fall back to the physical letter key; digits stay physical.
-const PUNCT = { '[': 'BracketLeft', ']': 'BracketRight', '+': 'Equal', '=': 'Equal', '-': 'Minus', '_': 'Minus' };
+const PUNCT = { '[': 'BracketLeft', ']': 'BracketRight', '{': 'BracketLeft', '}': 'BracketRight', '+': 'Equal', '=': 'Equal', '-': 'Minus', '_': 'Minus' };
 function keyId(e) {
   if (/^[a-z]$/i.test(e.key)) return 'Key' + e.key.toUpperCase();
   if (PUNCT[e.key]) return PUNCT[e.key];
@@ -88,8 +88,8 @@ window.addEventListener('keydown', (e) => {
       // Only with objects to act on; otherwise the browser keeps ⌘D (bookmark) and ⌘[ ⌘] (back, forward).
       KeyD: selList().length && duplicateObj,
       KeyE: hasObjs() && flattenObjs,
-      BracketRight: selObj() && (() => reorderObj(1)),
-      BracketLeft: selObj() && (() => reorderObj(-1)),
+      BracketRight: selList().length && (() => reorderObj(e.shiftKey ? 'front' : 1)),
+      BracketLeft: selList().length && (() => reorderObj(e.shiftKey ? 'back' : -1)),
       Equal: () => zoomStep(1),
       Minus: () => zoomStep(-1),
     }[k];

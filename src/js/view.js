@@ -3,7 +3,7 @@ import { hist, img, redo, undo } from './doc.js';
 import { $, antsEl, clamp, ov, setAttr, setData, setProp, setText, stage, vp } from './dom.js';
 import { isDirty, save } from './fileio.js';
 import { showGhost } from './handles.js';
-import { hasObjs, multi, objSel, objVer, objs, selList, selObj } from './objects.js';
+import { groupBox, hasObjs, multi, objSel, objVer, objs, selList, selObj } from './objects.js';
 import { objCursor, objGap, objTarget, updateRing } from './pointer.js';
 import { crop, inside } from './selection.js';
 import { S, SHAPES, drag, sel } from './state.js';
@@ -131,7 +131,7 @@ function render() {
     multi.length ? [multi.join(), objVer] : 0,
   ]);
   placeAnts(mq || sel);
-  placeObjSel(selObj());
+  placeObjSel(groupBox() || selObj());
   if (shape || (sel && sel.float) || (tail && tail.length) || multi.length) placePreview();
   if (key !== ovKey) {
     ovKey = key;
@@ -227,6 +227,7 @@ let cursor = null;  // integer image px under the pointer, for the status bar
 let hoverPt = null; // the same point unrounded (null when the pointer is off the canvas); render() places the ring there
 const setCursor = (c) => { cursor = c; };
 const setHover = (p) => { hoverPt = p; };
+const ZBTNS = [...document.querySelectorAll('.zorder button')];
 const EL = {
   stPos: $('#stPos'), stSelWrap: $('#stSelWrap'), stSel: $('#stSel'), stSize: $('#stSize'),
   zoomBtn: $('#zoomBtn'), zoomIn: $('[data-cmd="zoomIn"]'), zoomOut: $('[data-cmd="zoomOut"]'), crop: $('#cropBtn'),
@@ -245,6 +246,8 @@ function updateStatus() {
     : `${img.width} × ${img.height} px`);
   const pct = Math.round(S.zoom * 100) + '%';
   setText(EL.zoomBtn, pct);
+  const none = !selList().length;
+  for (const b of ZBTNS) setProp(b, 'disabled', none);
   setProp(EL.zoomIn, 'disabled', S.zoom >= ZOOMS[ZOOMS.length - 1] - 1e-9);
   setProp(EL.zoomOut, 'disabled', S.zoom <= ZOOMS[0] + 1e-9);
   setAttr(EL.zoomBtn, 'aria-label', `Zoom ${pct}. Activate for actual size`);

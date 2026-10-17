@@ -103,7 +103,13 @@
         <option value="ui-monospace, Menlo, monospace">Mono</option>
       </select></label>
     <label data-for="text">Size <input type="number" id="fontSize" min="6" max="400" value="24" aria-label="Font size"><span class="unit">px</span></label>
-    <span class="hint" data-for="move">Click a shape to select · drag to move, ⇧ to constrain · drag empty canvas to pan</span>
+    <span class="zorder" data-for="move" role="group" aria-label="Arrange">
+      <button data-cmd="toFront" data-tip="Bring to front" data-kbd="⌘⇧]" aria-label="Bring to front">Front</button>
+      <button data-cmd="forward" data-tip="Bring forward" data-kbd="⌘]" aria-label="Bring forward">Forward</button>
+      <button data-cmd="backward" data-tip="Send backward" data-kbd="⌘[" aria-label="Send backward">Backward</button>
+      <button data-cmd="toBack" data-tip="Send to back" data-kbd="⌘⇧[" aria-label="Send to back">Back</button>
+    </span>
+    <span class="hint" data-for="move">Click an object · drag empty canvas to box-select · Space-drag pans</span>
     <span class="hint" data-for="select">Drag to select · drag inside to move</span>
     <span class="hint" data-for="eraser">Paints with color 2</span>
     <span class="hint" data-for="fill">Click: color 1 · right-click: color 2</span>

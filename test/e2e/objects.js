@@ -687,6 +687,33 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.keyboard.press('Meta+KeyZ');
     ok(await P(() => window.__paint.objs[0].w === 120), 'and undo the old one');
 
+    // ---- 30. a selected group resizes by its box's handles; z-order buttons and keys ----
+    await P(() => { const p = window.__paint; p.newDoc(300, 200); p.setZoom(2); p.S.pristine = false; p.S.primary = '#000000'; p.S.fillMode = 'outline'; p.S.sizes.rect = 2;
+      const v = document.querySelector('#viewport'); v.scrollLeft = v.scrollTop = 0; });
+    await page.keyboard.press('KeyR'); await drag([[20, 20], [60, 40]]);
+    await drag([[80, 50], [100, 70]]);
+    await page.keyboard.press('KeyV');
+    await P(() => { const p = window.__paint; p.selectMany(p.userObjs.map((o) => o.id)); });
+    await frame();
+    ok(await page.locator('#objsel').isVisible() && await page.locator('#objsel .handle:not([hidden])').count() >= 4, 'a selected group shows one box with handles');
+    const dz = await depth();
+    await drag([[100, 70], [180, 120]]); // its south-east corner: twice the size, from the north-west corner
+    const rs = await P(() => window.__paint.userObjs.map((o) => [o.a.x, o.a.y, o.b.x, o.b.y]));
+    ok(JSON.stringify(rs) === JSON.stringify([[20, 20, 100, 60], [140, 80, 180, 120]]) && await depth() === dz + 1,
+      'dragging the corner scales every object in the group (one undo step): ' + JSON.stringify(rs));
+    await page.keyboard.press('Meta+KeyZ');
+    ok(await P(() => window.__paint.userObjs[1].b.x) === 100, 'undo puts them back');
+    await P(() => { const p = window.__paint; p.selectObj(p.userObjs[0].id); });
+    await frame();
+    ok(!(await page.locator('[data-cmd="toFront"]').isDisabled()), 'the arrange buttons are enabled with a selection');
+    await page.locator('[data-cmd="toFront"]').click();
+    ok(await P(() => window.__paint.userObjs[1].a.x) === 20, 'Bring to front puts it on top');
+    await P(() => document.querySelector('#viewport').focus());
+    await page.keyboard.press('Meta+Shift+BracketLeft');
+    ok(await P(() => window.__paint.userObjs[0].a.x === 20 && window.__paint.objs[0].t === 'base'), '⌘⇧[ sends it to the back, still above the picture');
+    await P(() => window.__paint.selectObj(null)); await frame();
+    ok(await page.locator('[data-cmd="toFront"]').isDisabled(), 'and disabled with nothing selected');
+
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));
   } catch (e) {
     fails++; console.log('FAIL: threw', e);

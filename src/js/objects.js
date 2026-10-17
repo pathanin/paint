@@ -20,6 +20,14 @@ let objs = [], objSel = null, objVer = 0, nextObjId = 1;
 // Several objects selected at once (a box drag or ⇧-click with the Move tool): their ids, with objSel
 // null. One selected object is objSel alone, with its handles.
 let multi = [];
+// The box around a selected group, as a rectangle shape (its handles resize the group), or null.
+function groupBox() {
+  if (multi.length < 2) return null;
+  const fs = selList().map((o) => Core.objFrame(o));
+  const x0 = Math.floor(Math.min(...fs.map((f) => f.x))), y0 = Math.floor(Math.min(...fs.map((f) => f.y)));
+  const x1 = Math.ceil(Math.max(...fs.map((f) => f.x + f.w))), y1 = Math.ceil(Math.max(...fs.map((f) => f.y + f.h)));
+  return { t: 'rect', id: -1, a: { x: x0, y: y0 }, b: { x: x1, y: y1 }, size: 2, mode: 'outline' };
+}
 const selList = () => (multi.length ? objs.filter((o) => multi.includes(o.id)) : selObj() ? [selObj()] : []);
 function selectMany(ids) {
   ids = [...new Set(ids)].filter((id) => objs.some((o) => o.id === id));
@@ -173,14 +181,25 @@ function duplicateObj() {
   setObjs(objs.concat(copies));
   selectMany(copies.map((o) => o.id));
 }
-// Move the selected object one step up (dir 1) or down (-1) the stack: it trades z-keys with the
-// neighbour it passes.
+// Arrange the selection (one object or a group) in the stack: dir 1 / -1 one step up / down past the
+// next object that isn't selected, 'front' / 'back' to the top / just above the base. One undo step.
 function reorderObj(dir) {
-  const o = selObj(), i = objs.indexOf(o), j = i + dir;
-  if (!o || j < 0 || j >= objs.length || isBase(objs[j])) return;
-  const nb = objs[j], next = objs.slice();
-  next[i] = { ...nb, z: o.z }; next[j] = { ...o, z: nb.z };
-  setObjs(next);
+  const list = selList();
+  if (!list.length) return;
+  const rest = objs.filter((o) => !list.includes(o));
+  let at; // index in rest after which the selection goes
+  if (dir === 'front') at = rest.length - 1;
+  else if (dir === 'back') at = 0; // just above the base
+  else {
+    const first = objs.indexOf(list[0]), last = objs.indexOf(list[list.length - 1]);
+    const below = rest.filter((o) => objs.indexOf(o) < first).length - 1; // the one under the lowest selected
+    if (dir > 0) { const above = rest.findIndex((o) => objs.indexOf(o) > last); if (above < 0) return; at = above; }
+    else { if (below < 1) return; at = below - 1; }
+  }
+  const lo = rest[at] ? rest[at].z : null, hi = rest[at + 1] ? rest[at + 1].z : null;
+  let z = lo;
+  const moved = list.map((o) => { z = Core.zBetween(z, hi); return { ...o, z }; });
+  setObjs(rest.slice(0, at + 1).concat(moved, rest.slice(at + 1)));
 }
 // The Fill tool inside a closed shape: the shape takes the colour as its fill (one undo step).
 function fillShape(o, c) {
@@ -222,4 +241,4 @@ function composite() {
   return img;
 }
 
-export { addObj, hasObjs, isBase, syncBase, userObjs, fillShape, loadObjs, multi, objIdNext, selectMany, selList, applyObjHist, commitObjDrag, composite, cycleObj, deleteObj, duplicateObj, flattenObjs, mapObjs, newObjId, nudgeObj, objs, objSel, objVer, reorderObj, resetObjs, restyleObj, selectObj, selObj, setObjs, showObjs, zAbove };
+export { addObj, groupBox, hasObjs, isBase, syncBase, userObjs, fillShape, loadObjs, multi, objIdNext, selectMany, selList, applyObjHist, commitObjDrag, composite, cycleObj, deleteObj, duplicateObj, flattenObjs, mapObjs, newObjId, nudgeObj, objs, objSel, objVer, reorderObj, resetObjs, restyleObj, selectObj, selObj, setObjs, showObjs, zAbove };

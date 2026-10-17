@@ -24,7 +24,7 @@ A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, ann
 | Arrows (Shift = 10px) | Nudge selection |
 | ⌘C ⌘X ⌘V | Copy, cut, paste the selection. With nothing selected, ⌘C and ⌘X copy the whole image and leave it unchanged |
 | ⌘⇧X | Crop to selection |
-| ⌘D, ⌘] ⌘[, ⌘E | Objects (every stroke, shape, text, fill and paste stays movable; new ones go on top; PNG saves keep them): duplicate, bring forward / send backward, flatten into pixels (with the Move tool and a selection: just those, into one image object). The Fill tool inside a closed shape sets that shape's fill |
+| ⌘D, ⌘] ⌘[, ⌘E | Objects (every stroke, shape, text, fill and paste stays movable; new ones go on top; PNG saves keep them): duplicate, bring forward / send backward (⌘⇧] ⌘⇧[: to front / back; also buttons in the Move tool's bar), flatten into pixels (with the Move tool and a selection: just those, into one image object). The Fill tool inside a closed shape sets that shape's fill |
 | ⌥+drag (Move tool) | Duplicate an object by dragging a copy off it |
 | ⌥+drag (Eraser) | Delete every object the drag crosses (⌥ alone outlines the one under the pointer) |
 | Tab / Shift+Tab (Move tool, canvas focused) | Select the next / previous object in drawing order; past the last one, focus moves on |
