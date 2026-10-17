@@ -190,6 +190,39 @@ async function once() {
       await run(`${tag} undo all`, async () => { while (await P(() => window.__paint.hist.canUndo())) { await P(() => window.__paint.undo()); } });
       results[`${tag} undo steps kept`] = { steps: await P(() => window.__paint.hist.canRedo() ? window.__paint.hist.redoStack.length : 0) };
     }
+    // A dense scene (docs/total-objects.md): 5,000 short rectangle outlines, drawn by synthetic pointer
+    // events in one task (so on any build they are objects made by the tools themselves), then one
+    // dragged across them, a brush stroke over them and a full rebuild (rotate).
+    for (const [w, h] of [[4000, 3000], [10000, 10000]]) {
+      const tag = `${w}x${h}`;
+      if (only && !`${tag} 5k`.includes(only) && !only.includes('5k')) continue;
+      await P(([w, h]) => { window.__paint.newDoc(w, h); window.__paint.fitZoom(false); }, [w, h]);
+      await run(`${tag} scene 5k objects`, () => P(() => {
+        const p = window.__paint, ov = document.querySelector('#overlay'), r = ov.getBoundingClientRect();
+        p.setTool('rect'); p.S.sizes.rect = 2; p.S.fillMode = 'outline';
+        const ev = (type, x, y) => ov.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: r.left + x, clientY: r.top + y, isPrimary: true }));
+        let s = 7;
+        const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+        for (let i = 0; i < 5000; i++) {
+          const x = rnd() * r.width * 0.9, y = rnd() * r.height * 0.9;
+          ev('pointerdown', x, y); ev('pointermove', x + 4 + rnd() * 30, y + 4 + rnd() * 30); ev('pointerup', x + 4 + rnd() * 30, y + 4 + rnd() * 30);
+        }
+        p.setTool('pencil');
+      }));
+      await run(`${tag} move one in 5k`, async () => {
+        await P(() => window.__paint.setTool('move'));
+        const o = await P(() => { const o = window.__paint.objs[2500]; return o && { x: o.a.x, y: o.a.y }; });
+        const W = await P(() => window.__paint.img.width), bx = await box(), z = bx.width / W;
+        const sx = bx.x + o.x * z, sy = bx.y + o.y * z;
+        await page.mouse.move(sx, sy); await page.mouse.down();
+        for (let i = 1; i <= 60; i++) await page.mouse.move(sx + i * 4, sy + i * 2);
+        await page.mouse.up();
+        await P(() => window.__paint.setTool('pencil'));
+      });
+      await P(() => { window.__paint.setTool('brush'); window.__paint.S.sizes.brush = 30; });
+      await run(`${tag} stroke over 5k`, () => stroke(300));
+      await run(`${tag} rebuild 5k (rotate)`, () => P(() => window.__paint.transformDoc('rotR')));
+    }
     if (errs.length) { console.error('PAGE ERRORS:', errs); process.exitCode = 1; }
   } finally {
     await browser.close();

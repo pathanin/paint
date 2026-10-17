@@ -18,7 +18,25 @@ The design decisions behind the current UI, the evidence behind them, and what's
 ## Backlog
 
 0. **Objects (live shapes), exploration:** see `docs/objects.md`. Built on branch `objects-spike` (always on). It reopens "selection resize handles" (below) as feature work.
-   - **Total objects (plan, 2026-10-17):** every mark (strokes, eraser, fill, text, images, the opened picture) as an object, with tldraw-style indexing and history over a document-resolution cache. See `docs/total-objects.md`, which lists 10 open decisions. It would reverse the "no full scene graph" verdict in `docs/objects.md`.
+   - **Total objects (2026-10-17, branch `total-objects-plan`):** every mark (strokes, eraser, fill, text, images, the opened picture) as an object, with tldraw-style indexing and history over a document-resolution cache. See `docs/total-objects.md`. The user took all ten recommended defaults (2026-10-17), recorded under "Decisions taken"; Phase 0's results are below.
+
+## Total objects, Phase 0 (2026-10-17)
+
+- **Parity harness:** `test/e2e/parity.js <master url> [branch url] [--flatten-ref]` replays 23 steps (every tool, select move/delete, undo/redo, rotate, flip, canvas size, crop, an opened PNG with alpha, and fills and a brush over it) on both builds and compares the decoded pixels after each. On this branch before Phase 1: all 23 identical to `master`. With `--flatten-ref`, 15 differ, as they should: there the reference stacks shapes in drawing order.
+- **Spike** (scratch page, not in `src/`; Chrome, M4, headless): `redraw(rect)` = put back the base under a 256² block, then stroke every object whose box touches it (30-segment brush strokes, 2–12 px), at 10000². Each figure is ms per redraw over 20 redraws plus one flush, so GPU work is included.
+
+  | Strokes under the block | Straight onto the 10000² canvas | Block drawn on a small scratch canvas, then copied in |
+  |---|---|---|
+  | 0 | 0.6 | 0.6 |
+  | 100 | 13.0 | 0.6 |
+  | 500 | 13.3 | **0.9** |
+  | 5,000 | 28.6 | 4.1 |
+  | 20,000 | 72 | — |
+
+  Full rebuild of 5,000 strokes at 10000²: **~32 ms**; the visible 1600×1000 part: ~10 ms. Main-thread time was under 0.5 ms per redraw up to 1,000 strokes.
+- **Finding:** any path drawn into a 10000² canvas right after a `drawImage` into it costs ~12 ms of GPU time, whatever the path. Drawn on a block-sized scratch canvas and copied in with one `drawImage`, the cost is gone. So `redraw()` composes each block on a scratch canvas. At 2000² and 4000² the difference is small.
+- **Gate (≤ 8 ms per 256² redraw with 500 strokes, ≤ 2 s for a full 5k rebuild at 10000²):** passed, 0.9 ms and ~32 ms, with the scratch-canvas redraw. Lift-on-drag isn't needed from the start.
+- **Bench baselines on `master`** (new `bench.js` rows, `--only 5k`, 1 run): `scene 5k objects` 151 / 133 ms (4000×3000 / 10000²), `move one in 5k` 226 / 235 ms, `stroke over 5k` 1130 / 1534 ms (12 long frames at 10000²), `rebuild 5k (rotate)` 17 / 19 ms.
 
 1. **Not yet verified:**
    - Firefox and Safari. Neither has the File System Access API, so the download-save path runs there. The `:has()`, `field-sizing` and `text-wrap: balance` CSS also needs checking.
@@ -105,6 +123,7 @@ Measured gotchas behind the design (Chrome, M4, 10000² canvas):
 | Keyboard: `#viewport` is a Tab stop; with the Move tool, Tab / ⇧Tab select the next / previous shape and announce it; past either end they deselect and let focus move on | Shapes were pointer-only. Figma uses Tab for this too. Letting focus leave at the ends avoids a focus trap (WCAG 2.1.2). Only the Move tool, so Tab elsewhere stays plain navigation. |
 | Crop, resize, canvas size, rotate and flip carry shapes along (one undo step) instead of flattening them; a crop drops shapes left wholly outside; Resize scales them as vectors (stroke by the geometric mean, ≥ 1 px) | Flattening lost the shapes and took two undo steps. Off-canvas shapes would be invisible but still Tab-able. Turned or flipped shapes match flatten-then-transform within anti-aliasing, not bit for bit (`docs/objects.md`). |
 | Help (`?`) has three columns, with a Shapes section | Two columns filled 1280×800 exactly; the shape shortcuts didn't fit. |
+| Total objects (2026-10-17): every mark is an object, in phases behind a measurement gate; Canvas 2D renderer with `#image` as a document-resolution cache of the scene; zooming in shows real pixels; the eraser stays a colour-2 stamp stroke (an object), ⌥-drag with it deletes whole objects, and a true transparent eraser is deferred; a fill is a bitmap object frozen at fill time (later, a click inside a closed shape sets its fill); the opened picture is the bottom object, locked so Move doesn't pick it; the select tool stays a pixel tool (a lift makes an image object plus a colour-2 patch), and the Move tool gets box selection of objects; PNG saves carry the objects in a private chunk, so they come back on reopen; one stroke = one object, never split; from the switch new marks go on top of everything | The user's call (2026-10-17), taking the ten recommended defaults in `docs/total-objects.md`. It reverses the "no full scene graph" verdict of `docs/objects.md`, the "pixel tools paint under shapes" rule (from Phase 2) and "objects are gone on reopen" (from Phase 5). |
 | Out of scope (new features, not polish): fill clipped to a selection, selection resize handles, auto text size, cancelling freehand strokes with Esc | Feature work. |
 
 ## Caveats on the evidence

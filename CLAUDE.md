@@ -31,6 +31,8 @@ node test/e2e/filledge.js                   # brush = one path; fill leaves no f
 node test/e2e/objects.js                    # live shapes: draw, move, resize, restyle, flatten (docs/objects.md)
 node test/e2e/libs.js                       # libraries: lazy, each path runs, round trips, fallbacks when a chunk won't load
 node test/e2e/pwa.js                        # installable app: manifest, offline reload + lazy parts, launched files, file:// notice
+node test/e2e/parity.js http://localhost:8766/   # same session on a master build (served on :8766) and this one: pixels equal
+                                            # after every step (--flatten-ref once new marks go on top)
 node test/e2e/bench.js --json /tmp/pw/a.json   # perf benchmark (3 runs, medians)
 node test/e2e/bench-compare.js /tmp/pw/before.json /tmp/pw/a.json   # deltas; exit 1 on a regression
 ```
