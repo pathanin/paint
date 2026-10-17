@@ -3,7 +3,7 @@ import { hist, img, redo, undo } from './doc.js';
 import { $, antsEl, clamp, ov, setAttr, setData, setProp, setText, stage, vp } from './dom.js';
 import { isDirty, save } from './fileio.js';
 import { showGhost } from './handles.js';
-import { objSel, objs, selObj } from './objects.js';
+import { multi, objSel, objVer, objs, selList, selObj } from './objects.js';
 import { objCursor, objGap, objTarget, updateRing } from './pointer.js';
 import { crop, inside } from './selection.js';
 import { S, SHAPES, drag, sel } from './state.js';
@@ -118,7 +118,7 @@ function render() {
   placeObjHover(hit && !hit.h && (hit.erase || (S.tool === 'move' && hit.o.id !== objSel)) ? hit.o : null); // ⌥ + Eraser: what a click would delete
   if (drag && drag.t === 'canvas') showGhost(drag);
   const shape = drag && SHAPES.has(drag.t);
-  const marquee = drag && drag.t === 'select';
+  const marquee = drag && (drag.t === 'select' || drag.t === 'objbox');
   const mq = marquee ? Core.normRect(drag.start, drag.end) : null;
   // Live end of a brush stroke: what release would add, so the ink always reaches the pointer.
   const tail = drag && drag.t === 'brush' ? drag.stroke.tail(drag.ptr) : null;
@@ -128,10 +128,11 @@ function render() {
     shape ? [drag.t, drag.start, drag.end, drag.shift, drag.color, drag.alt, S.sizes[drag.t], S.fillMode] : 0,
     mq || 0,
     sel && sel.float ? [sel.x, sel.y, sel.w, sel.h, floatId(sel.float)] : 0,
+    multi.length ? [multi.join(), objVer] : 0,
   ]);
   placeAnts(mq || sel);
   placeObjSel(selObj());
-  if (shape || (sel && sel.float) || (tail && tail.length)) placePreview();
+  if (shape || (sel && sel.float) || (tail && tail.length) || multi.length) placePreview();
   if (key !== ovKey) {
     ovKey = key;
     if (ovBox) octx.clearRect(ovBox.x, ovBox.y, ovBox.w, ovBox.h);
@@ -147,6 +148,11 @@ function render() {
     if (sel && sel.float) { octx.drawImage(sel.float, sel.x, sel.y); add(sel); }
     if (tail && tail.length) { brushPath(octx, tail, drag.color, drag.size); add(segsBox(tail, drag.size / 2 + 1)); }
     if (shape) add(drawShape(octx, drag));
+    if (multi.length) { // several selected: each one's outline, batched into one path (as tldraw does)
+      const path = new Path2D(), lw = 1 / S.zoom;
+      for (const o of selList()) { const f = Core.objFrame(o); path.rect(f.x, f.y, f.w, f.h); add(f); }
+      octx.save(); octx.lineWidth = Math.max(lw, 1 / pvAt.k); octx.strokeStyle = '#0d99ff'; octx.stroke(path); octx.restore();
+    }
     ovBox = box;
   }
   updateStatus();

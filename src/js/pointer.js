@@ -3,8 +3,8 @@ import { img } from './doc.js';
 import { $, clamp, ov, ring, setProp, stage, textBox, vp } from './dom.js';
 import { doFill } from './fill.js';
 import { endCanvasDrag } from './handles.js';
-import { addObj, commitObjDrag, newObjId, objSel, objs, selObj, selectObj, showObjs, zAbove } from './objects.js';
-import { endLive, flushRedraw, hitAt, markDirty, setLive } from './scene.js';
+import { addObj, commitObjDrag, multi, newObjId, objSel, objs, selectMany, selObj, selectObj, showObjs, zAbove } from './objects.js';
+import { endLive, flushRedraw, hitAt, markDirty, objsIn, setLive } from './scene.js';
 import { dropSelection, inside, liftSelection, unlift } from './selection.js';
 import { S, SHAPES, drag, sel, setDrag, setSel } from './state.js';
 import { commitText, startText } from './text.js';
@@ -39,8 +39,17 @@ function objPointerDown(p, e) {
   const hit = objTarget(p);
   if (hit && hit.erase) return false; // the eraser's ⌥-drag takes it
   if (!hit) {
-    if (objSel != null) selectObj(null);
+    if ((objSel != null || multi.length) && !(S.tool === 'move' && e.shiftKey)) selectObj(null);
     return false;
+  }
+  // ⇧ on an object with the Move tool: a drag moves along one axis as ever; a click (no movement)
+  // adds the object to the selection or takes it out (finishDrag).
+  const toggle = S.tool === 'move' && e.shiftKey && !hit.h;
+  if ((multi.includes(hit.o.id) || toggle) && !hit.h && (multi.length || objSel != null)) { // a drag on a selected group moves it all
+    const ids = multi.length ? multi.slice() : [objSel];
+    const group = ids.includes(hit.o.id) ? ids : [hit.o.id];
+    setDrag({ t: 'objmove', group, toggle, o: hit.o, src: hit.o, p, q: p, sx: e.clientX, sy: e.clientY, moved: false, shift: e.shiftKey, before: objs });
+    return true;
   }
   dropSelection();
   selectObj(hit.o.id);
@@ -56,6 +65,7 @@ function objDragUpdate(d) {
   if (!d.moved) return;
   let dx = Math.round(d.q.x - d.p.x), dy = Math.round(d.q.y - d.p.y);
   if (d.shift && d.t === 'objmove') { if (Math.abs(dx) >= Math.abs(dy)) dy = 0; else dx = 0; }
+  if (d.group && d.group.length > 1) { showObjs(d.before.map((x) => (d.group.includes(x.id) ? Core.moveObj(x, dx, dy) : x))); return; }
   const o = d.t === 'objmove' ? Core.moveObj(d.o, dx, dy) : Core.resizeObj(d.o, d.h, dx, dy, d.shift);
   if (d.dup) {
     const i = d.before.indexOf(d.src) + 1;
@@ -65,8 +75,16 @@ function objDragUpdate(d) {
 
 ov.addEventListener('pointerdown', (e) => {
   if (drag) return;
-  if (e.button === 1 || (e.button === 0 && S.panKey) || (e.button === 0 && S.tool === 'move' && !objTarget(imgPt(e)))) {
-    if (S.tool === 'move' && objSel != null) selectObj(null); // a click on empty canvas deselects
+  if (e.button === 0 && !S.panKey && S.tool === 'move' && !objTarget(imgPt(e))) {
+    // A drag on empty canvas with the Move tool selects the objects it touches (⇧: adds them); a
+    // click there deselects (decision 7b; Space or the middle button pans).
+    const p = imgPt(e);
+    ov.setPointerCapture(e.pointerId);
+    setDrag({ t: 'objbox', start: p, end: p, sx: e.clientX, sy: e.clientY, add: e.shiftKey });
+    requestRender();
+    return;
+  }
+  if (e.button === 1 || (e.button === 0 && S.panKey)) {
     e.preventDefault();
     ov.setPointerCapture(e.pointerId);
     setDrag({ t: 'pan', sx: e.clientX, sy: e.clientY, sl: vp.scrollLeft, st: vp.scrollTop });
@@ -163,6 +181,8 @@ ov.addEventListener('pointermove', (e) => {
     }
   } else if (d.t === 'erase') {
     eraseAlong(d, p);
+  } else if (d.t === 'objbox') {
+    d.end = p;
   } else if (SHAPES.has(d.t)) {
     d.end = { x: Math.floor(p.x), y: Math.floor(p.y) };
     d.shift = e.shiftKey;
@@ -228,6 +248,7 @@ function cancelDrag() {
   setDrag(null);
   if (d.t === 'objmove' || d.t === 'objsize') showObjs(d.before, d.src.id);
   if (d.t === 'erase') showObjs(d.before);
+  if (d.t === 'objmove' && d.group) showObjs(d.before);
   if (d.t === 'move' && sel) {
     if (d.lifted) unlift(); // undo the lift this drag made: no patch, no float, no history entry
     sel.x = d.ox; sel.y = d.oy;
@@ -248,7 +269,20 @@ function finishDrag(e) {
     endLive();
     addObj(d.o, { keepSel: true }); // on top of everything (decision 10)
   }
+  else if (d.t === 'objmove' && d.toggle && !d.moved) {
+    const ids = multi.length ? multi.slice() : objSel != null ? [objSel] : [];
+    const i = ids.indexOf(d.src.id);
+    if (i < 0) ids.push(d.src.id); else ids.splice(i, 1);
+    selectMany(ids);
+  }
   else if (d.t === 'objmove' || d.t === 'objsize' || d.t === 'erase') commitObjDrag(d.before);
+  else if (d.t === 'objbox') {
+    const r = Core.normRect(d.start, d.end), click = Math.hypot(e ? e.clientX - d.sx : 0, e ? e.clientY - d.sy : 0) < 3;
+    const meets = (f) => f.x <= r.x + r.w && f.x + f.w >= r.x && f.y <= r.y + r.h && f.y + f.h >= r.y;
+    const ids = click ? [] : objsIn(r).filter((o) => meets(Core.objFrame(o))).map((o) => o.id);
+    const had = d.add ? (multi.length ? multi : objSel != null ? [objSel] : []) : [];
+    if (ids.length || had.length) selectMany(had.concat(ids)); else selectObj(null);
+  }
   else if (SHAPES.has(d.t)) {
     if (d.t !== 'line' && d.start.x === d.end.x && d.start.y === d.end.y) { requestRender(); return; } // a click, not a shape
     addObj(shapeObj(d)); // a live object above the pixels until flattened (docs/objects.md)

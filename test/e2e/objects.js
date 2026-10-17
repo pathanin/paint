@@ -87,7 +87,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     o = await objs();
     ok(o[0].a.x === 30 && o[0].a.y === 25 && await depth() === d1, 'Esc mid-move puts it back, with no undo step');
 
-    // ---- 4. move tool (V): click picks objects, empty canvas pans; the select tool is pixels only ----
+    // ---- 4. move tool (V): click picks objects, Space-drag pans (a plain drag box-selects: 27); the select tool is pixels only ----
     await page.keyboard.press('KeyS');
     await frame();
     ok(await objSel() === null && !(await page.locator('#objsel').isVisible()), 'the select tool drops the object selection');
@@ -108,10 +108,12 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await P(() => window.__paint.setZoom(8)); await frame();
     const sc0 = await P(() => [document.querySelector('#viewport').scrollLeft, document.querySelector('#viewport').scrollTop]);
     const [px0, py0] = [400, 500];
-    await page.mouse.move(px0, py0); await page.mouse.down(); await page.mouse.move(px0 - 120, py0 - 80, { steps: 4 }); await page.mouse.up();
+    await page.mouse.move(px0, py0); await page.keyboard.down('Space'); await page.mouse.down(); await page.mouse.move(px0 - 120, py0 - 80, { steps: 4 }); await page.mouse.up(); await page.keyboard.up('Space');
     const sc1 = await P(() => [document.querySelector('#viewport').scrollLeft, document.querySelector('#viewport').scrollTop]);
-    ok(sc1[0] - sc0[0] === 120 && sc1[1] - sc0[1] === 80, 'dragging empty canvas with the move tool pans: ' + JSON.stringify([sc0, sc1]));
-    ok(await objSel() === null && await depth() === before4 && (await objs())[0].a.x === 30, 'panning deselects and changes nothing');
+    ok(sc1[0] - sc0[0] === 120 && sc1[1] - sc0[1] === 80, 'Space-dragging with the move tool pans: ' + JSON.stringify([sc0, sc1]));
+    ok(await depth() === before4 && (await objs())[0].a.x === 30, 'panning changes nothing');
+    await page.mouse.click(px0, py0);
+    ok(await objSel() === null, 'a click on empty canvas deselects');
     await P(() => window.__paint.setZoom(2)); await frame();
     await page.mouse.click(...await at(30, 60));
     ok(await objSel() === o[0].id, 'picked again');
@@ -611,6 +613,35 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.mouse.move(...await at(170, 40), { steps: 3 });
     await page.mouse.up();
     ok(await P(() => window.__paint.objs.map((o) => o.t).join()) === 'rect,pencil,ellipse,eraser', 'without ⌥ the Eraser draws a colour-2 stroke object on top');
+
+    // ---- 27. Move tool: a drag on empty canvas selects every object it touches; group move, delete ----
+    await P(() => { const p = window.__paint; p.newDoc(300, 200); p.setZoom(2); p.S.pristine = false; p.S.primary = '#000000';
+      const v = document.querySelector('#viewport'); v.scrollLeft = v.scrollTop = 0; });
+    await page.keyboard.press('KeyR'); await drag([[20, 20], [60, 50]]);
+    await page.keyboard.press('KeyP'); await drag([[100, 30], [140, 60]]);
+    await page.keyboard.press('KeyO'); await drag([[200, 120], [260, 170]]);
+    await page.keyboard.press('KeyV');
+    await drag([[10, 10], [120, 40]]); // touches the rectangle and the stroke, not the ellipse
+    const ms = await P(() => [window.__paint.objSel, window.__paint.objs.filter((o) => window.__paint.selList().includes(o)).map((o) => o.t).join()]);
+    ok(ms[0] === null && ms[1] === 'rect,pencil', 'a box drag on empty canvas selects the objects it touches: ' + JSON.stringify(ms));
+    await page.keyboard.down('Shift'); await page.mouse.click(...await at(200, 145)); await page.keyboard.up('Shift');
+    ok(await P(() => window.__paint.selList().length) === 3, '⇧-click adds one');
+    await page.keyboard.down('Shift'); await page.mouse.click(...await at(200, 145)); await page.keyboard.up('Shift');
+    ok(await P(() => window.__paint.selList().length) === 2, '⇧-click again takes it out');
+    const g0 = await P(() => window.__paint.objs.map((o) => JSON.stringify(o.a || o.pts))), dg = await depth();
+    await drag([[20, 35], [70, 85]]); // on the rectangle: both move
+    const g1 = await P(() => window.__paint.objs.map((o) => o.a ? [o.a.x, o.a.y] : [o.pts[0], o.pts[1]]));
+    ok(JSON.stringify(g1) === JSON.stringify([[70, 70], [150, 80], [200, 120]]) && await depth() === dg + 1, 'dragging one of them moves the group, one undo step: ' + JSON.stringify(g1));
+    await P(() => document.querySelector('#viewport').focus());
+    await page.keyboard.press('ArrowRight');
+    ok(await P(() => window.__paint.objs[0].a.x === 71 && window.__paint.objs[1].pts[0] === 151), 'arrows nudge the group');
+    await page.keyboard.press('Delete');
+    ok(await P(() => window.__paint.objs.map((o) => o.t).join()) === 'ellipse', 'Delete removes the group');
+    await page.keyboard.press('Meta+KeyZ');
+    ok(await P(() => window.__paint.objs.length) === 3, 'one undo brings it back');
+    await page.mouse.click(...await at(290, 10));
+    ok(await P(() => window.__paint.selList().length) === 0, 'a click on empty canvas deselects them');
+    void g0;
 
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));
   } catch (e) {

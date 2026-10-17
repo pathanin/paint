@@ -14,6 +14,16 @@ import { requestRender } from './view.js';
 // cache over the base (scene.js), and are pixels only once flattened. objSel is the selected
 // object's id; objVer bumps on every change.
 let objs = [], objSel = null, objVer = 0, nextObjId = 1;
+// Several objects selected at once (a box drag or ⇧-click with the Move tool): their ids, with objSel
+// null. One selected object is objSel alone, with its handles.
+let multi = [];
+const selList = () => (multi.length ? objs.filter((o) => multi.includes(o.id)) : selObj() ? [selObj()] : []);
+function selectMany(ids) {
+  ids = [...new Set(ids)].filter((id) => objs.some((o) => o.id === id));
+  if (ids.length === 1) { multi = []; objSel = ids[0]; } else { multi = ids; objSel = null; }
+  objVer++;
+  requestRender();
+}
 const selObj = () => (objSel == null ? null : objs.find((o) => o.id === objSel) || null);
 // Every change of the list goes through here: the scene's index and redraw follow it.
 // pairs: the change as [now, then] pairs when the caller knows it (an add), so a scene of thousands
@@ -69,9 +79,10 @@ function mapObjs(map, w, h) {
   const before = objs;
   install(objs.map(map).filter((o) => { const b = Core.objBox(o); return b.x < w && b.y < h && b.x + b.w > 0 && b.y + b.h > 0; }));
   if (!selObj()) objSel = null;
+  multi = [];
   return before;
 }
-function resetObjs() { install([]); objSel = null; }
+function resetObjs() { install([]); objSel = null; multi = []; }
 // Objects read back from a saved file (persist.js): the list as it was, ids from where it left off.
 function loadObjs(list, nextId) { install(list); objSel = null; nextObjId = Math.max(nextId || 1, ...list.map((o) => o.id + 1)); }
 const objIdNext = () => nextObjId;
@@ -87,6 +98,7 @@ function applyObjHist(e) {
     const o = objs; install(e.objs); e.objs = o;
   } else return;
   if (!selObj()) objSel = null;
+  multi = multi.filter((id) => objs.some((o) => o.id === id));
 }
 // The end of a move or resize drag: one undo step from the list before it.
 function commitObjDrag(before) {
@@ -104,8 +116,8 @@ function addObj(o, opt) {
   return o;
 }
 function selectObj(id) {
-  if (objSel === id) return;
-  objSel = id; objVer++;
+  if (objSel === id && !multi.length) return;
+  objSel = id; multi = []; objVer++;
   requestRender();
 }
 // Tab / ⇧Tab on the canvas with the Move tool: the next or previous shape, in drawing order. Past
@@ -120,13 +132,17 @@ function cycleObj(dir) {
   return true;
 }
 function deleteObj() {
-  const o = selObj();
-  if (!o) return false;
-  objSel = null;
-  setObjs(objs.filter((x) => x !== o));
+  const list = selList();
+  if (!list.length) return false;
+  objSel = null; multi = [];
+  setObjs(objs.filter((x) => !list.includes(x)));
   return true;
 }
-function nudgeObj(dx, dy) { const o = selObj(); if (o) setObjs(withObj(Core.moveObj(o, dx, dy)), 'nudge:' + o.id); }
+function nudgeObj(dx, dy) {
+  const list = selList();
+  if (!list.length) return;
+  setObjs(objs.map((x) => (list.includes(x) ? Core.moveObj(x, dx, dy) : x)), 'nudge:' + list.map((o) => o.id).join());
+}
 // key: coalesce a stream of the same restyle (see setObjs).
 function restyleObj(props, key) {
   const o = selObj();
@@ -134,9 +150,12 @@ function restyleObj(props, key) {
   setObjs(withObj({ ...o, ...props }), key && key + ':' + o.id);
 }
 function duplicateObj() {
-  const o = selObj();
-  if (!o) return;
-  addObj(Core.moveObj(o, 10, 10));
+  const list = selList();
+  if (!list.length) return;
+  let top = objs[objs.length - 1].z;
+  const copies = list.map((o) => { top = Core.zBetween(top, null); return { ...Core.moveObj(o, 10, 10), id: nextObjId++, z: top }; });
+  setObjs(objs.concat(copies));
+  selectMany(copies.map((o) => o.id));
 }
 // Move the selected object one step up (dir 1) or down (-1) the stack: it trades z-keys with the
 // neighbour it passes.
@@ -176,4 +195,4 @@ function composite() {
   return img;
 }
 
-export { addObj, loadObjs, objIdNext, applyObjHist, commitObjDrag, composite, cycleObj, deleteObj, duplicateObj, flattenObjs, mapObjs, newObjId, nudgeObj, objs, objSel, objVer, reorderObj, resetObjs, restyleObj, selectObj, selObj, setObjs, showObjs, zAbove };
+export { addObj, loadObjs, multi, objIdNext, selectMany, selList, applyObjHist, commitObjDrag, composite, cycleObj, deleteObj, duplicateObj, flattenObjs, mapObjs, newObjId, nudgeObj, objs, objSel, objVer, reorderObj, resetObjs, restyleObj, selectObj, selObj, setObjs, showObjs, zAbove };
