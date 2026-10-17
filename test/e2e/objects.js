@@ -505,7 +505,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.keyboard.press('Enter');
     await frame();
     let tx = await P(() => window.__paint.userObjs.map((o) => ({ t: o.t, lines: o.lines, id: o.id })));
-    ok(tx.length === 1 && tx[0].t === 'text' && tx[0].lines[0] === 'Hello' && await hash() === await P(() => { const c = document.createElement('canvas'); c.width = 300; c.height = 200; const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, 300, 200); const d = g.getImageData(0, 0, 300, 200).data; let h = 2166136261; for (let i = 0; i < d.length; i++) h = Math.imul(h ^ d[i], 16777619); return `300x200:${h >>> 0}`; }) && !isWhite(await seen(25, 35)),
+    ok(tx.length === 1 && tx[0].t === 'text' && tx[0].lines[0] === 'Hello' && await hash() === await P(() => { const c = document.createElement('canvas'); c.width = 300; c.height = 200; const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, 300, 200); const d = g.getImageData(0, 0, 300, 200).data; let h = 2166136261; for (let i = 0; i < d.length; i++) h = Math.imul(h ^ d[i], 16777619); return `300x200:${h >>> 0}`; }) && await P(() => { const p = window.__paint, o = p.userObjs[0], b = p.Core.objBox(o), d = p.composite().getContext('2d').getImageData(b.x, b.y, b.w, b.h).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] < 128) n++; return n > 30; }),
       'typed text becomes a text object (shown, not in the pixels)');
     const seenText = await chash();
     await page.mouse.click(...await at(30, 30)); // the text tool on that text: edit it again
