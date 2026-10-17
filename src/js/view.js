@@ -3,7 +3,7 @@ import { hist, img, redo, undo } from './doc.js';
 import { $, antsEl, clamp, ov, setAttr, setData, setProp, setText, stage, vp } from './dom.js';
 import { isDirty, save } from './fileio.js';
 import { showGhost } from './handles.js';
-import { multi, objSel, objVer, objs, selList, selObj } from './objects.js';
+import { hasObjs, multi, objSel, objVer, objs, selList, selObj } from './objects.js';
 import { objCursor, objGap, objTarget, updateRing } from './pointer.js';
 import { crop, inside } from './selection.js';
 import { S, SHAPES, drag, sel } from './state.js';
@@ -112,7 +112,7 @@ function requestRender() {
 function render() {
   rafPending = false;
   updateRing(hoverPt);
-  const hit = !drag && hoverPt && objs.length ? objTarget(hoverPt) : null;
+  const hit = !drag && hoverPt && hasObjs() ? objTarget(hoverPt) : null;
   if (!drag) setProp(ov.style, 'cursor', objCursor(hit) || (S.tool === 'move' ? 'grab' : '') || (S.tool === 'select' && sel && hoverPt && inside(hoverPt, sel) ? 'move' : ''));
   // The Move tool outlines the shape a click would pick (not the selected one: it has its own).
   placeObjHover(hit && !hit.h && (hit.erase || (S.tool === 'move' && hit.o.id !== objSel)) ? hit.o : null); // ⌥ + Eraser: what a click would delete

@@ -137,7 +137,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     const g1 = [await hash()];
     const flat = async () => { g1.push(await hash()); await P(() => window.__paint.flattenObjs()); await frame(); g1.push(await hash()); };
     await drag('rect', [[30, 40], [900, 650]]); await flat();
-    ok(await P(() => { const e = window.__paint.hist.top(); return e.type === 'doc' && e.canvas && e.objs && e.objs.length === 1 && window.__paint.objs.length === 0; }) && g1[2] === g1[1],
+    ok(await P(() => { const e = window.__paint.hist.top(); return e.type === 'doc' && e.canvas && e.objs && e.objs.filter((o) => !o.locked).length === 1 && window.__paint.userObjs.length === 0; }) && g1[2] === g1[1],
       '⌘E is a whole-document step that keeps the old base and objects, and the picture does not change');
     await drag('ellipse', [[100, 100], [700, 500]]); await flat();
     await drag('select', [[300, 200], [800, 600]]); await page.keyboard.press('Delete'); await frame(); g1.push(await hash());
@@ -182,7 +182,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await drag('select', [[150, 150], [400, 420]]);
     await P(() => window.__paint.base.dispatchEvent(new Event('contextlost')));
     await frame();
-    ok(await P(() => !window.__paint.op && !window.__paint.sel && !window.__paint.objs.some((o) => o.t === 'rect' && o.a.x === 150 && o.b.x === 400)), 'context loss abandons a float (its canvas is blank) and its patch');
+    ok(await P(() => !window.__paint.op && !window.__paint.sel && !window.__paint.userObjs.some((o) => o.t === 'rect' && o.a.x === 150 && o.b.x === 400)), 'context loss abandons a float (its canvas is blank) and its patch');
     // #image is only a cache: when its context comes back (blank), the scene is repainted into it
     {
       const before = await hash();

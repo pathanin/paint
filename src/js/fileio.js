@@ -2,7 +2,7 @@ import Core from './core.js';
 import { hist, img, setDoc } from './doc.js';
 import { $, makeCanvas, textBox } from './dom.js';
 import { loadUTIF, startWorker, used, workerCall } from './libs.js';
-import { composite, loadObjs, objIdNext, objs, resetObjs } from './objects.js';
+import { composite, hasObjs, loadObjs, objIdNext, resetObjs, userObjs } from './objects.js';
 import { readScene, withScene } from './persist.js';
 import { commitSelection } from './selection.js';
 import { S, sel, sizeProblem } from './state.js';
@@ -135,8 +135,8 @@ async function encodePng() {
 async function encodeFor(name) {
   if (mimeFor(name) !== 'image/png') return encode(mimeFor(name));
   const png = await encodePng();
-  if (!objs.length) return png;
-  return new Blob([await withScene(new Uint8Array(await png.arrayBuffer()), objs, objIdNext())], { type: 'image/png' });
+  if (!hasObjs()) return png;
+  return new Blob([await withScene(new Uint8Array(await png.arrayBuffer()), userObjs(), objIdNext())], { type: 'image/png' });
 }
 let saving = false;
 async function save(as) {

@@ -36,7 +36,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       await page.mouse.up();
       await frame();
     }
-    const objs = () => P(() => window.__paint.objs.map(({ id, t, a, b, color, alt, size, mode }) => ({ id, t, a, b, color, alt, size, mode })));
+    const objs = () => P(() => window.__paint.userObjs.map(({ id, t, a, b, color, alt, size, mode }) => ({ id, t, a, b, color, alt, size, mode })));
     const objSel = () => P(() => window.__paint.objSel);
     const depth = () => P(() => window.__paint.hist.undoStack.length);
     // RGBA of what is seen at an image px: the pixels with the objects drawn over them.
@@ -208,7 +208,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       ok(JSON.stringify(await objs()) === JSON.stringify(o9) && await hash() === pix9 && await chash() === seen9, 'undo puts the image and the shapes back');
     }
     await P(() => window.__paint.resizeDoc(400, 300, 'canvas', 'c'));
-    ok(JSON.stringify((await objs()).filter((x) => x.a).map((x) => x.a)) === JSON.stringify(o9.filter((x) => x.a).map((x) => ({ x: x.a.x + 50, y: x.a.y + 50 }))) && await P(() => window.__paint.objs[1].pts[0]) === 55, 'canvas size (centred) shifts the shapes and the stroke with the pixels');
+    ok(JSON.stringify((await objs()).filter((x) => x.a).map((x) => x.a)) === JSON.stringify(o9.filter((x) => x.a).map((x) => ({ x: x.a.x + 50, y: x.a.y + 50 }))) && await P(() => window.__paint.userObjs[1].pts[0]) === 55, 'canvas size (centred) shifts the shapes and the stroke with the pixels');
     await page.keyboard.press('Meta+KeyZ');
     await P(() => window.__paint.resizeDoc(150, 100, 'scale'));
     await P(() => new Promise((r) => { const t = () => (window.__paint.img.width === 150 ? r() : setTimeout(t, 50)); t(); }));
@@ -221,7 +221,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await P(() => window.__paint.crop && document.querySelector('#cropBtn').click());
     o = (await objs()).filter((x) => x.a);
     ok(await P(() => window.__paint.img.width) === 159 && o.length === 2 && o.every((x) => x.t !== 'rect') && o[0].a.x === 9 && o[0].a.y === 9 &&
-      await P(() => window.__paint.objs[0].t === 'pencil' && window.__paint.objs[0].pts[0] === -136), 'crop (from 141, 21) shifts the shapes and the stroke that crosses it, and drops one left wholly outside: ' + JSON.stringify(o.map((x) => [x.t, x.a])));
+      await P(() => window.__paint.userObjs[0].t === 'pencil' && window.__paint.userObjs[0].pts[0] === -136), 'crop (from 141, 21) shifts the shapes and the stroke that crosses it, and drops one left wholly outside: ' + JSON.stringify(o.map((x) => [x.t, x.a])));
     await page.keyboard.press('Meta+KeyZ');
     ok(JSON.stringify(await objs()) === JSON.stringify(o9) && await hash() === pix9, 'one undo brings the crop and the dropped shape back');
     // leave the rest of the run as it was: just the filled rectangle
@@ -462,7 +462,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     ok((await objs()).length === 300 && await cacheDiff() === 0, 'the cache equals a fresh render of 300 shapes');
     ok(await P(() => { const c = document.querySelector('#preview'); if (!c.width) return true; const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; for (let i = 3; i < d.length; i += 4) if (d[i]) return false; return true; }),
       'objects are not drawn on #preview');
-    await P(() => { const p = window.__paint; p.selectObj(p.objs[150].id); document.querySelector('#viewport').focus(); });
+    await P(() => { const p = window.__paint; p.selectObj(p.userObjs[150].id); document.querySelector('#viewport').focus(); });
     await page.keyboard.press('ArrowLeft');
     ok(await P(() => { const e = window.__paint.hist.top(); return e.type === 'obj' && e.pairs.length === 1 && e.bytes <= 256 && !e.objs; }),
       'a nudge among 300 shapes is a one-object diff entry, not a copy of the list');
@@ -470,9 +470,9 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await P(() => document.querySelector('#viewport').focus());
     const keys = ['ArrowRight', 'Shift+ArrowDown', 'Meta+BracketRight', 'Delete', 'Meta+BracketLeft', 'Meta+KeyD', 'Delete', 'Meta+KeyZ', 'Meta+Shift+KeyZ', 'Delete', 'Meta+KeyZ'];
     for (let i = 0; i < 60; i++) {
-      await P((i) => { const p = window.__paint, o = p.objs[(i * 37) % p.objs.length]; if (o) p.selectObj(o.id); }, i);
+      await P((i) => { const p = window.__paint, o = p.userObjs[(i * 37) % p.userObjs.length]; if (o) p.selectObj(o.id); }, i);
       if (i % 5 === 4) { // drag the selected one with the Move tool
-        const c = await P(() => { const o = window.__paint.objs.find((x) => x.id === window.__paint.objSel); return o && { x: (o.a.x + o.b.x) / 2, y: o.a.y }; });
+        const c = await P(() => { const o = window.__paint.userObjs.find((x) => x.id === window.__paint.objSel); return o && { x: (o.a.x + o.b.x) / 2, y: o.a.y }; });
         if (c) await drag([[c.x, c.y], [c.x + (i % 2 ? 310 : -280), c.y + (i % 3 ? 170 : -150)]]);
       } else if (i % 7 === 3) await page.locator('#palette [data-color="#ffc90e"]').click();
       else await page.keyboard.press(keys[i % keys.length]);
@@ -485,7 +485,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await frame(); await frame();
     ok(await P(() => window.__paint.redrawCount) === rc0, 'zooming and scrolling repaint nothing');
     ok(await P(() => {
-      const p = window.__paint, list = p.objs; let s = 5; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+      const p = window.__paint, list = p.userObjs; let s = 5; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
       for (let i = 0; i < 400; i++) {
         const q = { x: rnd() * 900, y: rnd() * 600 }, tol = 2;
         const j = p.Core.hitObject(list, q, tol), h = p.hitAt(q, tol);
@@ -493,7 +493,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       }
       return true;
     }), 'the R-tree hit test agrees with a linear scan, topmost first');
-    ok(await P(() => { const p = window.__paint; for (let i = 1; i < p.objs.length; i++) if (!(p.objs[i - 1].z < p.objs[i].z)) return false; return true; }), 'the object list stays in z-key order');
+    ok(await P(() => { const p = window.__paint; for (let i = 1; i < p.userObjs.length; i++) if (!(p.userObjs[i - 1].z < p.userObjs[i].z)) return false; return true; }), 'the object list stays in z-key order');
 
     // ---- 24. text, pasted images and the select tool make objects (docs/total-objects.md, Phase 2) ----
     await P(() => { const p = window.__paint; p.newDoc(300, 200); p.setZoom(2); p.S.pristine = false; p.S.primary = '#000000'; p.S.fontSize = 24;
@@ -504,33 +504,33 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.keyboard.type('Hello');
     await page.keyboard.press('Enter');
     await frame();
-    let tx = await P(() => window.__paint.objs.map((o) => ({ t: o.t, lines: o.lines, id: o.id })));
+    let tx = await P(() => window.__paint.userObjs.map((o) => ({ t: o.t, lines: o.lines, id: o.id })));
     ok(tx.length === 1 && tx[0].t === 'text' && tx[0].lines[0] === 'Hello' && await hash() === await P(() => { const c = document.createElement('canvas'); c.width = 300; c.height = 200; const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, 300, 200); const d = g.getImageData(0, 0, 300, 200).data; let h = 2166136261; for (let i = 0; i < d.length; i++) h = Math.imul(h ^ d[i], 16777619); return `300x200:${h >>> 0}`; }) && !isWhite(await seen(25, 35)),
       'typed text becomes a text object (shown, not in the pixels)');
     const seenText = await chash();
     await page.mouse.click(...await at(30, 30)); // the text tool on that text: edit it again
-    ok(await P(() => !document.querySelector('#textInput').hidden && document.querySelector('#textInput').value === 'Hello' && window.__paint.objs.length === 0),
+    ok(await P(() => !document.querySelector('#textInput').hidden && document.querySelector('#textInput').value === 'Hello' && window.__paint.userObjs.length === 0),
       'clicking it with the text tool reopens it (hidden from the canvas while editing)');
     await page.keyboard.press('End'); await page.keyboard.type(' you');
     await page.keyboard.press('Enter');
     await frame();
-    tx = await P(() => window.__paint.objs.map((o) => ({ t: o.t, lines: o.lines, id: o.id })));
+    tx = await P(() => window.__paint.userObjs.map((o) => ({ t: o.t, lines: o.lines, id: o.id })));
     ok(tx.length === 1 && tx[0].lines[0] === 'Hello you' && tx[0].id === (await P(() => window.__paint.hist.top().pairs[0][1].id)), 'Enter replaces it: same object, one undo step');
     await page.keyboard.press('Meta+KeyZ'); await frame();
-    ok(await P(() => window.__paint.objs.length === 1 && window.__paint.objs[0].lines[0] === 'Hello') && await chash() === seenText, 'one undo brings the old text back exactly');
+    ok(await P(() => window.__paint.userObjs.length === 1 && window.__paint.userObjs[0].lines[0] === 'Hello') && await chash() === seenText, 'one undo brings the old text back exactly');
     await page.mouse.click(...await at(30, 30)); await page.keyboard.press('Escape'); await frame();
-    ok(await P(() => window.__paint.objs.length === 1 && window.__paint.objs[0].lines[0] === 'Hello') && await chash() === seenText, 'Esc while editing it puts it back unchanged');
+    ok(await P(() => window.__paint.userObjs.length === 1 && window.__paint.userObjs[0].lines[0] === 'Hello') && await chash() === seenText, 'Esc while editing it puts it back unchanged');
     // a paste: a float, then an image object; the Move tool moves it; undo removes it
     await P(() => { const c = document.createElement('canvas'); c.width = 40; c.height = 30; const g = c.getContext('2d'); g.fillStyle = '#ed1c24'; g.fillRect(0, 0, 40, 30); window.__paint.pasteImage(c); });
     await P(() => { window.__paint.selectAll(); window.__paint.setTool('move'); }); // commits the float
     await frame();
-    let im = await P(() => window.__paint.objs.filter((o) => o.t === 'image').map((o) => [o.x, o.y, o.w, o.h]));
+    let im = await P(() => window.__paint.userObjs.filter((o) => o.t === 'image').map((o) => [o.x, o.y, o.w, o.h]));
     ok(im.length === 1 && im[0][2] === 40 && isWhite(await pixel(im[0][0] + 5, im[0][1] + 5)) && !isWhite(await seen(im[0][0] + 5, im[0][1] + 5)), 'a committed paste is an image object: ' + JSON.stringify(im));
     await drag([[im[0][0] + 20, im[0][1] + 15], [im[0][0] + 120, im[0][1] + 95]]);
-    const im2 = await P(() => window.__paint.objs.filter((o) => o.t === 'image').map((o) => [o.x, o.y]));
+    const im2 = await P(() => window.__paint.userObjs.filter((o) => o.t === 'image').map((o) => [o.x, o.y]));
     ok(im2[0][0] === im[0][0] + 100 && im2[0][1] === im[0][1] + 80 && isWhite(await seen(im[0][0] + 5, im[0][1] + 5)), 'the Move tool moves the pasted image later');
     await page.keyboard.press('Meta+KeyZ'); await page.keyboard.press('Meta+KeyZ'); await frame();
-    ok(await P(() => window.__paint.objs.length === 1) && await chash() === seenText, 'undo moves it back, then removes it');
+    ok(await P(() => window.__paint.userObjs.length === 1) && await chash() === seenText, 'undo moves it back, then removes it');
     // the select tool: a lift leaves a colour-2 patch object and commits an image object, one step
     await P(() => { window.__paint.S.secondary = '#ffc90e'; });
     const dS = await depth();
@@ -538,7 +538,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await drag([[10, 10], [80, 50]]);
     await drag([[20, 20], [140, 120]]);
     await page.keyboard.press('Escape'); await frame();
-    const ks = await P(() => window.__paint.objs.map((o) => o.t + (o.t === 'rect' ? ':' + o.color + ':' + o.mode : '')));
+    const ks = await P(() => window.__paint.userObjs.map((o) => o.t + (o.t === 'rect' ? ':' + o.color + ':' + o.mode : '')));
     ok(ks.join() === 'text,rect:#ffc90e:fill,image' && await depth() === dS + 1, 'lift + move + commit: a colour-2 patch and an image object, in one undo step: ' + ks.join());
     ok(isWhite(await pixel(15, 15)), 'and the pixels underneath are untouched');
     await page.keyboard.press('Meta+KeyZ'); await frame();
@@ -546,7 +546,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await drag([[100, 100], [150, 150]]);
     const sr = await P(() => { const q = window.__paint.sel; return q && [q.x, q.y, q.w, q.h]; });
     await page.keyboard.press('Delete'); await frame();
-    ok(sr && await P((r) => { const p = window.__paint, o = p.objs[p.objs.length - 1]; return !p.sel && o.t === 'rect' && o.mode === 'fill' && o.color === '#ffc90e' && o.a.x === r[0] && o.a.y === r[1] && o.b.x === r[0] + r[2] && o.b.y === r[1] + r[3]; }, sr),
+    ok(sr && await P((r) => { const p = window.__paint, o = p.userObjs[p.userObjs.length - 1]; return !p.sel && o.t === 'rect' && o.mode === 'fill' && o.color === '#ffc90e' && o.a.x === r[0] && o.a.y === r[1] && o.b.x === r[0] + r[2] && o.b.y === r[1] + r[3]; }, sr),
       'Delete clears the selection with a colour-2 patch object over exactly the selection');
 
     // ---- 25. a PNG keeps the objects (private chunk); another app's re-encode drops them safely ----
@@ -559,12 +559,12 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.mouse.click(...await at(250, 100)); await P(() => window.__paint.filling); await frame(); // the background, outside the shapes
     await P(() => { const c = document.createElement('canvas'); c.width = 30; c.height = 20; const g = c.getContext('2d'); g.fillStyle = 'rgba(237, 28, 36, 0.5)'; g.fillRect(0, 0, 30, 20); window.__paint.pasteImage(c); window.__paint.selectAll(); window.__paint.setTool('move'); });
     await frame();
-    const kinds = await P(() => window.__paint.objs.map((o) => o.t).join());
+    const kinds = await P(() => window.__paint.userObjs.map((o) => o.t).join());
     const seen25 = await chash();
     const b64 = await P(async () => { const b = await window.__paint.encodeFor('scene.png'); const u = new Uint8Array(await b.arrayBuffer()); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); });
     ok(kinds === 'brush,rect,text,fill,image' && Buffer.from(b64, 'base64').includes(Buffer.from('paNt')), 'the PNG carries a paNt chunk for ' + kinds);
     await P(() => { const p = window.__paint; p.setTool('move'); p.selectAll && p.setTool('move'); });
-    await P(() => { const p = window.__paint; p.selectMany(p.objs.map((o) => o.id)); }); // a group selected before opening
+    await P(() => { const p = window.__paint; p.selectMany(p.userObjs.map((o) => o.id)); }); // a group selected before opening
     ok(await P(() => window.__paint.selList().length) === 5, 'all five selected');
     await P(() => { window.__clip = null; navigator.clipboard.write = async (items) => { window.__clip = await items[0].getType('image/png'); }; });
     await page.keyboard.press('Meta+KeyC');
@@ -579,12 +579,12 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await P(() => window.__paint.newDoc(50, 50));
     await page.setInputFiles('#fileInput', { name: 'scene.png', mimeType: 'image/png', buffer: Buffer.from(b64, 'base64') });
     await page.waitForFunction(() => window.__paint.S.fileName === 'scene.png'); await frame();
-    ok(await P(() => window.__paint.objs.map((o) => o.t).join()) === kinds && await chash() === seen25 && await P(() => !window.__paint.hist.canUndo()),
+    ok(await P(() => window.__paint.userObjs.map((o) => o.t).join()) === kinds && await chash() === seen25 && await P(() => !window.__paint.hist.canUndo()),
       'reopened, the objects come back and the picture is identical');
     ok(await P(() => window.__paint.selList().length) === 0, 'and nothing is selected (no stale group from before)');
-    await P(() => { const p = window.__paint; p.setTool('move'); const o = p.objs.find((x) => x.t === 'rect'); p.selectObj(o.id); document.querySelector('#viewport').focus(); });
+    await P(() => { const p = window.__paint; p.setTool('move'); const o = p.userObjs.find((x) => x.t === 'rect'); p.selectObj(o.id); document.querySelector('#viewport').focus(); });
     await page.keyboard.press('Delete'); await frame();
-    ok(await P(() => window.__paint.objs.length === 4 && !window.__paint.objs.some((o) => o.t === 'rect')), 'and they are editable (the rectangle can be deleted on its own)');
+    ok(await P(() => window.__paint.userObjs.length === 4 && !window.__paint.userObjs.some((o) => o.t === 'rect')), 'and they are editable (the rectangle can be deleted on its own)');
     // the same picture re-encoded elsewhere: a chunk copied along no longer matches its image data
     const other = await P(async (b64) => {
       const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
@@ -596,7 +596,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     }, b64);
     await page.setInputFiles('#fileInput', { name: 'edited.png', mimeType: 'image/png', buffer: Buffer.from(other, 'base64') });
     await page.waitForFunction(() => window.__paint.S.fileName === 'edited.png'); await frame();
-    ok(await P(() => window.__paint.objs.length === 0 && window.__paint.base.width === 300), 'a PNG edited elsewhere opens as its pixels, without stale objects');
+    ok(await P(() => window.__paint.userObjs.length === 0 && window.__paint.base.width === 300), 'a PNG edited elsewhere opens as its pixels, without stale objects');
     const jpg = await P(async () => { const p = window.__paint; p.newDoc(40, 40); p.setTool('rect'); return 0; });
     await page.keyboard.press('KeyR'); await drag([[5, 5], [30, 30]]);
     ok(await P(async () => { const u = new Uint8Array(await (await window.__paint.encodeFor('x.jpg')).arrayBuffer()); return u[0] === 0xff && u[1] === 0xd8; }) && jpg === 0, 'JPEG saves just the picture');
@@ -618,15 +618,15 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.mouse.up();
     await page.keyboard.up('Alt');
     await frame();
-    ok(await P(() => window.__paint.objs.map((o) => o.t).join()) === 'ellipse' && await depth() === d26 + 1, '⌥-drag deleted the two objects it crossed, in one undo step');
+    ok(await P(() => window.__paint.userObjs.map((o) => o.t).join()) === 'ellipse' && await depth() === d26 + 1, '⌥-drag deleted the two objects it crossed, in one undo step');
     ok(isWhite(await pixel(20, 40)), 'and painted nothing');
     await page.keyboard.press('Meta+KeyZ'); await frame();
-    ok(await P(() => window.__paint.objs.length) === 3 && await chash() === seen26, 'one undo brings both back exactly');
+    ok(await P(() => window.__paint.userObjs.length) === 3 && await chash() === seen26, 'one undo brings both back exactly');
     await page.mouse.move(...await at(10, 40));
     await page.mouse.down();
     await page.mouse.move(...await at(170, 40), { steps: 3 });
     await page.mouse.up();
-    ok(await P(() => window.__paint.objs.map((o) => o.t).join()) === 'rect,pencil,ellipse,eraser', 'without ⌥ the Eraser draws a colour-2 stroke object on top');
+    ok(await P(() => window.__paint.userObjs.map((o) => o.t).join()) === 'rect,pencil,ellipse,eraser', 'without ⌥ the Eraser draws a colour-2 stroke object on top');
 
     // ---- 27. Move tool: a drag on empty canvas selects every object it touches; group move, delete ----
     await P(() => { const p = window.__paint; p.newDoc(300, 200); p.setZoom(2); p.S.pristine = false; p.S.primary = '#000000';
@@ -636,23 +636,23 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.keyboard.press('KeyO'); await drag([[200, 120], [260, 170]]);
     await page.keyboard.press('KeyV');
     await drag([[10, 10], [120, 40]]); // touches the rectangle and the stroke, not the ellipse
-    const ms = await P(() => [window.__paint.objSel, window.__paint.objs.filter((o) => window.__paint.selList().includes(o)).map((o) => o.t).join()]);
+    const ms = await P(() => [window.__paint.objSel, window.__paint.userObjs.filter((o) => window.__paint.selList().includes(o)).map((o) => o.t).join()]);
     ok(ms[0] === null && ms[1] === 'rect,pencil', 'a box drag on empty canvas selects the objects it touches: ' + JSON.stringify(ms));
     await page.keyboard.down('Shift'); await page.mouse.click(...await at(200, 145)); await page.keyboard.up('Shift');
     ok(await P(() => window.__paint.selList().length) === 3, '⇧-click adds one');
     await page.keyboard.down('Shift'); await page.mouse.click(...await at(200, 145)); await page.keyboard.up('Shift');
     ok(await P(() => window.__paint.selList().length) === 2, '⇧-click again takes it out');
-    const g0 = await P(() => window.__paint.objs.map((o) => JSON.stringify(o.a || o.pts))), dg = await depth();
+    const g0 = await P(() => window.__paint.userObjs.map((o) => JSON.stringify(o.a || o.pts))), dg = await depth();
     await drag([[20, 35], [70, 85]]); // on the rectangle: both move
-    const g1 = await P(() => window.__paint.objs.map((o) => o.a ? [o.a.x, o.a.y] : [o.pts[0], o.pts[1]]));
+    const g1 = await P(() => window.__paint.userObjs.map((o) => o.a ? [o.a.x, o.a.y] : [o.pts[0], o.pts[1]]));
     ok(JSON.stringify(g1) === JSON.stringify([[70, 70], [150, 80], [200, 120]]) && await depth() === dg + 1, 'dragging one of them moves the group, one undo step: ' + JSON.stringify(g1));
     await P(() => document.querySelector('#viewport').focus());
     await page.keyboard.press('ArrowRight');
-    ok(await P(() => window.__paint.objs[0].a.x === 71 && window.__paint.objs[1].pts[0] === 151), 'arrows nudge the group');
+    ok(await P(() => window.__paint.userObjs[0].a.x === 71 && window.__paint.userObjs[1].pts[0] === 151), 'arrows nudge the group');
     await page.keyboard.press('Delete');
-    ok(await P(() => window.__paint.objs.map((o) => o.t).join()) === 'ellipse', 'Delete removes the group');
+    ok(await P(() => window.__paint.userObjs.map((o) => o.t).join()) === 'ellipse', 'Delete removes the group');
     await page.keyboard.press('Meta+KeyZ');
-    ok(await P(() => window.__paint.objs.length) === 3, 'one undo brings it back');
+    ok(await P(() => window.__paint.userObjs.length) === 3, 'one undo brings it back');
     await page.mouse.click(...await at(290, 10));
     ok(await P(() => window.__paint.selList().length) === 0, 'a click on empty canvas deselects them');
     void g0;
@@ -664,16 +664,28 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.keyboard.press('KeyO'); await drag([[150, 20], [250, 100]]);
     await P(() => { window.__paint.setTool('fill'); window.__paint.S.primary = '#ed1c24'; });
     await page.mouse.click(...await at(60, 50)); await P(() => window.__paint.filling); await frame();
-    ok(await P(() => { const o = window.__paint.objs; return o.length === 2 && o[0].mode === 'both' && o[0].alt === '#ed1c24'; }), 'a fill click inside a closed shape sets its fill, adding no fill object');
+    ok(await P(() => { const o = window.__paint.userObjs; return o.length === 2 && o[0].mode === 'both' && o[0].alt === '#ed1c24'; }), 'a fill click inside a closed shape sets its fill, adding no fill object');
     await page.mouse.click(...await at(280, 180)); await P(() => window.__paint.filling); await frame();
-    ok(await P(() => window.__paint.objs.map((o) => o.t).join()) === 'rect,ellipse,fill', 'outside the shapes it is a flood fill as before');
+    ok(await P(() => window.__paint.userObjs.map((o) => o.t).join()) === 'rect,ellipse,fill', 'outside the shapes it is a flood fill as before');
     await page.keyboard.press('KeyV');
     await page.mouse.click(...await at(150, 60)); // the ellipse's outline
     const seen28 = await chash();
     await page.keyboard.press('Meta+KeyE'); await frame();
-    ok(await P(() => window.__paint.objs.map((o) => o.t).join()) === 'rect,image,fill', '⌘E with a selection flattens just it into one image object, in its place');
+    ok(await P(() => window.__paint.userObjs.map((o) => o.t).join()) === 'rect,image,fill', '⌘E with a selection flattens just it into one image object, in its place');
     await page.keyboard.press('Meta+KeyZ'); await frame();
-    ok(await P(() => window.__paint.objs.map((o) => o.t).join()) === 'rect,ellipse,fill' && await chash() === seen28, 'one undo brings the ellipse back exactly');
+    ok(await P(() => window.__paint.userObjs.map((o) => o.t).join()) === 'rect,ellipse,fill' && await chash() === seen28, 'one undo brings the ellipse back exactly');
+
+    // ---- 29. the opened picture is the bottom object, locked (decision 6) ----
+    await P(() => { const p = window.__paint; p.newDoc(120, 80); p.setZoom(2); const v = document.querySelector('#viewport'); v.scrollLeft = v.scrollTop = 0; });
+    ok(await P(() => { const o = window.__paint.objs[0]; return window.__paint.objs.length === 1 && o.t === 'base' && o.locked && o.w === 120 && o.h === 80 && o.asset.cv === window.__paint.base; }),
+      'the picture is the bottom object: a locked base over the base canvas');
+    await page.keyboard.press('KeyV');
+    await page.mouse.click(...await at(60, 40));
+    ok(await objSel() === null && await P(() => window.__paint.selList().length === 0), 'the Move tool does not pick it');
+    await P(() => window.__paint.transformDoc('rotR'));
+    ok(await P(() => { const o = window.__paint.objs[0]; return o.t === 'base' && o.w === 80 && o.h === 120 && o.asset.cv === window.__paint.base; }), 'a whole-image op gives it the new picture');
+    await page.keyboard.press('Meta+KeyZ');
+    ok(await P(() => window.__paint.objs[0].w === 120), 'and undo the old one');
 
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));
   } catch (e) {

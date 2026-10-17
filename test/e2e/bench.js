@@ -211,7 +211,7 @@ async function once() {
       }));
       await run(`${tag} move one in 5k`, async () => {
         await P(() => window.__paint.setTool('move'));
-        const o = await P(() => { const o = window.__paint.objs[2500]; return o && { x: o.a.x, y: o.a.y }; });
+        const o = await P(() => { const o = window.__paint.userObjs[2500]; return o && { x: o.a.x, y: o.a.y }; });
         const W = await P(() => window.__paint.img.width), bx = await box(), z = bx.width / W;
         const sx = bx.x + o.x * z, sy = bx.y + o.y * z;
         await page.mouse.move(sx, sy); await page.mouse.down();

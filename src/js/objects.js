@@ -27,6 +27,17 @@ function selectMany(ids) {
   objVer++;
   requestRender();
 }
+// The opened picture is the bottom object (decision 6): {t: 'base', locked, x: 0, y: 0, w, h, asset} over
+// the base canvas, with the lowest possible z-key. Locked: never hit, picked, box-selected, moved,
+// reordered or deleted. It's replaced whenever the base canvas is (syncBase(), from doc.js).
+const BASE_Z = 'A' + '0'.repeat(26);
+const isBase = (o) => o.t === 'base';
+const baseRec = () => ({ t: 'base', id: 0, z: BASE_Z, locked: true, x: 0, y: 0, w: base.width, h: base.height, asset: makeAsset(base) });
+const hasObjs = () => objs.some((o) => !isBase(o));
+function syncBase() {
+  if (objs[0] && isBase(objs[0]) && objs[0].asset.cv === base) return;
+  install([baseRec()].concat(objs.filter((o) => !isBase(o))));
+}
 const selObj = () => (objSel == null ? null : objs.find((o) => o.id === objSel) || null);
 // Every change of the list goes through here: the scene's index and redraw follow it.
 // pairs: the change as [now, then] pairs when the caller knows it (an add), so a scene of thousands
@@ -78,17 +89,18 @@ function zAbove(o) {
 // A whole-image op (crop, resize, rotate, flip): map every object to its place in the new w × h image.
 // One left wholly outside is dropped. Returns the list before (for the doc entry), or null if empty.
 function mapObjs(map, w, h) {
-  if (!objs.length) return null;
+  if (!hasObjs()) return null;
   const before = objs;
-  install(objs.map(map).filter((o) => { const b = Core.objBox(o); return b.x < w && b.y < h && b.x + b.w > 0 && b.y + b.h > 0; }));
+  install(objs.map((o) => (isBase(o) ? o : map(o))).filter((o) => { const b = Core.objBox(o); return isBase(o) || (b.x < w && b.y < h && b.x + b.w > 0 && b.y + b.h > 0); }));
   if (!selObj()) objSel = null;
   multi = [];
   return before;
 }
-function resetObjs() { install([]); objSel = null; multi = []; }
+function resetObjs() { install([baseRec()]); objSel = null; multi = []; }
 // Objects read back from a saved file (persist.js): the list as it was, ids from where it left off.
-function loadObjs(list, nextId) { install(list); objSel = null; multi = []; nextObjId = Math.max(nextId || 1, ...list.map((o) => o.id + 1)); }
+function loadObjs(list, nextId) { install([baseRec()].concat(list)); objSel = null; multi = []; nextObjId = Math.max(nextId || 1, ...list.map((o) => o.id + 1)); }
 const objIdNext = () => nextObjId;
+const userObjs = () => objs.filter((o) => !isBase(o));
 // Undo/redo of an obj entry (a diff), or of a flatten's region entry or a whole-image op's doc entry
 // (a whole list, swapped in).
 function applyObjHist(e) {
@@ -127,6 +139,7 @@ function selectObj(id) {
 // either end it deselects and returns false, so the key moves focus on as usual (no focus trap).
 const OBJ_NAMES = { line: 'Line', rect: 'Rectangle', ellipse: 'Ellipse', pencil: 'Pencil stroke', eraser: 'Eraser stroke', brush: 'Brush stroke', text: 'Text', image: 'Image', fill: 'Fill' };
 function cycleObj(dir) {
+  const objs = userObjs();
   const i = objs.findIndex((o) => o.id === objSel), j = i < 0 ? (dir > 0 ? 0 : -1) : i + dir;
   if (j < 0 || j >= objs.length) { if (objSel != null) selectObj(null); return false; }
   const o = objs[j], r = Core.objFrame(o);
@@ -164,7 +177,7 @@ function duplicateObj() {
 // neighbour it passes.
 function reorderObj(dir) {
   const o = selObj(), i = objs.indexOf(o), j = i + dir;
-  if (!o || j < 0 || j >= objs.length) return;
+  if (!o || j < 0 || j >= objs.length || isBase(objs[j])) return;
   const nb = objs[j], next = objs.slice();
   next[i] = { ...nb, z: o.z }; next[j] = { ...o, z: nb.z };
   setObjs(next);
@@ -193,13 +206,13 @@ function flattenSelected() {
 // edges differently: see scene.js). A whole-document step, like a crop: it keeps the old base and the
 // object list, so undo brings both back.
 function flattenObjs() {
-  if (!objs.length || (S.tool === 'move' && flattenSelected())) return;
+  if (!hasObjs() || (S.tool === 'move' && flattenSelected())) return;
   commitText();
   commitSelection(); // a floating selection is about to become an object too
   flushRedraw();
   const before = base, list = objs;
   setDoc(cloneCanvas(img));
-  install([]); objSel = null; multi = [];
+  install(objs.filter(isBase)); objSel = null; multi = [];
   pushDocHist(before, list);
   requestRender();
 }
@@ -209,4 +222,4 @@ function composite() {
   return img;
 }
 
-export { addObj, fillShape, loadObjs, multi, objIdNext, selectMany, selList, applyObjHist, commitObjDrag, composite, cycleObj, deleteObj, duplicateObj, flattenObjs, mapObjs, newObjId, nudgeObj, objs, objSel, objVer, reorderObj, resetObjs, restyleObj, selectObj, selObj, setObjs, showObjs, zAbove };
+export { addObj, hasObjs, isBase, syncBase, userObjs, fillShape, loadObjs, multi, objIdNext, selectMany, selList, applyObjHist, commitObjDrag, composite, cycleObj, deleteObj, duplicateObj, flattenObjs, mapObjs, newObjId, nudgeObj, objs, objSel, objVer, reorderObj, resetObjs, restyleObj, selectObj, selObj, setObjs, showObjs, zAbove };

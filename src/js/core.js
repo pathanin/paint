@@ -557,6 +557,7 @@
   // Is p on o? tol is extra reach in image px (callers pass a few screen px over the zoom), so thin
   // outlines stay clickable at any zoom. Filled shapes hit inside; outlines only near their edge.
   function hitsObject(o, p, tol) {
+    if (o.locked) return false; // the base (the opened picture) can't be picked
     if (!SHAPE_KINDS.has(o.t)) return hitsOther(o, p, tol);
     o = drawnObj(o);
     const half = o.size / 2 + tol, filled = o.mode !== 'outline';

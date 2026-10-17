@@ -148,7 +148,7 @@ async function session(browser, url, flatten) {
     let s = ''; for (let i = 0; i < d.length; i += 0x8000) s += String.fromCharCode.apply(null, d.subarray(i, i + 0x8000));
     return { w: c.width, h: c.height, b64: btoa(s) };
   }, which);
-  const records = () => P(() => JSON.stringify(window.__paint.objs.map(({ z, ...o }) => o)));
+  const records = () => P(() => JSON.stringify(window.__paint.userObjs.map(({ z, ...o }) => o)));
   s.page = page;
   return { page, s, grab, records, errs };
 }

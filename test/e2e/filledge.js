@@ -151,8 +151,8 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       await frame();
       ok(diff.segs > 20 && (diff.n === 0 || diff.dark < 8), `size ${size}: stroke over many moves = one path (${diff.segs} segments, ${diff.n} px differ, max ${diff.max}, darker by ${diff.dark.toFixed(1)} on average)`);
       // the stroke is one object: moved away and back, its tiles repainted, it is the same pixels
-      const h1 = await P(() => { const p = window.__paint; return [p.objs.length, p.objs[0] && p.objs[0].t, p.img.getContext('2d').getImageData(0, 0, 400, 300).data.join()]; });
-      await P(() => { const p = window.__paint; p.setTool('move'); p.selectObj(p.objs[0].id); document.querySelector('#viewport').focus(); });
+      const h1 = await P(() => { const p = window.__paint; return [p.userObjs.length, p.userObjs[0] && p.userObjs[0].t, p.img.getContext('2d').getImageData(0, 0, 400, 300).data.join()]; });
+      await P(() => { const p = window.__paint; p.setTool('move'); p.selectObj(p.userObjs[0].id); document.querySelector('#viewport').focus(); });
       for (const k of ['Shift+ArrowRight', 'Shift+ArrowDown', 'Shift+ArrowLeft', 'Shift+ArrowUp']) await page.keyboard.press(k);
       await frame();
       const h2 = await P(() => window.__paint.img.getContext('2d').getImageData(0, 0, 400, 300).data.join());

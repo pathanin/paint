@@ -5,7 +5,7 @@ import { redo, undo } from './doc.js';
 import { $, ring, stage, textBox } from './dom.js';
 import { openFile, save } from './fileio.js';
 import { openHelp } from './help.js';
-import { cycleObj, deleteObj, duplicateObj, flattenObjs, multi, nudgeObj, objSel, objs, reorderObj, restyleObj, selList, selObj, selectObj } from './objects.js';
+import { hasObjs, cycleObj, deleteObj, duplicateObj, flattenObjs, multi, nudgeObj, objSel, objs, reorderObj, restyleObj, selList, selObj, selectObj } from './objects.js';
 import { modalOpen } from './paste.js';
 import { cancelDrag, objDragUpdate } from './pointer.js';
 import { crop, deleteSelection, dropSelection, nudge, selectAll } from './selection.js';
@@ -87,7 +87,7 @@ window.addEventListener('keydown', (e) => {
       Digit0: () => fitZoom(false),
       // Only with objects to act on; otherwise the browser keeps ⌘D (bookmark) and ⌘[ ⌘] (back, forward).
       KeyD: selList().length && duplicateObj,
-      KeyE: objs.length && flattenObjs,
+      KeyE: hasObjs() && flattenObjs,
       BracketRight: selObj() && (() => reorderObj(1)),
       BracketLeft: selObj() && (() => reorderObj(-1)),
       Equal: () => zoomStep(1),

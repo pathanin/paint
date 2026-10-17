@@ -1,6 +1,6 @@
 import Core from './core.js';
 import { $ } from './dom.js';
-import { applyObjHist, mapObjs, resetObjs } from './objects.js';
+import { applyObjHist, mapObjs, resetObjs, syncBase } from './objects.js';
 import { commitSelection } from './selection.js';
 import { S, drag, sel, setDrag, setSel } from './state.js';
 import { commitText } from './text.js';
@@ -49,6 +49,7 @@ function setDoc(source, w, h) {
     fitView();
   }
   setSel(null); setDrag(null);
+  syncBase();
   layout();
   requestRender();
 }

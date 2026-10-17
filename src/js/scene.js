@@ -36,8 +36,9 @@ const byZ = (p, q) => (p.z < q.z ? -1 : p.z > q.z ? 1 : 0);
 function sceneSwap(prev, next, pairs) {
   if (prev === next) return;
   const gone = [], came = [];
+  prev = prev.filter((o) => !o.locked); next = next.filter((o) => !o.locked); // the base is drawn as the base canvas
   if (pairs) {
-    for (const [n, t] of pairs) { if (t) gone.push(t); if (n) came.push(n); }
+    for (const [n, t] of pairs) { if (t && !t.locked) gone.push(t); if (n && !n.locked) came.push(n); }
   } else if (prev.length === next.length) {
     for (let i = 0; i < prev.length; i++) if (prev[i] !== next[i]) { gone.push(prev[i]); came.push(next[i]); }
   } else {
