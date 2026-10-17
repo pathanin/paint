@@ -10,14 +10,18 @@ It builds on `docs/objects.md` (the live-shapes work, merged) and on reading thr
 
 ## TL;DR
 
-- **Yes, it can be done, in 7 phases, and the app ships after every one.** Phase 0 is a measurement gate. Each phase turns one more tool into objects and keeps its own pixels unchanged at the moment of drawing.
+- **Yes, it can be done, in 6 phases (0–5), and the app ships after every one.**
+  - Phase 0 is a measurement gate.
+  - Phase 1 moves today's shapes onto the new engine, with no visible change.
+  - Phase 2 is **the switch**: every tool that writes pixels becomes an object in one release. A mix of the two would make the remaining pixel tools paint under the strokes.
 - **The core idea:** a scene of immutable objects (the model tldraw and Figma use) rendered into **one document-resolution canvas that is a cache of the scene**. `#image` keeps its job as the canvas you see, and it becomes that cache.
   - Pan and zoom never re-draw content. That is the main reason tldraw feels fast, and Paint keeps it.
   - An edit re-draws only the dirty rectangle, from a spatial index (an R-tree, as tldraw uses).
 - **We take tldraw's techniques, not its renderer.** tldraw draws each shape as its own SVG/DOM element. That can't give a pixel editor what it needs: what you see at 800% is the PNG you save, a 1 px pencil is aliased, and pages hold 100 MP. The technique-by-technique table is below.
 - **No CanvasKit or WASM.** Chrome's Canvas 2D already runs on Skia on the GPU. Saves are pixel-exact only because screen and save go through the same rasterizer.
 - **The big wins:**
-  - Undo stops storing pixels for anything except bitmaps. At 10000² that means 100 undo steps instead of 4.
+  - Undo stops storing pixels for strokes, shapes and text. At 10000² that means 100 undo steps instead of 4.
+  - Bitmaps (fills, pastes, lifted selections, whole-image ops) still count against the 256 MB cap, so a few full-canvas fills can still push older steps out.
   - A GPU context loss can be repaired by re-drawing the scene.
   - Memory after edits at 10000² should drop from 4.3 GB to roughly 1–1.5 GB.
 - **One rule makes it safe:** each tool creates an object whose pixels, at the moment it's drawn, are byte-identical to what the tool paints today. A parity harness checks this against `master`.
@@ -53,15 +57,15 @@ Each one has a recommended default. The plan is written assuming the defaults; c
    - Should the Move tool pick it? *Recommended: no, it's locked by default.* Otherwise every click on empty-looking canvas selects the whole picture.
 7. **Select tool (S).**
    - (a) Keep it a pixel tool. Lifting a region creates an image object (a snapshot of what you see) plus a colour-2 rectangle object under it, where the region was. That is pixel-identical to today's lift. *Recommended.*
-   - (b) In addition, add marquee selection of objects to the Move tool: drag on empty canvas, as in tldraw and Figma. Today that drag pans; Space would still pan. *Recommended, Phase 6.*
+   - (b) In addition, add marquee selection of objects to the Move tool: drag on empty canvas, as in tldraw and Figma. Today that drag pans; Space would still pan. *Recommended, Phase 4.*
 8. **Persistence.** Today objects are flattened into the saved PNG and gone on reopen (decided 2026-10-14). That was cheap when only a few shapes were objects. With every stroke an object, every save throws away all editability.
    - (a) Keep that.
-   - (b) Add a round-trip: a PNG whose pixels are the picture, plus a private chunk holding the scene and the base bitmap. The full design is in `docs/objects.md`, "Persistence". Other apps see a normal PNG. The file grows by about the size of the base. *Recommended, Phase 7.*
+   - (b) Add a round-trip: a PNG whose pixels are the picture, plus a private chunk holding the scene and the base bitmap. The full design is in `docs/objects.md`, "Persistence". Other apps see a normal PNG. The file grows by about the size of the base. *Recommended, Phase 5.*
 9. **What one stroke is.** *Recommended: one object per pointer gesture* (down to up).
    - Long strokes are not split into several objects, as tldraw does at 600 points: where two pieces meet, the anti-aliased edge would be inked twice (the bug `filledge.js` guards against).
    - Instead one object keeps per-segment boxes for partial redraws.
 10. **Stacking during the move-over.** Today pixel tools paint *under* shapes.
-    - Once strokes are objects (Phase 3), a new stroke goes on top of everything, like any new object. *Recommended*: in a world where everything is an object, "new marks go on top" is the only rule that reads naturally.
+    - From the switch (Phase 2), a new mark goes on top of everything, like any new object. *Recommended*: in a world where everything is an object, "new marks go on top" is the only rule that reads naturally.
     - Until then, the current rule stays.
 
 ## What makes tldraw fast, and what Paint takes from it
@@ -133,7 +137,7 @@ To be honest about it: much of tldraw's smoothness comes from **not having a pix
 
 | Canvas | Size | What it holds | Who writes it |
 |---|---|---|---|
-| `baseCv` (new, not in the DOM) | document | The base bitmap: the opened picture, or blank. Until Phase 6 it also holds pixel edits from tools that aren't objects yet | Open, New, whole-image ops; transitional pixel tools |
+| `baseCv` (new, not in the DOM) | document | The base bitmap: the opened picture, or blank. Until Phase 2 it also holds pixel edits from tools that aren't objects yet | Open, New, whole-image ops; transitional pixel tools |
 | `#image` (existing) | document | **The composite cache:** base plus every object, in z order. It is what you see, save, copy, pick from and fill from | Only the renderer (`redraw(rect)`), plus the live-stroke fast path below |
 | `#preview` (existing) | visible area | The shape being drawn, a lifted float, the brush tail | `render()` |
 | DOM overlays (existing) | — | Ants, handles, hover outline; later, a batched-outline canvas for multi-select | `render()` |
@@ -167,7 +171,7 @@ To be honest about it: much of tldraw's smoothness comes from **not having a pix
 - **Bitmap assets** (base, pasted images, fill bitmaps, lifted snapshots) are immutable and shared by reference.
   - An entry is charged for an asset only while it is the only holder.
 - **`doc` entries** for whole-image ops keep the previous `baseCv` and object list, as today.
-- **Region entries and GPU-held undo tiles** become unnecessary once nothing writes `baseCv` in place (Phase 6). Then `queueToData()`, `gpuLost()`'s entry dropping and the idle readback can retire, and a context loss on `#image` is repaired by `redraw(all)`.
+- **Region entries and GPU-held undo tiles** become unnecessary once nothing writes `baseCv` in place (Phase 3). Then `queueToData()`, `gpuLost()`'s entry dropping and the idle readback can retire, and a context loss on `#image` is repaired by `redraw(all)`.
   - Assets must survive a context loss too. Keep the opened file's `Blob` (or `ImageData`) as the source of truth, not only a canvas.
 - **`isDirty()`** stays derived from history.
 
@@ -178,11 +182,11 @@ To be honest about it: much of tldraw's smoothness comes from **not having a pix
 | `line`, `rect`, `ellipse` | As now (`a`, `b`, colours, size, mode) | Already objects | 1 |
 | `text` | String, font, size, colour, position (`textBaseline()` maths unchanged) | Same `fillText` calls | 2 |
 | `image` | Asset ref, x, y, w, h | Same `drawImage` as committing `sel.float` | 2 |
-| `pencil` | Int points (`Int32Array`), colour, size | Same Bresenham square stamps (`stampLine`) | 3 |
-| `brush` | Settled segments `{a, c, b}` (`Float32Array`), colour, size, per-segment boxes | The same one-path stroke `brushPath()` draws | 3 |
-| `eraser` | A pencil-like stamp stroke in colour 2 | It's what the eraser paints today | 4 |
-| `fill` | A bitmap asset (the region plus the anti-aliased ring), x, y | `Core.fillPlan` on the composite, run in `fill-worker.js` as today | 5 |
-| `base` | The bottom bitmap, locked | It is the picture | 6 |
+| `pencil` | Int points (`Int32Array`), colour, size | Same Bresenham square stamps (`stampLine`) | 2 |
+| `brush` | Settled segments `{a, c, b}` (`Float32Array`), colour, size, per-segment boxes | The same one-path stroke `brushPath()` draws | 2 |
+| `eraser` | A pencil-like stamp stroke in colour 2 | It's what the eraser paints today | 2 |
+| `fill` | A bitmap asset (the region plus the anti-aliased ring), x, y | `Core.fillPlan`, run in `fill-worker.js` as today, now on the composite | 2 |
+| `base` | The bottom bitmap, locked | It is the picture | 3 |
 
 Transforms keep their current rules (`Core.moveObj`, `scaleObj`, `transformObj`). Strokes get a transform field instead of rewritten points, and pencil strokes re-stamp after a transform, so they stay aliased.
 
@@ -202,7 +206,9 @@ Each phase is a branch and a PR, green on CI, and shippable. The tests named are
 
 ### Phase 0: measure and gate (no user-visible change)
 
-- **Parity harness** (`test/e2e/parity.js`): replay a scripted session on two builds and compare the saved PNG bytes. On the `master` side, shapes are flattened as they're drawn, so both sides stack the same way.
+- **Parity harness** (`test/e2e/parity.js`): replay a scripted session on two builds and compare the saved PNG bytes. It is phase-aware:
+  - **Phases 0–1:** no flattening. The branch must equal `master` exactly, including pixel tools painting under shapes.
+  - **From Phase 2 (new marks on top):** the `master` side flattens each shape as it's drawn, so both sides stack in drawing order.
 - **Bench scenarios** in `bench.js`, run on `master` first for baselines:
   - `scene 5k strokes`: build a scene of 5,000 brush strokes (simulated with shapes on `master`), at 4000×3000 and 10000².
   - `move one in 5k`: drag one object across a dense area for 60 frames.
@@ -217,7 +223,7 @@ Each phase is a branch and a PR, green on CI, and shippable. The tests named are
   - immutable records, a fractional z-key, an R-tree, the `WeakMap` geometry cache;
   - diff entries in `History` (replacing the `obj` entry's whole-list snapshot);
   - transactions that collect dirty rects.
-- **`baseCv` + `#image` as the composite.** Pixel tools still paint `baseCv` (under shapes, as decided), followed by `redraw(dirty)` per frame. `img` and `ctx` (and so `tiles.js`'s undo snapshots) now point at `baseCv`; `adoptImage()` swaps `baseCv` and re-sizes `#image`.
+- **`baseCv` + `#image` as the composite.** Pixel tools still paint `baseCv` (under shapes, as decided), followed by `redraw(dirty)` per frame. `img` and `ctx` (and so `tiles.js`'s undo snapshots) now point at `baseCv`; `adoptImage()` swaps `baseCv` and re-sizes `#image`. The fill reads `baseCv`, so it still ignores shapes, as today.
 - **`render()` stops redrawing every object on `#preview`** when `objVer` changes. Today that is O(n) per edit, the first thing that breaks with many objects.
 - `composite()` becomes "read `#image`". Save, copy and the picker stop building a full-size copy.
 - **Tests:**
@@ -227,58 +233,64 @@ Each phase is a branch and a PR, green on CI, and shippable. The tests named are
   - Unit tests: R-tree wrapper, z-keys, dirty-rect grouping.
 - **Bench:** brush under 50 shapes at 10000² is no worse than `master`; `move one in 5k`.
 
-### Phase 2: text and pasted images as objects
+### Phase 2: the switch. Every tool that writes pixels creates an object (one release)
 
-These are `docs/objects.md` items 9 and 10.
+**Why it is one release:** once any visible content lives above `baseCv`, a tool still writing `baseCv` paints *under* it. Splitting this phase would ship those breakages:
 
-- `commitText()` creates a `text` object, and the text tool reopens it on click.
-- Paste, drop and a committed float create `image` objects. The asset store gets reference counting and charges assets to history bytes.
-- **Tests:** `smoke.js` text and paste sections (pixel reads flatten first, as the shape tests do); `objects.js` text and image round trips; `libs.js` unchanged.
+- Fill would pour straight through brush outlines.
+- The eraser couldn't erase strokes.
+- A lifted selection would leave the strokes behind.
+- Typed text would go under earlier strokes.
 
-### Phase 3: pencil and brush strokes as objects
+So the steps below land on one branch, and nothing ships until all of them are done. After this phase, nothing writes `baseCv` except whole-image ops, and **new marks go on top** (decision 10).
 
-This is the decisive phase for performance.
+1. **Pencil and brush.** This is the decisive step for performance.
+   - The live path stays `brushCommit()` / `stampLine()` into `#image`, with gesture-scoped tiles. Release adds the object.
+   - Strokes are hit-tested by distance to their segments: within half the size plus a screen-px tolerance, using per-segment boxes.
+2. **Eraser.** The colour-2 stamp stroke becomes an object (decision 4a).
+3. **Text.** `commitText()` creates a `text` object, and the text tool reopens it on click (`docs/objects.md`, item 9).
+4. **Paste, drop and a committed float** create `image` objects (`docs/objects.md`, item 10).
+   - The asset store gets reference counting and charges assets to history bytes.
+5. **Fill** creates a `fill` bitmap object (decision 5a).
+   - **Behaviour change:** today the fill reads only the raster (`#image`), so it ignores shapes. After the switch it reads the composite, everything you see, through a transferred copy as now.
+   - The worker message format stays backward-compatible (`CLAUDE.md`, Libraries).
+6. **Select tool (S).** Lift becomes an image object plus a colour-2 rect object under it (decision 7a); Delete becomes a colour-2 rect object. Crop stays a whole-image op.
 
-- The live path stays `brushCommit()` / `stampLine()` into `#image`, with gesture-scoped tiles. Release adds the object.
-- Hit testing of strokes: distance to the segments, within half the size plus a screen-px tolerance, with per-segment boxes.
-- New strokes go on top (decision 10).
-- **Tests:**
-  - `filledge.js`: the one-path rule checked on the object, after moves and after random `redraw()` blocks.
-  - `history.js`: stroke undo/redo becomes diffs, and stays pixel-exact.
-  - `smoke.js`: pencil and brush sections.
-  - The parity harness covers every pencil and brush script.
-- **Bench:**
-  - `10000 brush stroke` stays within noise of `master` (762 ms per 300 moves).
-  - `undo steps kept` at 10000² goes from 4 to 100.
-  - `memory after edits` at 10000².
-  - `stroke over 5k`.
+**Tests:**
 
-### Phase 4: eraser
+- `filledge.js`:
+  - the one-path rule, checked on the object after moves and after random `redraw()` blocks;
+  - the fill object's pixels equal `master`'s fill.
+- `history.js`: stroke, fill and selection undo become scene diffs and stay pixel-exact; the run-length fill redo path (`Path2D` of runs) retires.
+- `smoke.js`: the pencil, brush, eraser, fill, text, paste and select sections. Pixel reads that expected "pixel tools under shapes" change to "new marks on top".
+- `objects.js`: text and image round trips.
+- **Parity harness:** switches to flatten-as-drawn on the `master` side (see Phase 0), and covers every tool.
 
-- The colour-2 stamp stroke becomes an object (decision 4a).
-- ⌥-drag with the Eraser deletes whole objects it crosses, with a hover preview (decision 4b).
-- **Tests:** `smoke.js` eraser section; parity.
+**Bench:**
 
-### Phase 5: fill
+- `10000 brush stroke` stays within noise of `master` (762 ms per 300 moves).
+- `undo steps kept` at 10000², for strokes: from 4 to 100.
+- `stroke over 5k`.
+- `memory after edits` at 10000².
 
-- `runFill()` reads the composite, as now, through a transferred copy of the pixels. The result becomes a `fill` bitmap object instead of a `fill` history entry.
-- The worker message format stays backward-compatible (`CLAUDE.md`, Libraries).
-- **Tests:**
-  - `filledge.js` fill section: the fill object's pixels equal `master`'s fill.
-  - `history.js`: fill entries become scene diffs, so the run-length redo path (`Path2D` of runs) retires.
+### Phase 3: the base object, and retiring pixel undo
 
-### Phase 6: base object, select tool, multi-select
-
-- **Base:** the opened picture becomes the locked base object. Nothing writes `baseCv` in place any more, so region undo, GPU-held undo tiles and idle readback retire (see Undo).
-- **Select tool (S):** lift = an image object plus a colour-2 rect object (decision 7a). Delete = a colour-2 rect object.
-- **Move tool:** marquee selection of objects, ⇧-click to add, batched outlines on an overlay canvas, group move and resize, a z-order menu (decision 7b).
-- **Tests:**
-  - `smoke.js` select, crop and paste sections.
-  - `history.js` is rewritten around scene diffs.
-  - A GPU context loss redraws instead of dropping entries (`history.js` 1c changes meaning).
+- The opened picture becomes the locked base object (decision 6).
+- Nothing writes `baseCv` in place any more, so region undo, GPU-held undo tiles, `queueToData()` and the idle readback retire (see Undo).
+- A GPU context loss redraws the scene instead of dropping entries (`history.js` 1c changes meaning).
+- **Tests:** `history.js` is rewritten around scene diffs and `doc` entries; `smoke.js` crop and open sections.
 - **Bench:** `memory after edits` at 10000² (target ≤ 1.5 GB, against 4.3 GB).
 
-### Phase 7 (if decision 8b): round-trip save
+### Phase 4: working with many objects
+
+- **Move tool:** marquee selection of objects (Space still pans), ⇧-click to add, batched outlines on an overlay canvas, group move and resize, a z-order menu (decision 7b).
+- **⌥-drag with the Eraser** deletes whole objects it crosses, with a hover preview (decision 4b).
+- **Fill** inside a closed shape object sets the shape's fill (decision 5b).
+- ⌘E flattens the selection into one bitmap object.
+- **Tests:** `objects.js` multi-select, eraser and shape-fill sections.
+- **Bench:** select all and move with 5k objects.
+
+### Phase 5 (if decision 8b): round-trip save
 
 - A private PNG chunk holding the scene JSON, the stroke arrays delta-encoded, and the base and assets as nested PNGs.
 - A hash of the composite lets Paint ignore a stale chunk after the file was edited in another app.
@@ -295,7 +307,7 @@ These are proposed; Phase 0 confirms them against `master` on the M4. `task` noi
 | Move one object among 5k, per frame (p95) | n/a | ≤ 8 ms main thread, no long frames |
 | Pan or scroll at 25%, 5k strokes | ~0 content work | 0 content redraws (`__paint.redrawCount` unchanged) |
 | Undo/redo of one stroke, 10000² | region swap | ≤ 16 ms (diff + one box redraw) |
-| Undo steps kept, 10000² | 4 | 100 (the count cap) |
+| Undo steps kept, 10000², strokes and shapes | 4 | 100 (the count cap); bitmap entries still count bytes |
 | Memory after edits, 10000² | 4.3 GB | ≤ 1.5 GB |
 | Full rebuild, 5k strokes, 10000² | n/a | visible area ≤ 100 ms, everything ≤ 2 s at idle |
 | Save at 10000² with objects | composite built first | no composite build |
@@ -306,7 +318,7 @@ These are proposed; Phase 0 confirms them against `master` on the M4. `task` noi
 - **Memory at 100 MP.** `baseCv` plus `#image` is two document-size canvases (about 800 MB). That's still far below today's history footprint, but it's a fixed floor. If it's too much, a later step could make `#image` sparse (tiles only where objects exist), at the cost of seams at zoom < 1.
 - **Transform parity.** Turned and flipped strokes match flatten-then-transform within anti-aliasing, not bit for bit. This is the same as shapes today (`docs/objects.md`, item 7), and the same test tolerance applies.
 - **Stale fills.** A fill object doesn't follow the outline it filled (decision 5a). Users of vector apps may expect it to.
-- **Scope.** Phases 1, 3 and 6 are each about the size of the whole objects spike. Phases 2, 4 and 5 are smaller.
+- **Scope.** Phase 2 (the switch) is the big one: several times the objects spike, on one long-lived branch. Keep it rebased on `master`, and land Phase 1 first so the engine is already proven. Phases 1, 3 and 4 are each about the size of the spike; Phase 5 is small.
 
 ## Sources
 
