@@ -419,6 +419,26 @@ async function once() {
           await check(`${tag} fill`, () => window.__paint.userObjs.at(-1).t === 'fill');
           await undoAll();
         }
+        // Guards view.js kickFrame(): without it, after the fill's snapshot the compositor holds the next frame
+        // until a canvas changes again (~310 ms at 10000²). Only a second or later fill in a page shows it, and
+        // only when the click also changes something on screen, so this row toggles an outline on #status on
+        // pointerdown; a click that changes nothing has no frame for Event Timing to wait on.
+        const fill2 = `inp ${tag} second fill click (with damage)`;
+        if (want(fill2)) {
+          const b = await box(), at = [b.x + b.width - 4, b.y + b.height - 4];
+          await P(() => window.__paint.setTool('fill'));
+          await page.mouse.click(...at); // the first fill, untimed
+          await P(() => { window.__paint.S.primary = '#ff0000'; return window.__paint.filling; });
+          await P(() => {
+            const st = document.querySelector('#status');
+            window.__benchDamage = () => { st.style.outline = st.style.outline ? '' : '1px solid #f0f'; };
+            addEventListener('pointerdown', window.__benchDamage, true);
+          });
+          await run(fill2, () => page.mouse.click(...at));
+          await check(`${tag} second fill`, () => window.__paint.userObjs.filter((o) => o.t === 'fill').length === 2);
+          await P(() => { removeEventListener('pointerdown', window.__benchDamage, true); document.querySelector('#status').style.outline = ''; window.__paint.S.primary = '#000000'; });
+          await undoAll();
+        }
         // a 12 MP paste: decoding a real ⌘V runs after an await, so time the key that commits the float instead
         if (want(`inp ${tag} commit 12MP paste (P key)`)) {
           await P(() => window.__paint.pasteImage(window.__benchNoise(4000, 3000)));
