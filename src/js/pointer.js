@@ -4,7 +4,7 @@ import { $, clamp, ov, ring, setProp, stage, textBox, vp } from './dom.js';
 import { doFill } from './fill.js';
 import { endCanvasDrag } from './handles.js';
 import { addObj, commitObjDrag, fillShape, groupBox, multi, newObjId, objSel, objs, restoreSel, selectMany, selObj, selectObj, showObjs, zAbove } from './objects.js';
-import { endLive, flushRedraw, hitAt, markDirty, objsIn, setLive } from './scene.js';
+import { endLive, flushRedraw, growLive, hitAt, objsIn, setLive } from './scene.js';
 import { dropSelection, inside, liftSelection, unlift } from './selection.js';
 import { S, SHAPES, drag, sel, setDrag, setSel } from './state.js';
 import { commitText, startText } from './text.js';
@@ -129,7 +129,6 @@ ov.addEventListener('pointerdown', (e) => {
       const o = { t, pts: [ip.x, ip.y], color: t === 'eraser' ? S.secondary : color, size: S.sizes[t] };
       setDrag({ t, last: ip, o });
       setLive(o);
-      markDirty(Core.objBox(o));
       break;
     }
     case 'brush': {
@@ -137,7 +136,6 @@ ov.addEventListener('pointerdown', (e) => {
       const o = { t, segs: [{ a: p, c: null, b: { x: p.x + 1e-3, y: p.y } }], color, size: S.sizes.brush }; // the dot under the pointer (a 0-length line draws nothing)
       setDrag({ t, color, size: o.size, ptr: p, o, stroke: new Core.Stroke(p, S.smoothing * 2 / S.zoom, 0.5 / S.zoom) });
       setLive(o);
-      markDirty(Core.objBox(o));
       break;
     }
     case 'fill': { // inside a closed shape on top: set that shape's fill (decision 5b); else flood fill
@@ -195,7 +193,7 @@ ov.addEventListener('pointermove', (e) => {
         const iq = { x: Math.floor(q.x), y: Math.floor(q.y) };
         if (iq.x === d.last.x && iq.y === d.last.y) continue;
         d.o.pts.push(iq.x, iq.y);
-        markDirty(Core.objBox({ ...d.o, pts: [d.last.x, d.last.y, iq.x, iq.y] }));
+        growLive();
         d.last = iq;
       }
     }
@@ -235,11 +233,11 @@ function eraseAlong(d, p) {
   return hit;
 }
 
-// Settled brush segments join the live stroke; only their box is repainted.
+// Settled brush segments join the live stroke; only their boxes are repainted.
 function addSegs(d, segs) {
   if (!segs.length) return;
   for (const g of segs) d.o.segs.push(g);
-  markDirty(Core.objBox({ ...d.o, segs }));
+  growLive();
 }
 
 // Outline of the brush footprint, so big sizes show what they'll cover.

@@ -3,7 +3,7 @@ import Core from './core.js';
 import { base, ctx, img } from './doc.js';
 import { makeCanvas, stage, vp } from './dom.js';
 import { S } from './state.js';
-import { drawObj } from './tools.js';
+import { drawObj, drawPieces, segBox, stampBox, stampPieces } from './tools.js';
 
 // ---------- scene ----------
 // #image is a document-resolution cache of the scene: the base canvas (pixels), then every object
@@ -71,14 +71,35 @@ function hitAt(p, tol) {
 
 // The stroke being drawn (pencil, eraser, brush): drawn on top of every object, through the same
 // tile repaint, so its pixels are already final when it joins the scene on release (endLive()).
-// Its arrays grow as the pointer moves; the caller marks each new piece dirty.
-let live = null, quiet = false;
+// Its arrays grow as the pointer moves, and the caller calls growLive() after adding to them. Each
+// new piece (a stamp line, a brush segment) is filed under the tiles it reaches, so repainting a tile
+// draws only its pieces however long the stroke gets: the same pieces, in the same order, that
+// drawObj picks for that tile once the stroke is an object (tools.js stampBox / segBox), so its
+// pixels don't change when it joins.
+let live = null, liveAt = null, liveN = 0, quiet = false; // liveAt: tile key -> pieces; liveN: pieces filed
 const meets = (b, r) => b.x < r.x + r.w && b.x + b.w > r.x && b.y < r.y + r.h && b.y + b.h > r.y;
-const liveBox = () => Core.objBox(live);
-function setLive(o) { live = o; }
+function setLive(o) { live = o; liveAt = new Map(); liveN = 0; growLive(); }
+function growLive() {
+  const o = live;
+  const file = (piece, b) => {
+    markDirty(b);
+    for (const t of Core.dirtyTiles([b], img.width, img.height, TILE)) {
+      if (!meets(b, t)) continue;
+      let k = liveAt.get(t.key);
+      if (!k) liveAt.set(t.key, (k = []));
+      if (k[k.length - 1] !== piece) k.push(piece);
+    }
+  };
+  if (o.segs) for (; liveN < o.segs.length; liveN++) file(o.segs[liveN], segBox(o, o.segs[liveN]));
+  else {
+    const n = stampPieces(o);
+    for (let i = liveN; i < n; i += 2) file(i, stampBox(o, i));
+    liveN = o.pts.length > 2 ? n : 0; // a lone point is filed again once it becomes a line (its box grows)
+  }
+}
 // The live stroke is about to join the scene on top, as the next object added: its pixels are on
 // screen already, so that add marks nothing.
-function endLive() { quiet = !!live; live = null; }
+function endLive() { quiet = !!live; live = null; liveAt = null; }
 
 let dirty = [], queued = false, redrawCount = 0;
 function markDirty(r) {
@@ -141,8 +162,8 @@ function visibleRect() {
 const TILE = 512; // 256 took 3.5x as long to rebuild 5k objects at 10000² (1,600 copies, 575 ms vs 163 ms)
 const scratch = makeCanvas(TILE, TILE), sg = scratch.getContext('2d');
 function drawTile(g, t) {
-  const hits = objsIn(t);
-  if (!hits.length && !(live && meets(liveBox(), t))) { // only the base: one exact copy (onto transparent, alpha too)
+  const hits = objsIn(t), lv = live && liveAt.get(t.key);
+  if (!hits.length && !lv) { // only the base: one exact copy (onto transparent, alpha too)
     g.clearRect(t.x, t.y, t.w, t.h);
     g.drawImage(base, t.x, t.y, t.w, t.h, t.x, t.y, t.w, t.h);
     return;
@@ -152,7 +173,7 @@ function drawTile(g, t) {
   sg.drawImage(base, t.x, t.y, t.w, t.h, 0, 0, t.w, t.h);
   sg.translate(-t.x, -t.y);
   for (const o of hits) drawObj(sg, o, t);
-  if (live) drawObj(sg, live, t);
+  if (lv) drawPieces(sg, live, lv);
   g.clearRect(t.x, t.y, t.w, t.h);
   g.drawImage(scratch, 0, 0, t.w, t.h, t.x, t.y, t.w, t.h);
 }
@@ -164,4 +185,4 @@ function freshRender() {
   return c;
 }
 
-export { boxOf, endLive, freshRender, setLive, flushRedraw, hitAt, markAll, markDirty, objsIn, redrawCount, sceneSwap };
+export { boxOf, endLive, freshRender, growLive, setLive, flushRedraw, hitAt, markAll, markDirty, objsIn, redrawCount, sceneSwap };

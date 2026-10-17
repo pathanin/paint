@@ -54,18 +54,23 @@ function setColor(which, hex, key) {
 
 // Pencil and eraser: square stamps along the Bresenham line between each pair of points, as one
 // path (whole-pixel rects in one opaque colour: the same pixels as stamping them one by one).
-// r: only the segments whose stamps reach r (a tile being repainted).
-function drawStamps(c, o, r) {
+// Piece i (an even index into pts) is the line from that point to the next; a lone point is piece 0.
+// r: only the pieces whose stamps reach r (a tile being repainted); idx: just these pieces (the live
+// stroke's pieces in a tile, scene.js), which are the same ones.
+const meets = (b, r) => b.x < r.x + r.w && b.x + b.w > r.x && b.y < r.y + r.h && b.y + b.h > r.y;
+const stampEnd = (pts, i) => (i + 2 < pts.length ? i + 2 : i); // the lone point is a line to itself
+function stampBox(o, i) { // what piece i's stamps cover
+  const off = Math.floor(o.size / 2), p = o.pts, j = stampEnd(p, i);
+  return { x: Math.min(p[i], p[j]) - off, y: Math.min(p[i + 1], p[j + 1]) - off, w: Math.abs(p[j] - p[i]) + o.size, h: Math.abs(p[j + 1] - p[i + 1]) + o.size };
+}
+const stampPieces = (o) => (o.pts.length > 2 ? o.pts.length - 2 : 1); // pieces are i = 0, 2, ... below this
+function drawStamps(c, o, r, idx) {
   const off = Math.floor(o.size / 2), s = o.size, pts = o.pts;
   c.fillStyle = o.color;
   c.beginPath();
-  const n = pts.length;
-  for (let i = 0; i < n; i += 2) {
-    const ax = pts[i], ay = pts[i + 1], bx = i + 2 < n ? pts[i + 2] : ax, by = i + 2 < n ? pts[i + 3] : ay;
-    if (i + 2 >= n && n > 2) break; // the last point ends the previous segment
-    if (r && (Math.max(ax, bx) - off + s <= r.x || Math.min(ax, bx) - off >= r.x + r.w || Math.max(ay, by) - off + s <= r.y || Math.min(ay, by) - off >= r.y + r.h)) continue;
-    for (const [x, y] of Core.line(ax, ay, bx, by)) c.rect(x - off, y - off, s, s);
-  }
+  const piece = (i) => { const j = stampEnd(pts, i); for (const [x, y] of Core.line(pts[i], pts[i + 1], pts[j], pts[j + 1])) c.rect(x - off, y - off, s, s); };
+  if (idx) for (const i of idx) piece(i);
+  else for (let i = 0, n = stampPieces(o); i < n; i += 2) if (!r || meets(stampBox(o, i), r)) piece(i);
   c.fill();
 }
 // Brush: Core.Stroke segments ({a, c, b}, c = quadratic control or null) as one path, so joins blend
@@ -89,14 +94,17 @@ function brushPath(c, segs, color, size) {
   c.restore();
 }
 const segBoxes = new WeakMap(); // segment -> its box grown by the half width (segments are immutable)
-function segsIn(o, r) {
-  if (!r) return o.segs;
+function segBox(o, g) {
   const h = o.size / 2 + 1;
-  return o.segs.filter((g) => {
-    let b = segBoxes.get(g);
-    if (!b || b.h0 !== h) { b = Core.segsBox([g], h); b.h0 = h; segBoxes.set(g, b); }
-    return b.x < r.x + r.w && b.x + b.w > r.x && b.y < r.y + r.h && b.y + b.h > r.y;
-  });
+  let b = segBoxes.get(g);
+  if (!b || b.h0 !== h) { b = Core.segsBox([g], h); b.h0 = h; segBoxes.set(g, b); }
+  return b;
+}
+const segsIn = (o, r) => (r ? o.segs.filter((g) => meets(segBox(o, g), r)) : o.segs);
+// The live stroke's pieces that reach a tile (scene.js): stamp pieces by index, brush segments.
+function drawPieces(c, o, pieces) {
+  if (o.segs) brushPath(c, pieces, o.color, o.size);
+  else drawStamps(c, o, null, pieces);
 }
 const segsBox = Core.segsBox;
 // Text, images and fills draw at (x, y) through m.
@@ -170,4 +178,4 @@ function drawObj(c, o, r) {
   c.restore();
 }
 
-export { brushPath, drawObj, drawShape, pick, segsBox, setColor, setSize, setTool, shapeObj };
+export { brushPath, drawPieces, segBox, stampBox, stampPieces, drawObj, drawShape, pick, segsBox, setColor, setSize, setTool, shapeObj };
