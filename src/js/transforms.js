@@ -1,5 +1,5 @@
 import Core from './core.js';
-import { docOp, hist, img } from './doc.js';
+import { base, docOp, hist, img, turnDoc } from './doc.js';
 import { $, makeCanvas } from './dom.js';
 import { loadPica, used } from './libs.js';
 import { dropSelection } from './selection.js';
@@ -8,18 +8,25 @@ import { commitText, textAt } from './text.js';
 import { flash } from './toast.js';
 
 // ---------- transforms ----------
-function transformDoc(kind) {
-  commitText();
-  dropSelection();
-  const w = img.width, h = img.height;
+// The pixels of base turned or flipped (kind: rotL, rotR, flipH, flipV), as a new canvas.
+function turned(kind) {
+  const w = base.width, h = base.height;
   const dims = Core.rotateDims(w, h, kind === 'rotL' ? -90 : kind === 'rotR' ? 90 : 0);
   const c = makeCanvas(dims.w, dims.h), g = c.getContext('2d');
   if (kind === 'rotR') { g.translate(dims.w, 0); g.rotate(Math.PI / 2); }
   else if (kind === 'rotL') { g.translate(0, dims.h); g.rotate(-Math.PI / 2); }
   else if (kind === 'flipH') { g.translate(w, 0); g.scale(-1, 1); }
   else if (kind === 'flipV') { g.translate(0, h); g.scale(1, -1); }
-  g.drawImage(img, 0, 0);
-  docOp(c, (o) => Core.transformObj(o, kind, w, h));
+  g.drawImage(base, 0, 0);
+  return c;
+}
+// A turn or flip is exactly invertible, so its undo step keeps no canvas: undo turns the picture back
+// (doc.js, type 'turn'), and only the object list is kept (objects don't always map back exactly).
+function transformDoc(kind) {
+  commitText();
+  dropSelection();
+  const w = base.width, h = base.height;
+  turnDoc(turned(kind), (o) => Core.transformObj(o, kind, w, h), kind);
 }
 // Scale with pica's Lanczos-3 filter (in workers); past its budget, or if it fails, the built-in
 // halving resampler. On a zone plate ÷3, Lanczos-3 had ~40% less moiré and kept low
@@ -63,12 +70,12 @@ function resample(src, w, h) {
 let scaling = null;
 async function scaleDoc(w, h) {
   if (scaling) { flash('Still resizing'); return; }
-  const src = img, top = hist.top();
+  const src = base, top = hist.top();
   let shown = false; // say so only if it takes a noticeable time, then confirm when done
   const slow = setTimeout(() => { shown = true; flash('Resizing…'); }, 300);
   try {
     const out = await (scaling = scaleImage(src, w, h));
-    if (img !== src || hist.top() !== top || drag || (sel && sel.float) || textAt) {
+    if (base !== src || hist.top() !== top || drag || (sel && sel.float) || textAt) {
       out.width = 0;
       flash('Resize failed: the image changed while it ran', true);
       return;
@@ -90,8 +97,8 @@ function resizeDoc(w, h, mode, anchor) {
   const c = makeCanvas(w, h), g = c.getContext('2d');
   if (!isClear(S.secondary)) { g.fillStyle = S.secondary; g.fillRect(0, 0, w, h); } // else the new area stays transparent
   const { dx, dy } = Core.anchorOffset(img.width, img.height, w, h, anchor);
-  g.drawImage(img, dx, dy);
+  g.drawImage(base, dx, dy);
   docOp(c, (o) => Core.moveObj(o, dx, dy));
 }
 
-export { resample, resizeDoc, scaleImage, transformDoc };
+export { resample, resizeDoc, scaleImage, transformDoc, turned };

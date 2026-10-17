@@ -4,6 +4,7 @@ on:
   push:
     branches: [master]
   pull_request:
+  workflow_dispatch: # run on any branch by hand (gh workflow run CI --ref <branch>)
 
 concurrency:
   group: ci-${{ github.ref }}

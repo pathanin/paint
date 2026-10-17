@@ -3,16 +3,17 @@ import { hist, img, redo, undo } from './doc.js';
 import { $, antsEl, clamp, makeCanvas, ov, setAttr, setData, setProp, setText, stage, vp } from './dom.js';
 import { isDirty, save } from './fileio.js';
 import { showGhost } from './handles.js';
-import { objSel, objVer, objs, selObj } from './objects.js';
+import { groupBox, hasObjs, multi, objSel, objVer, objs, selList, selObj } from './objects.js';
 import { objCursor, objGap, objTarget, updateRing } from './pointer.js';
 import { crop, inside } from './selection.js';
 import { S, SHAPES, drag, isClear, sel } from './state.js';
 import { placeTextBox, textAt } from './text.js';
-import { brushPath, drawObj, drawShape, segsBox } from './tools.js';
+import { brushPath, drawShape, segsBox } from './tools.js';
 
 // ---------- view ----------
-// #overlay is only the pointer target (never drawn, so it has no backing store). Shape previews
-// and floating selections are drawn on #preview, which covers just the visible part of the image
+// #overlay is only the pointer target (never drawn, so it has no backing store). Objects are in
+// #image's cache (scene.js), so pan and zoom redraw nothing. Shape previews, the brush tail and
+// floating selections are drawn on #preview, which covers just the visible part of the image
 // (marching ants are the #ants element, at screen resolution). A document-sized overlay costs
 // 400 MB at 100 MP, and twice that once shown.
 const pv = $('#preview');
@@ -126,13 +127,13 @@ function requestRender() {
 function render() {
   rafPending = false;
   updateRing(hoverPt);
-  const hit = !drag && hoverPt && objs.length ? objTarget(hoverPt) : null;
+  const hit = !drag && hoverPt && hasObjs() ? objTarget(hoverPt) : null;
   if (!drag) setProp(ov.style, 'cursor', objCursor(hit) || (S.tool === 'move' ? 'grab' : '') || (S.tool === 'select' && sel && hoverPt && inside(hoverPt, sel) ? 'move' : ''));
   // The Move tool outlines the shape a click would pick (not the selected one: it has its own).
-  placeObjHover(hit && !hit.h && S.tool === 'move' && hit.o.id !== objSel ? hit.o : null);
+  placeObjHover(hit && !hit.h && (hit.erase || (S.tool === 'move' && hit.o.id !== objSel)) ? hit.o : null); // ⌥ + Eraser: what a click would delete
   if (drag && drag.t === 'canvas') showGhost(drag);
   const shape = drag && SHAPES.has(drag.t);
-  const marquee = drag && drag.t === 'select';
+  const marquee = drag && (drag.t === 'select' || drag.t === 'objbox');
   const mq = marquee ? Core.normRect(drag.start, drag.end) : null;
   // Live end of a brush stroke: what release would add, so the ink always reaches the pointer.
   const tail = drag && drag.t === 'brush' ? drag.stroke.tail(drag.ptr) : null;
@@ -142,11 +143,11 @@ function render() {
     shape ? [drag.t, drag.start, drag.end, drag.shift, drag.color, drag.alt, S.sizes[drag.t], S.fillMode] : 0,
     mq || 0,
     sel && sel.float ? [sel.x, sel.y, sel.w, sel.h, floatId(sel.float)] : 0,
-    objVer,
+    multi.length ? [multi.join(), objVer] : 0,
   ]);
   placeAnts(mq || sel);
-  placeObjSel(selObj());
-  if (shape || (sel && sel.float) || (tail && tail.length) || objs.length) placePreview();
+  placeObjSel(groupBox() || selObj());
+  if (shape || (sel && sel.float) || (tail && tail.length) || multi.length) placePreview();
   if (key !== ovKey) {
     ovKey = key;
     if (ovBox) octx.clearRect(ovBox.x, ovBox.y, ovBox.w, ovBox.h);
@@ -158,11 +159,15 @@ function render() {
       const x1 = Math.max(box.x + box.w, b.x + b.w), y1 = Math.max(box.y + box.h, b.y + b.h);
       box.x = Math.min(box.x, b.x); box.y = Math.min(box.y, b.y); box.w = x1 - box.x; box.h = y1 - box.y;
     };
-    // Pixels-to-be (a floating selection, the brush tail) under the objects; a shape being drawn on top.
+    // Pixels-to-be (a floating selection, the brush tail), then a shape being drawn, over the image.
     if (sel && sel.float) { octx.drawImage(sel.float, sel.x, sel.y); add(sel); }
     if (tail && tail.length) { brushPath(octx, tail, isClear(drag.color) ? checkerInk() : drag.color, drag.size); add(segsBox(tail, drag.size / 2 + 1)); }
-    for (const o of objs) { drawObj(octx, o); add(Core.objBox(o)); }
     if (shape) add(drawShape(octx, drag));
+    if (multi.length) { // several selected: each one's outline, batched into one path (as tldraw does)
+      const path = new Path2D(), lw = 1 / S.zoom;
+      for (const o of selList()) { const f = Core.objFrame(o); path.rect(f.x, f.y, f.w, f.h); add(f); }
+      octx.save(); octx.lineWidth = Math.max(lw, 1 / pvAt.k); octx.strokeStyle = '#0d99ff'; octx.stroke(path); octx.restore();
+    }
     ovBox = box;
   }
   updateStatus();
@@ -193,8 +198,8 @@ let objSelKey = '';
 function placeObjSel(o) {
   const z = S.zoom, d = devicePixelRatio, px = (v) => Math.round(v * z * d) / d;
   const g = o && Core.drawnObj(o); // on the stroke, not half a pixel off it (odd widths)
-  const r = o && Core.normRect(g.a, g.b);
-  const key = o ? [z, o.t, px(r.x), px(r.y), px(r.x + r.w), px(r.y + r.h), px(g.a.x), px(g.a.y), px(g.b.x), px(g.b.y)].join() : '';
+  const r = o && Core.objFrame(o), ends = o && o.a ? [px(g.a.x), px(g.a.y), px(g.b.x), px(g.b.y)] : [];
+  const key = o ? [z, o.t, px(r.x), px(r.y), px(r.x + r.w), px(r.y + r.h), ...ends].join() : '';
   if (key === objSelKey) return;
   objSelKey = key;
   objSelEl.hidden = !o;
@@ -215,20 +220,21 @@ const objHoverEl = $('#objhover');
 let objHoverKey = '';
 function placeObjHover(o) {
   const z = S.zoom, d = devicePixelRatio, px = (v) => Math.round(v * z * d) / d;
-  const key = o ? [z, o.t, o.a.x, o.a.y, o.b.x, o.b.y, o.size % 2].join() : '';
+  const f = o && Core.objFrame(o);
+  const key = o ? [z, o.t, o.id, f.x, f.y, f.w, f.h].join() : '';
   if (key === objHoverKey) return;
   objHoverKey = key;
   objHoverEl.hidden = !o;
   if (!o) return;
   o = Core.drawnObj(o);
-  objHoverEl.className = o.t;
+  objHoverEl.className = o.t === 'line' || o.t === 'ellipse' ? o.t : 'rect';
   if (o.t === 'line') {
     const ax = o.a.x * z, ay = o.a.y * z, len = Math.hypot(o.b.x - o.a.x, o.b.y - o.a.y) * z;
     Object.assign(objHoverEl.style, { left: ax + 'px', top: ay - 1 + 'px', width: len + 'px', height: '2px',
       transform: `rotate(${Math.atan2(o.b.y - o.a.y, o.b.x - o.a.x)}rad)` });
     return;
   }
-  const r = Core.normRect(o.a, o.b), x = px(r.x), y = px(r.y);
+  const r = f, x = px(r.x), y = px(r.y);
   Object.assign(objHoverEl.style, { left: x + 'px', top: y + 'px', width: px(r.x + r.w) - x + 'px', height: px(r.y + r.h) - y + 'px', transform: '' });
 }
 
@@ -236,6 +242,7 @@ let cursor = null;  // integer image px under the pointer, for the status bar
 let hoverPt = null; // the same point unrounded (null when the pointer is off the canvas); render() places the ring there
 const setCursor = (c) => { cursor = c; };
 const setHover = (p) => { hoverPt = p; };
+const ZBTNS = [...document.querySelectorAll('.zorder button')];
 const EL = {
   stPos: $('#stPos'), stSelWrap: $('#stSelWrap'), stSel: $('#stSel'), stSize: $('#stSize'),
   zoomBtn: $('#zoomBtn'), zoomIn: $('[data-cmd="zoomIn"]'), zoomOut: $('[data-cmd="zoomOut"]'), crop: $('#cropBtn'),
@@ -245,15 +252,17 @@ const EL = {
 function updateStatus() {
   setText(EL.stPos, cursor ? `${cursor.x}, ${cursor.y} px` : '—');
   const so = selObj();
-  const r = drag && drag.t === 'select' ? Core.normRect(drag.start, drag.end) : sel || (so && Core.normRect(so.a, so.b));
+  const r = drag && drag.t === 'select' ? Core.normRect(drag.start, drag.end) : sel || (so && Core.objFrame(so));
   setProp(EL.stSelWrap, 'hidden', !r);
-  setText(EL.stSel, r ? `${r.w} × ${r.h} px` : '');
+  setText(EL.stSel, r ? `${Math.round(r.w)} × ${Math.round(r.h)} px` : '');
   setAttr(img, 'aria-label', `Image, ${img.width} × ${img.height} px`);
   setText(EL.stSize, drag && drag.t === 'canvas'
     ? `${img.width} × ${img.height} → ${drag.w} × ${drag.h} px · Esc to cancel`
     : `${img.width} × ${img.height} px`);
   const pct = Math.round(S.zoom * 100) + '%';
   setText(EL.zoomBtn, pct);
+  const none = !selList().length;
+  for (const b of ZBTNS) setProp(b, 'disabled', none);
   setProp(EL.zoomIn, 'disabled', S.zoom >= ZOOMS[ZOOMS.length - 1] - 1e-9);
   setProp(EL.zoomOut, 'disabled', S.zoom <= ZOOMS[0] + 1e-9);
   setAttr(EL.zoomBtn, 'aria-label', `Zoom ${pct}. Activate for actual size`);

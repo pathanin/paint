@@ -3,13 +3,13 @@ import { img } from './doc.js';
 import { $, clamp, ov, ring, setProp, stage, textBox, vp } from './dom.js';
 import { doFill } from './fill.js';
 import { endCanvasDrag } from './handles.js';
-import { addObj, commitObjDrag, newObjId, objSel, objs, selObj, selectObj, showObjs } from './objects.js';
-import { dropSelection, inside, liftSelection } from './selection.js';
+import { addObj, commitObjDrag, fillShape, groupBox, multi, newObjId, objSel, objs, restoreSel, selectMany, selObj, selectObj, showObjs, zAbove } from './objects.js';
+import { endLive, flushRedraw, growLive, hitAt, objsIn, setLive } from './scene.js';
+import { dropSelection, inside, liftSelection, unlift } from './selection.js';
 import { S, SHAPES, drag, isClear, sel, setDrag, setSel } from './state.js';
 import { commitText, startText } from './text.js';
-import { beginOp, dropOp, endOp } from './tiles.js';
 import { flash } from './toast.js';
-import { brushCommit, pick, shapeObj, stampLine } from './tools.js';
+import { pick, shapeObj } from './tools.js';
 import { imgPt, requestRender, setCursor, setHover, setZoom, updateChrome, updateStatus } from './view.js';
 
 // ---------- pointer ----------
@@ -19,33 +19,53 @@ import { imgPt, requestRender, setCursor, setHover, setZoom, updateChrome, updat
 // A box side shorter than objGap() shows no midpoint handle, so its corners stay apart.
 const objTol = () => 4 / S.zoom, objGap = () => 24 / S.zoom;
 function objTarget(p) {
+  const gb = S.tool === 'move' && groupBox();
+  if (gb) { const h = Core.handleAt(gb, p, objTol() + 1 / S.zoom, objGap()); if (h) return { o: gb, h, group: true }; }
   const o = selObj();
   if (o && (S.tool === 'move' || SHAPES.has(S.tool))) {
     const h = Core.handleAt(o, p, objTol() + 1 / S.zoom, objGap());
     if (h) return { o, h };
     if (Core.hitsObject(o, p, objTol())) return { o, h: null };
   }
+  if (S.tool === 'eraser' && S.altKey) { const o3 = hitAt(p, S.sizes.eraser / 2 + objTol()); return o3 ? { o: o3, h: null, erase: true } : null; }
   if (S.tool !== 'move') return null;
-  const i = Core.hitObject(objs, p, objTol());
-  return i < 0 ? null : { o: objs[i], h: null };
+  const o2 = hitAt(p, objTol());
+  return o2 ? { o: o2, h: null } : null;
 }
 const HANDLE_CURSORS = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', a: 'move', b: 'move' };
 // ⌥ over a shape with the Move tool: a drag duplicates it (copy cursor).
 function objCursor(hit) {
+  if (hit && hit.erase) return 'crosshair';
   return hit ? (hit.h ? HANDLE_CURSORS[hit.h] : S.altKey && S.tool === 'move' ? 'copy' : 'move') : '';
 }
+// The selection as it was when a gesture began: Esc puts it back (cancelDrag).
+const selNow = () => ({ objSel, multi: multi.slice() });
 function objPointerDown(p, e) {
   const hit = objTarget(p);
+  if (hit && hit.erase) return false; // the eraser's ⌥-drag takes it
   if (!hit) {
-    if (objSel != null) selectObj(null);
+    if ((objSel != null || multi.length) && !(S.tool === 'move' && e.shiftKey)) selectObj(null);
     return false;
+  }
+  if (hit.group) { // a handle of a selected group's box: scale them all with it
+    setDrag({ t: 'objsize', h: hit.h, o: hit.o, src: hit.o, group: new Set(multi), box: hit.o, p, q: p, sx: e.clientX, sy: e.clientY, moved: false, shift: e.shiftKey, before: objs, selWas: selNow() });
+    return true;
+  }
+  // ⇧ on an object with the Move tool: a drag moves along one axis as ever; a click (no movement)
+  // adds the object to the selection or takes it out (finishDrag).
+  const toggle = S.tool === 'move' && e.shiftKey && !hit.h;
+  if ((multi.includes(hit.o.id) || toggle) && !hit.h && (multi.length || objSel != null)) { // a drag on a selected group moves it all
+    const ids = multi.length ? multi.slice() : [objSel];
+    const group = ids.includes(hit.o.id) ? ids : [hit.o.id];
+    setDrag({ t: 'objmove', group: new Set(group), toggle, o: hit.o, src: hit.o, p, q: p, sx: e.clientX, sy: e.clientY, moved: false, shift: e.shiftKey, before: objs, selWas: selNow() });
+    return true;
   }
   dropSelection();
   selectObj(hit.o.id);
   // q: the pointer now. Nothing moves until it has gone 3 screen px (moved), so a click only selects.
   // ⌥-drag on the body (Move tool, as in Figma) moves a copy, put just above the original.
-  const dup = !hit.h && e.altKey && S.tool === 'move' ? { ...hit.o, id: newObjId() } : null;
-  setDrag({ t: hit.h ? 'objsize' : 'objmove', h: hit.h, o: dup || hit.o, src: hit.o, dup: !!dup, p, q: p, sx: e.clientX, sy: e.clientY, moved: false, shift: e.shiftKey, before: objs });
+  const dup = !hit.h && e.altKey && S.tool === 'move' ? { ...hit.o, id: newObjId(), z: zAbove(hit.o) } : null;
+  setDrag({ t: hit.h ? 'objsize' : 'objmove', h: hit.h, o: dup || hit.o, src: hit.o, dup: !!dup, p, q: p, sx: e.clientX, sy: e.clientY, moved: false, shift: e.shiftKey, before: objs, selWas: selNow() });
   return true;
 }
 // Apply an object drag: the live list (one undo step on release). Shift locks a move to its main
@@ -54,6 +74,14 @@ function objDragUpdate(d) {
   if (!d.moved) return;
   let dx = Math.round(d.q.x - d.p.x), dy = Math.round(d.q.y - d.p.y);
   if (d.shift && d.t === 'objmove') { if (Math.abs(dx) >= Math.abs(dy)) dy = 0; else dx = 0; }
+  if (d.box) { // scale the group from its box's old place and size to the dragged one
+    const a = Core.normRect(d.box.a, d.box.b), b = Core.normRect(...(({ a: p, b: q }) => [p, q])(Core.resizeObj(d.box, d.h, dx, dy, d.shift)));
+    if (b.w < 1 || b.h < 1 || !a.w || !a.h) return;
+    const sx = b.w / a.w, sy = b.h / a.h;
+    showObjs(d.before.map((x) => (d.group.has(x.id) ? Core.moveObj(Core.scaleObj(Core.moveObj(x, -a.x, -a.y), sx, sy), b.x, b.y) : x)));
+    return;
+  }
+  if (d.group && d.group.size > 1) { showObjs(d.before.map((x) => (d.group.has(x.id) ? Core.moveObj(x, dx, dy) : x))); return; }
   const o = d.t === 'objmove' ? Core.moveObj(d.o, dx, dy) : Core.resizeObj(d.o, d.h, dx, dy, d.shift);
   if (d.dup) {
     const i = d.before.indexOf(d.src) + 1;
@@ -63,8 +91,16 @@ function objDragUpdate(d) {
 
 ov.addEventListener('pointerdown', (e) => {
   if (drag) return;
-  if (e.button === 1 || (e.button === 0 && S.panKey) || (e.button === 0 && S.tool === 'move' && !objTarget(imgPt(e)))) {
-    if (S.tool === 'move' && objSel != null) selectObj(null); // a click on empty canvas deselects
+  if (e.button === 0 && !S.panKey && S.tool === 'move' && !objTarget(imgPt(e))) {
+    // A drag on empty canvas with the Move tool selects the objects it touches (⇧: adds them); a
+    // click there deselects (decision 7b; Space or the middle button pans).
+    const p = imgPt(e);
+    ov.setPointerCapture(e.pointerId);
+    setDrag({ t: 'objbox', start: p, end: p, sx: e.clientX, sy: e.clientY, add: e.shiftKey });
+    requestRender();
+    return;
+  }
+  if (e.button === 1 || (e.button === 0 && S.panKey)) {
     e.preventDefault();
     ov.setPointerCapture(e.pointerId);
     setDrag({ t: 'pan', sx: e.clientX, sy: e.clientY, sl: vp.scrollLeft, st: vp.scrollTop });
@@ -83,32 +119,45 @@ ov.addEventListener('pointerdown', (e) => {
   const t = S.tool;
   if (t !== 'select') dropSelection();
   if (!right && objPointerDown(p, e)) { requestRender(); return; }
-  if ((SHAPES.has(t) || t === 'text') && isClear(color)) { // nothing to see: the pixel tools erase with it instead
+  const textHit = t === 'text' ? hitAt(p, objTol()) : null, onText = textHit && textHit.t === 'text'; // editing one keeps its colour
+  if ((SHAPES.has(t) || (t === 'text' && !onText)) && isClear(color)) { // nothing to see: the pixel tools erase with it instead
     flash(`Color ${right ? 2 : 1} is Transparent: pick a color to draw ${t === 'text' ? 'text' : 'shapes'}`);
     return;
   }
   switch (t) {
-    case 'pencil': case 'eraser': {
-      const c = t === 'eraser' ? S.secondary : color;
-      beginOp(true);
-      setDrag({ t, last: ip, color: c });
-      stampLine(ip, ip, c, S.sizes[t]);
+    case 'eraser': if (e.altKey) { // ⌥-drag: delete whole objects it crosses (decision 4b), one undo step
+      setDrag({ t: 'erase', last: p, before: objs, gone: new Set() });
+      eraseAlong(drag, p);
+      break;
+    } // falls through: a plain eraser stroke
+    case 'pencil': {
+      // A stroke is one object (docs/total-objects.md): drawn live on top as it grows, added on release.
+      const o = { t, pts: [ip.x, ip.y], color: t === 'eraser' ? S.secondary : color, size: S.sizes[t] };
+      setDrag({ t, last: ip, o });
+      setLive(o);
       break;
     }
     case 'brush': {
       // Smoothing radius is in screen px (2 per step), fixed for the stroke even if the zoom changes.
-      beginOp(true);
-      const size = S.sizes.brush;
-      setDrag({ t, color, size, ptr: p, all: [], stroke: new Core.Stroke(p, S.smoothing * 2 / S.zoom, 0.5 / S.zoom) });
-      brushCommit(drag, [{ a: p, c: null, b: { x: p.x + 1e-3, y: p.y } }]); // the dot under the pointer (a 0-length line draws nothing)
+      const o = { t, segs: [{ a: p, c: null, b: { x: p.x + 1e-3, y: p.y } }], color, size: S.sizes.brush }; // the dot under the pointer (a 0-length line draws nothing)
+      setDrag({ t, color, size: o.size, ptr: p, o, stroke: new Core.Stroke(p, S.smoothing * 2 / S.zoom, 0.5 / S.zoom) });
+      setLive(o);
       break;
     }
-    case 'fill': doFill(ip, color); break;
+    case 'fill': { // inside a closed shape on top: set that shape's fill (decision 5b); else flood fill
+      // In Transparent: an outlined shape loses its fill; otherwise it clears what is seen, like a flood fill.
+      const top = objsIn({ x: p.x, y: p.y, w: 0, h: 0 }).reverse().find((o) => Core.insideShape(o, p) || Core.hitsObject(o, p, 0));
+      if (top && Core.insideShape(top, p) && !(isClear(color) && top.mode !== 'both')) { fillShape(top, color); break; }
+      doFill(ip, color);
+      break;
+    }
     case 'picker': pick(ip, right); break;
     case 'line': case 'rect': case 'ellipse':
       setDrag({ t, start: ip, end: ip, shift: e.shiftKey, color, alt });
       break;
-    case 'text': startText(ip, color); break;
+    case 'text': // on a text object: edit it again
+      startText(ip, color, onText ? textHit : null);
+      break;
     case 'move': break; // right button: nothing
     case 'select': {
       const rp = { x: clamp(Math.round(p.x), 0, img.width), y: clamp(Math.round(p.y), 0, img.height) };
@@ -144,14 +193,19 @@ ov.addEventListener('pointermove', (e) => {
     if (!evs.length) evs = [e];
     for (const ev of evs) {
       const q = imgPt(ev, r);
-      if (d.t === 'brush') { d.segs = (d.segs || []).concat(d.stroke.add(q)); d.ptr = q; }
+      if (d.t === 'brush') { addSegs(d, d.stroke.add(q)); d.ptr = q; }
       else {
         const iq = { x: Math.floor(q.x), y: Math.floor(q.y) };
-        stampLine(d.last, iq, d.color, S.sizes[d.t]);
+        if (iq.x === d.last.x && iq.y === d.last.y) continue;
+        d.o.pts.push(iq.x, iq.y);
+        growLive();
         d.last = iq;
       }
     }
-    if (d.segs) { brushCommit(d, d.segs); d.segs = null; }
+  } else if (d.t === 'erase') {
+    eraseAlong(d, p);
+  } else if (d.t === 'objbox') {
+    d.end = p;
   } else if (SHAPES.has(d.t)) {
     d.end = { x: Math.floor(p.x), y: Math.floor(p.y) };
     d.shift = e.shiftKey;
@@ -170,6 +224,26 @@ ov.addEventListener('pointermove', (e) => {
   }
   requestRender();
 });
+
+// ⌥-erase: every object within the eraser's reach of the path from the last point to p goes (shown at
+// once; one undo step on release). Samples the path every half reach, so a fast drag skips nothing.
+function eraseAlong(d, p) {
+  const reach = S.sizes.eraser / 2 + objTol(), n = Math.max(1, Math.ceil(Math.hypot(p.x - d.last.x, p.y - d.last.y) / Math.max(1, reach / 2)));
+  let hit = false;
+  for (let i = 0; i <= n; i++) {
+    const q = { x: d.last.x + (p.x - d.last.x) * i / n, y: d.last.y + (p.y - d.last.y) * i / n };
+    for (let o = hitAt(q, reach); o; o = hitAt(q, reach)) { d.gone.add(o.id); hit = true; showObjs(objs.filter((x) => x.id !== o.id)); }
+  }
+  d.last = p;
+  return hit;
+}
+
+// Settled brush segments join the live stroke; only their boxes are repainted.
+function addSegs(d, segs) {
+  if (!segs.length) return;
+  for (const g of segs) d.o.segs.push(g);
+  growLive();
+}
 
 // Outline of the brush footprint, so big sizes show what they'll cover.
 const RING_TOOLS = new Set(['pencil', 'brush', 'eraser']);
@@ -195,12 +269,10 @@ function cancelDrag() {
   if (d.t === 'canvas') { endCanvasDrag(false); return; }
   if (d.t === 'pan' || d.t === 'pencil' || d.t === 'eraser' || d.t === 'brush') return; // strokes finish normally
   setDrag(null);
-  if (d.t === 'objmove' || d.t === 'objsize') showObjs(d.before, d.src.id);
+  if (d.t === 'objmove' || d.t === 'objsize') { showObjs(d.before); restoreSel(d.selWas); }
+  if (d.t === 'erase') showObjs(d.before);
   if (d.t === 'move' && sel) {
-    if (d.lifted) { // undo the lift this drag made: restore the pixels, drop the float, no history entry
-      dropOp(true);
-      sel.float = null;
-    }
+    if (d.lifted) unlift(); // undo the lift this drag made: no patch, no float, no history entry
     sel.x = d.ox; sel.y = d.oy;
     updateChrome();
   }
@@ -212,14 +284,27 @@ function finishDrag(e) {
   if (!d) return;
   setDrag(null);
   if (d.t === 'pan') { stage.classList.remove('dragging'); if (!S.panKey) stage.classList.remove('panning'); }
-  else if (d.t === 'brush') {
-    // The stroke ends exactly where the pointer lifted (pointercancel carries no reliable position).
-    const q = e && e.type === 'pointerup' ? imgPt(e) : d.ptr;
-    brushCommit(d, d.stroke.finish(q));
-    endOp();
+  else if (d.t === 'brush' || d.t === 'pencil' || d.t === 'eraser') {
+    // The brush ends exactly where the pointer lifted (pointercancel carries no reliable position).
+    if (d.t === 'brush') addSegs(d, d.stroke.finish(e && e.type === 'pointerup' ? imgPt(e) : d.ptr));
+    flushRedraw(); // the last piece on screen, so the object can join without a repaint
+    endLive();
+    addObj(d.o, { keepSel: true }); // on top of everything (decision 10)
   }
-  else if (d.t === 'pencil' || d.t === 'eraser') endOp();
-  else if (d.t === 'objmove' || d.t === 'objsize') commitObjDrag(d.before);
+  else if (d.t === 'objmove' && d.toggle && !d.moved) {
+    const ids = multi.length ? multi.slice() : objSel != null ? [objSel] : [];
+    const i = ids.indexOf(d.src.id);
+    if (i < 0) ids.push(d.src.id); else ids.splice(i, 1);
+    selectMany(ids);
+  }
+  else if (d.t === 'objmove' || d.t === 'objsize' || d.t === 'erase') commitObjDrag(d.before);
+  else if (d.t === 'objbox') {
+    const r = Core.normRect(d.start, d.end), click = Math.hypot(e ? e.clientX - d.sx : 0, e ? e.clientY - d.sy : 0) < 3;
+    const meets = (f) => f.x <= r.x + r.w && f.x + f.w >= r.x && f.y <= r.y + r.h && f.y + f.h >= r.y;
+    const ids = click ? [] : objsIn(r).filter((o) => meets(Core.objFrame(o))).map((o) => o.id);
+    const had = d.add ? (multi.length ? multi : objSel != null ? [objSel] : []) : [];
+    if (ids.length || had.length) selectMany(had.concat(ids)); else selectObj(null);
+  }
   else if (SHAPES.has(d.t)) {
     if (d.t !== 'line' && d.start.x === d.end.x && d.start.y === d.end.y) { requestRender(); return; } // a click, not a shape
     addObj(shapeObj(d)); // a live object above the pixels until flattened (docs/objects.md)

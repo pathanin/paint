@@ -3,7 +3,7 @@ import { redo, undo } from './doc.js';
 import { $, clamp, textBox } from './dom.js';
 import { openFile, save } from './fileio.js';
 import { openHelp } from './help.js';
-import { restyleObj, selObj } from './objects.js';
+import { reorderObj, restyleObj, selObj } from './objects.js';
 import { crop } from './selection.js';
 import { CLEAR, PALETTE, S, isClear, sel } from './state.js';
 import { commitText, placeTextBox, textAt } from './text.js';
@@ -26,6 +26,7 @@ const CMDS = {
   zoomIn: () => zoomStep(1), zoomOut: () => zoomStep(-1),
   fit: () => fitZoom(false), zoom100: () => setZoom(1),
   help: openHelp, swap: swapColors,
+  toFront: () => reorderObj('front'), forward: () => reorderObj(1), backward: () => reorderObj(-1), toBack: () => reorderObj('back'),
 };
 document.addEventListener('click', (e) => {
   const b = e.target.closest('.chrome button');

@@ -103,7 +103,13 @@
         <option value="ui-monospace, Menlo, monospace">Mono</option>
       </select></label>
     <label data-for="text">Size <input type="number" id="fontSize" min="6" max="400" value="24" aria-label="Font size"><span class="unit">px</span></label>
-    <span class="hint" data-for="move">Click a shape to select · drag to move, ⇧ to constrain · drag empty canvas to pan</span>
+    <span class="zorder" data-for="move" role="group" aria-label="Arrange">
+      <button data-cmd="toFront" data-tip="Bring to front" data-kbd="⌘⇧]" aria-label="Bring to front">Front</button>
+      <button data-cmd="forward" data-tip="Bring forward" data-kbd="⌘]" aria-label="Bring forward">Forward</button>
+      <button data-cmd="backward" data-tip="Send backward" data-kbd="⌘[" aria-label="Send backward">Backward</button>
+      <button data-cmd="toBack" data-tip="Send to back" data-kbd="⌘⇧[" aria-label="Send to back">Back</button>
+    </span>
+    <span class="hint" data-for="move">Click an object · drag empty canvas to box-select · Space-drag pans</span>
     <span class="hint" data-for="select">Drag to select · drag inside to move</span>
     <span class="hint" data-for="eraser">Paints with color 2 · clears if it’s Transparent</span>
     <span class="hint" data-for="fill">Click: color 1 · right-click: color 2</span>
@@ -123,12 +129,12 @@
 
 <div id="main">
   <nav id="rail" class="chrome" role="toolbar" aria-label="Tools" aria-orientation="vertical">
-    <button data-tool="move" data-tip="Move" data-kbd="V" data-hint="Moves editable shapes · Alt+drag copies · drag empty canvas to pan" aria-label="Move"><svg><use href="#i-move"/></svg></button>
+    <button data-tool="move" data-tip="Move" data-kbd="V" data-hint="Moves any object · drag empty canvas to box-select, Shift-click to add · Alt+drag copies" aria-label="Move"><svg><use href="#i-move"/></svg></button>
     <button data-tool="select" data-tip="Select" data-kbd="S" aria-label="Select"><svg><use href="#i-select"/></svg></button>
     <hr>
     <button data-tool="pencil" data-tip="Pencil" data-kbd="P" aria-label="Pencil"><svg><use href="#i-pencil"/></svg></button>
     <button data-tool="brush" data-tip="Brush" data-kbd="B" aria-label="Brush"><svg><use href="#i-brush"/></svg></button>
-    <button data-tool="eraser" data-tip="Eraser" data-kbd="E" data-hint="Paints with color 2 · clears if it’s Transparent" aria-label="Eraser"><svg><use href="#i-eraser"/></svg></button>
+    <button data-tool="eraser" data-tip="Eraser" data-kbd="E" data-hint="Paints with color 2 · clears if it’s Transparent · Alt+drag deletes whole objects" aria-label="Eraser"><svg><use href="#i-eraser"/></svg></button>
     <hr>
     <button data-tool="fill" data-tip="Fill" data-kbd="F" aria-label="Fill"><svg><use href="#i-fill"/></svg></button>
     <button data-tool="picker" data-tip="Color picker" data-kbd="I" data-hint="Returns to your previous tool after one pick" aria-label="Color picker"><svg><use href="#i-picker"/></svg></button>

@@ -6,11 +6,14 @@ import './state.js';
 import './toast.js';
 import './libs.js';
 import './doc.js';
-import './tiles.js';
+import './gpu.js';
 import './view.js';
 import './tools.js';
 import './fill.js';
 import './objects.js';
+import './scene.js';
+import { onRestored } from './assets.js';
+import './persist.js';
 import './text.js';
 import './selection.js';
 import './clipboard.js';
@@ -27,16 +30,17 @@ import './help.js';
 import './pwa.js';
 
 import { pasteImage } from './clipboard.js';
-import { hist, img, newDoc, redo, undo } from './doc.js';
+import Core from './core.js';
+import { base, hist, img, newDoc, redo, undo } from './doc.js';
 import { $, MAC, keyLabel } from './dom.js';
-import { decodeFile, loadFile, save } from './fileio.js';
+import { decodeFile, encodeFor, loadFile, save, saving } from './fileio.js';
 import { filling } from './fill.js';
 import { used } from './libs.js';
 import { openLaunched, setUpPwa } from './pwa.js';
-import { composite, flattenObjs, objSel, objs } from './objects.js';
+import { composite, flattenObjs, objSel, objs, selList, selectMany, selectObj, userObjs } from './objects.js';
 import { crop, selectAll } from './selection.js';
 import { MAX_PIXELS, S, drag, sel } from './state.js';
-import { flushToData, op, pendingParts } from './tiles.js';
+import { flushRedraw, freshRender, hitAt, markAll, objsIn, redrawCount } from './scene.js';
 import { flash } from './toast.js';
 import { setColor, setTool } from './tools.js';
 import { resample, resizeDoc, scaleImage, transformDoc } from './transforms.js';
@@ -61,8 +65,9 @@ setColor('secondary', S.secondary);
 $('#stIntro').textContent = `Draw, or drop or paste an image · ${keyLabel('⌘O')} opens a file`;
 newDoc(800, 600);
 setTool('pencil');
+onRestored(markAll); // a bitmap asset came back from a context loss: repaint the scene
 if (window.launchQueue) window.launchQueue.setConsumer(openLaunched);
 window.addEventListener('load', setUpPwa, { once: true });
 
 // Handle for scripted smoke tests in the console.
-window.__paint = { S, hist, used, decodeFile, scaleImage, resample, get img() { return img; }, newDoc, flash, save, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, loadFile, setZoom, fitZoom, MAX_PIXELS, flushToData, get op() { return op; }, get objs() { return objs; }, get objSel() { return objSel; }, flattenObjs, composite, openLaunched, get filling() { return filling; }, get pendingParts() { return [...pendingParts].filter((p) => p.cv).length; } };
+window.__paint = { S, hist, used, decodeFile, scaleImage, resample, get img() { flushRedraw(); return img; }, get base() { return base; }, get redrawCount() { return redrawCount; }, flushRedraw, markAll, objsIn, freshRender, hitAt, selectObj, selectMany, selList, Core, newDoc, flash, save, encodeFor, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, loadFile, setZoom, fitZoom, MAX_PIXELS, get objs() { return objs; }, get userObjs() { return userObjs(); }, get objSel() { return objSel; }, flattenObjs, composite, openLaunched, get filling() { return filling; }, get saving() { return saving; } };

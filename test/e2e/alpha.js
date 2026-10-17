@@ -18,8 +18,9 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.waitForTimeout(300);
     const P = (f, a) => page.evaluate(f, a);
     const frame = () => P(() => new Promise((r) => requestAnimationFrame(() => r())));
+    // What is seen: #image, the scene's cache (__paint.img finishes any pending repaint first).
     const hash = () => P(() => {
-      const c = document.querySelector('#image');
+      const c = window.__paint.img;
       const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
       let h = 2166136261;
       for (let i = 0; i < d.length; i++) h = Math.imul(h ^ d[i], 16777619);
@@ -37,9 +38,9 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       await page.mouse.up({ button });
       await frame();
     }
-    const pixel = (x, y) => P(([x, y]) => [...document.querySelector('#image').getContext('2d').getImageData(x, y, 1, 1).data], [x, y]);
+    const pixel = (x, y) => P(([x, y]) => [...window.__paint.img.getContext('2d').getImageData(x, y, 1, 1).data], [x, y]);
     const alphaIn = (x, y, w, h) => P(([x, y, w, h]) => { // [min, max] alpha over a rect
-      const d = document.querySelector('#image').getContext('2d').getImageData(x, y, w, h).data;
+      const d = window.__paint.img.getContext('2d').getImageData(x, y, w, h).data;
       let lo = 255, hi = 0;
       for (let i = 3; i < d.length; i += 4) { lo = Math.min(lo, d[i]); hi = Math.max(hi, d[i]); }
       return [lo, hi];
@@ -96,7 +97,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     ok((await pixel(35, 40))[3] === 0, 'right-click brush clears the middle of its stroke');
     ok(lo === 0 && hi === 255, 'and fades out at its soft edge');
     let soft = await P(() => { // the brush's soft edge keeps the white it fades, never darkened
-      const d = document.querySelector('#image').getContext('2d').getImageData(0, 30, 80, 20).data;
+      const d = window.__paint.img.getContext('2d').getImageData(0, 30, 80, 20).data;
       for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 0 && d[i + 3] < 255 && (d[i] < 250 || d[i + 1] < 250 || d[i + 2] < 250)) return [...d.slice(i, i + 4)];
       return null;
     });
@@ -104,7 +105,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
 
     // ---- 4. fill with transparent clears the region (and undo/redo, which take the slow path) ----
     await fresh();
-    await P(() => { const g = window.__paint.img.getContext('2d'); g.fillStyle = '#000'; g.fillRect(40, 0, 2, 60); });
+    await P(() => { const p = window.__paint, g = p.base.getContext('2d'); g.fillStyle = '#000'; g.fillRect(40, 0, 2, 60); p.markAll(); }); // the picture's pixels (#image is a cache of the scene)
     const split = await hash();
     await page.keyboard.press('KeyF');
     const [fx, fy] = await at(10, 10);
@@ -148,11 +149,11 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await fresh();
     await page.keyboard.press('KeyR');
     await drag([[10, 10], [40, 40]], 'right');
-    ok(await P(() => window.__paint.objs.length) === 0, 'right-click rectangle in transparent draws no object');
+    ok(await P(() => window.__paint.userObjs.length) === 0, 'right-click rectangle in transparent draws no object');
     ok((await toast()).includes('Transparent'), 'and says why');
     await page.locator('input[name=fillMode][value=both]').check({ force: true });
     await drag([[10, 10], [40, 40]]);
-    let o = await P(() => window.__paint.objs.map(({ color, alt, mode }) => ({ color, alt, mode })));
+    let o = await P(() => window.__paint.userObjs.map(({ color, alt, mode }) => ({ color, alt, mode })));
     ok(o.length === 1 && o[0].alt === 'transparent' && o[0].mode === 'both', 'outline + fill with fill colour transparent makes a shape');
     const inside = await P(() => [...window.__paint.composite().getContext('2d').getImageData(25, 25, 1, 1).data]);
     ok(inside.join() === '255,255,255,255', 'its fill draws nothing: the pixels show through');
@@ -165,17 +166,17 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.keyboard.press('KeyV');
     const [ox, oy] = await at(10, 25); // on the rectangle's left edge
     await page.mouse.click(ox, oy);
-    ok(await P(() => window.__paint.objSel) === await P(() => window.__paint.objs[0].id), 'the shape is selected for the restyle checks');
+    ok(await P(() => window.__paint.objSel) === await P(() => window.__paint.userObjs[0].id), 'the shape is selected for the restyle checks');
     await swatch.click();
     ok(await P(() => window.__paint.S.primary) === 'transparent', 'left-click sets colour 1 to transparent');
-    ok(await P(() => window.__paint.objs[0].color) === '#000000', "a selected shape's line colour doesn't become transparent");
+    ok(await P(() => window.__paint.userObjs[0].color) === '#000000', "a selected shape's line colour doesn't become transparent");
     await page.keyboard.press('KeyX');
     st = await P(() => [window.__paint.S.primary, window.__paint.S.secondary, document.querySelector('#primary').value]);
     ok(st[0] === 'transparent' && st[1] === 'transparent' && st[2] === '#000000', 'swap with both transparent keeps the wells valid');
     await page.locator('#palette button[data-color="#ed1c24"]').click({ button: 'right' }); // colour 2 red, colour 1 still transparent
     await page.keyboard.press('KeyX'); // colour 1 red, colour 2 transparent
     await page.keyboard.press('KeyX'); // back: colour 1 transparent; the shape's line must not follow
-    o = await P(() => window.__paint.objs.map(({ color, alt }) => ({ color, alt })));
+    o = await P(() => window.__paint.userObjs.map(({ color, alt }) => ({ color, alt })));
     ok(o[0].color !== 'transparent' && o[0].alt === '#ed1c24', `swap never makes a selected shape's line transparent (${JSON.stringify(o)})`);
     await page.locator('#palette button[data-color="#000000"]').click();
     st = await P(() => [window.__paint.S.primary, document.querySelector('#primary').className]);
@@ -250,6 +251,39 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       }
     }
     await page.setViewportSize({ width: 1280, height: 800 });
+
+    // ---- 12. every mark is an object (docs/total-objects.md): a stroke in Transparent is one that clears ----
+    await fresh();
+    await P(() => { const p = window.__paint; p.S.fillMode = 'fill'; p.S.primary = '#ed1c24'; p.S.secondary = 'transparent'; p.S.sizes.rect = 2; p.S.sizes.pencil = 3; });
+    await page.keyboard.press('KeyR'); await drag([[10, 10], [50, 40]]); // a red rectangle object
+    await page.keyboard.press('KeyP'); await drag([[5, 25], [70, 25]], 'right'); // colour 2: Transparent
+    const fr = () => P(() => { const h = (c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let k = 2166136261; for (let i = 0; i < d.length; i++) k = Math.imul(k ^ d[i], 16777619); return k >>> 0; }; return h(window.__paint.img) === h(window.__paint.freshRender()); });
+    let k12 = await P(() => window.__paint.userObjs.map((o) => o.t + ':' + o.color).join());
+    ok(k12 === 'rect:#ed1c24,pencil:transparent' && (await pixel(30, 25))[3] === 0 && (await pixel(60, 25))[3] === 0 && (await pixel(30, 15)).join() === '237,28,36,255',
+      'a pencil stroke in Transparent is an object that clears what is under it, objects included: ' + k12);
+    ok(await fr(), 'the cache still equals the scene drawn fresh');
+    await page.keyboard.press('KeyV'); await drag([[60, 25], [60, 35]]); // the stroke moves; so does the hole
+    ok((await pixel(30, 25)).join() === '237,28,36,255' && (await pixel(30, 35))[3] === 0 && await fr(), 'moving the stroke moves the hole');
+    // Fill in Transparent inside a shape: an outlined one loses its fill; inside a filled one it clears what is seen
+    await fresh();
+    await P(() => { const p = window.__paint; p.S.primary = '#000000'; p.S.secondary = '#ed1c24'; p.S.fillMode = 'both'; p.S.sizes.rect = 2; });
+    await page.keyboard.press('KeyR'); await drag([[10, 10], [40, 40]]); // black outline, red fill
+    await P(() => { window.__paint.S.fillMode = 'fill'; }); await drag([[50, 10], [75, 40]]); // all black
+    await P(() => { const p = window.__paint; p.setTool('fill'); p.S.primary = 'transparent'; p.S.tolerance = 0; });
+    await page.mouse.click(...await at(25, 25)); await P(() => window.__paint.filling); await frame();
+    let m12 = await P(() => window.__paint.userObjs.map((o) => o.t + ':' + (o.mode || '')).join());
+    ok(m12 === 'rect:outline,rect:fill' && (await pixel(25, 25)).join() === '255,255,255,255', 'Fill in Transparent inside an outlined shape removes its fill: ' + m12);
+    await page.mouse.click(...await at(62, 25)); await P(() => window.__paint.filling); await frame();
+    m12 = await P(() => window.__paint.userObjs.map((o) => o.t).join());
+    ok(m12 === 'rect,rect,fill' && (await pixel(62, 25))[3] === 0, 'inside a filled shape it clears what is seen, as a fill object: ' + m12);
+    // an existing text can still be edited while colour 1 is Transparent (it keeps its own colour)
+    await fresh();
+    await P(() => { window.__paint.S.primary = '#000000'; window.__paint.S.fontSize = 16; });
+    await page.keyboard.press('KeyT'); await page.mouse.click(...await at(5, 30)); await page.keyboard.type('Hi'); await page.keyboard.press('Enter'); await frame();
+    await P(() => { window.__paint.S.primary = 'transparent'; });
+    await page.mouse.click(...await at(10, 36));
+    ok(await P(() => !document.querySelector('#textInput').hidden && document.querySelector('#textInput').value === 'Hi'), 'a text can be edited again while colour 1 is Transparent');
+    await page.keyboard.press('Escape');
 
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));
   } finally {

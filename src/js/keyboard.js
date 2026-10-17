@@ -5,7 +5,7 @@ import { redo, undo } from './doc.js';
 import { $, ring, stage, textBox } from './dom.js';
 import { openFile, save } from './fileio.js';
 import { openHelp } from './help.js';
-import { cycleObj, deleteObj, duplicateObj, flattenObjs, nudgeObj, objSel, objs, reorderObj, restyleObj, selObj, selectObj } from './objects.js';
+import { hasObjs, cycleObj, deleteObj, duplicateObj, flattenObjs, multi, nudgeObj, objSel, objs, reorderObj, restyleObj, selList, selObj, selectObj } from './objects.js';
 import { modalOpen } from './paste.js';
 import { cancelDrag, objDragUpdate } from './pointer.js';
 import { crop, deleteSelection, dropSelection, nudge, selectAll } from './selection.js';
@@ -38,7 +38,7 @@ textBox.addEventListener('blur', (e) => {
 
 // Shortcuts follow the characters on the user's layout (AZERTY, Dvorak, German "+"), so the keys
 // match the labels. Non-Latin layouts fall back to the physical letter key; digits stay physical.
-const PUNCT = { '[': 'BracketLeft', ']': 'BracketRight', '+': 'Equal', '=': 'Equal', '-': 'Minus', '_': 'Minus' };
+const PUNCT = { '[': 'BracketLeft', ']': 'BracketRight', '{': 'BracketLeft', '}': 'BracketRight', '+': 'Equal', '=': 'Equal', '-': 'Minus', '_': 'Minus' };
 function keyId(e) {
   if (/^[a-z]$/i.test(e.key)) return 'Key' + e.key.toUpperCase();
   if (PUNCT[e.key]) return PUNCT[e.key];
@@ -86,10 +86,10 @@ window.addEventListener('keydown', (e) => {
       KeyX: () => (e.shiftKey ? crop() : copySel(true)),
       Digit0: () => fitZoom(false),
       // Only with objects to act on; otherwise the browser keeps ⌘D (bookmark) and ⌘[ ⌘] (back, forward).
-      KeyD: selObj() && duplicateObj,
-      KeyE: objs.length && flattenObjs,
-      BracketRight: selObj() && (() => reorderObj(1)),
-      BracketLeft: selObj() && (() => reorderObj(-1)),
+      KeyD: selList().length && duplicateObj,
+      KeyE: hasObjs() && flattenObjs,
+      BracketRight: selList().length && (() => reorderObj(e.shiftKey ? 'front' : 1)),
+      BracketLeft: selList().length && (() => reorderObj(e.shiftKey ? 'back' : -1)),
       Equal: () => zoomStep(1),
       Minus: () => zoomStep(-1),
     }[k];
@@ -113,16 +113,16 @@ window.addEventListener('keydown', (e) => {
     case 'KeyX': swapColors(); break;
     case 'Tab': if (onCanvas && S.tool === 'move' && !e.altKey && cycleObj(e.shiftKey ? -1 : 1)) e.preventDefault(); break;
     case 'Delete': case 'Backspace': if (!onCanvas) return; e.preventDefault(); if (!deleteObj()) deleteSelection(); break;
-    case 'Escape': if (objSel != null) selectObj(null); else dropSelection(); break;
+    case 'Escape': if (objSel != null || multi.length) selectObj(null); else dropSelection(); break;
     case 'BracketLeft': setSize(Core.stepSize(S.sizes[S.tool], -1)); restyleObj(S.sizes[S.tool] != null ? { size: S.sizes[S.tool] } : {}, 'size'); break;
     case 'BracketRight': setSize(Core.stepSize(S.sizes[S.tool], 1)); restyleObj(S.sizes[S.tool] != null ? { size: S.sizes[S.tool] } : {}, 'size'); break;
     case 'Equal': zoomStep(1); break;
     case 'Minus': zoomStep(-1); break;
     case 'Space': e.preventDefault(); S.panKey = true; ring.hidden = true; stage.classList.add('panning'); break;
-    case 'ArrowLeft': if (selObj()) { e.preventDefault(); nudgeObj(-step, 0); } else if (sel) { e.preventDefault(); nudge(-step, 0); } break;
-    case 'ArrowRight': if (selObj()) { e.preventDefault(); nudgeObj(step, 0); } else if (sel) { e.preventDefault(); nudge(step, 0); } break;
-    case 'ArrowUp': if (selObj()) { e.preventDefault(); nudgeObj(0, -step); } else if (sel) { e.preventDefault(); nudge(0, -step); } break;
-    case 'ArrowDown': if (selObj()) { e.preventDefault(); nudgeObj(0, step); } else if (sel) { e.preventDefault(); nudge(0, step); } break;
+    case 'ArrowLeft': if (selList().length) { e.preventDefault(); nudgeObj(-step, 0); } else if (sel) { e.preventDefault(); nudge(-step, 0); } break;
+    case 'ArrowRight': if (selList().length) { e.preventDefault(); nudgeObj(step, 0); } else if (sel) { e.preventDefault(); nudge(step, 0); } break;
+    case 'ArrowUp': if (selList().length) { e.preventDefault(); nudgeObj(0, -step); } else if (sel) { e.preventDefault(); nudge(0, -step); } break;
+    case 'ArrowDown': if (selList().length) { e.preventDefault(); nudgeObj(0, step); } else if (sel) { e.preventDefault(); nudge(0, step); } break;
   }
 });
 window.addEventListener('keyup', (e) => {

@@ -2,7 +2,8 @@ import Core from './core.js';
 import { hist, img, setDoc } from './doc.js';
 import { $, makeCanvas, textBox } from './dom.js';
 import { loadUTIF, startWorker, used, workerCall } from './libs.js';
-import { composite, resetObjs } from './objects.js';
+import { composite, hasObjs, loadObjs, objIdNext, resetObjs, userObjs } from './objects.js';
+import { readScene, withScene } from './persist.js';
 import { commitSelection } from './selection.js';
 import { S, sel, sizeProblem } from './state.js';
 import { cancelText, commitText, textAt } from './text.js';
@@ -67,11 +68,16 @@ async function loadFile(file, handle, decoded) {
     catch (err) { flash(cantOpen(file, err), true); return; }
   }
   if (tooBigToOpen(file, bmp)) return;
+  // A PNG Paint saved with objects carries them (persist.js): reopen those, over the saved base.
+  const scene = /\.png$/i.test(file.name) || file.type === 'image/png' ? await readScene(new Uint8Array(await file.arrayBuffer())) : null;
+  const keep = scene && scene.base.width === bmp.width && scene.base.height === bmp.height;
   cancelText();
-  setDoc(bmp, bmp.width, bmp.height);
+  if (keep) setDoc(scene.base);
+  else setDoc(bmp, bmp.width, bmp.height);
   bmp.close();
   hist.clear();
-  resetObjs();
+  if (keep) loadObjs(scene.objs, scene.nextId);
+  else resetObjs();
   Object.assign(S, { fileHandle: handle || null, fileName: file.name, pristine: false, trimWarned: false });
   fitZoom(true);
   updateChrome();
@@ -125,14 +131,20 @@ async function encodePng() {
     worker.terminate();
   }
 }
-function encodeFor(name) {
-  return mimeFor(name) === 'image/png' ? encodePng() : encode(mimeFor(name));
+// A PNG keeps the objects in a private chunk (persist.js); JPEG and WebP can't, so they get the picture.
+async function encodeFor(name) {
+  if (mimeFor(name) !== 'image/png') return encode(mimeFor(name));
+  const png = await encodePng();
+  if (!hasObjs()) return png;
+  return new Blob([await withScene(new Uint8Array(await png.arrayBuffer()), userObjs(), objIdNext())], { type: 'image/png' });
 }
-let saving = false;
-async function save(as) {
-  if (saving) return; // one picker/write at a time
-  saving = true;
-  try { await saveNow(as); } finally { saving = false; }
+// The running save's promise, or null: one picker/write at a time (another Save meanwhile does nothing).
+// Tests await __paint.saving before reading what a save did.
+let saving = null;
+function save(as) {
+  if (saving) return saving;
+  saving = saveNow(as).finally(() => { saving = null; });
+  return saving;
 }
 async function saveNow(as) {
   commitText();
@@ -187,4 +199,4 @@ async function saveNow(as) {
   }
 }
 
-export { cantOpen, confirmDiscard, decodeFile, isDirty, loadFile, openFile, save, tooBigToOpen };
+export { cantOpen, confirmDiscard, decodeFile, encodeFor, isDirty, loadFile, openFile, save, saving, tooBigToOpen };

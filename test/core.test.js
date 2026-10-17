@@ -927,3 +927,174 @@ test('odd stroke widths: hit tests and handles follow the drawn stroke, half a p
   const e = obj('rect', { x: 5, y: 20 }, { x: 25, y: 30 }, { size: 2 });
   assert.equal(Core.drawnObj(e), e); // even widths are drawn on the points themselves
 });
+
+test('zBetween: a key strictly between its neighbours, at either end, and after many inserts in one gap', () => {
+  const a = Core.zBetween(null, null);
+  assert.equal(typeof a, 'string');
+  const top = Core.zBetween(a, null), bottom = Core.zBetween(null, a);
+  assert.ok(bottom < a && a < top);
+  let lo = a, hi = top;
+  for (let i = 0; i < 200; i++) { const m = Core.zBetween(lo, hi); assert.ok(lo < m && m < hi, `${lo} < ${m} < ${hi}`); if (i % 2) lo = m; else hi = m; }
+  let k = a; // appending stays short
+  for (let i = 0; i < 5000; i++) { const n = Core.zBetween(k, null); assert.ok(n > k); k = n; }
+  assert.ok(k.length <= 6, 'append key length ' + k.length);
+  let b = a; // and so does prepending
+  for (let i = 0; i < 2000; i++) { const n = Core.zBetween(null, b); assert.ok(n < b); b = n; }
+  assert.throws(() => Core.zBetween(top, a));
+});
+
+test('BASE_Z: keys appended above the opened picture stay short, and the back slot sorts between', () => {
+  let k = Core.BASE_Z;
+  for (let i = 0; i < 5000; i++) { const n = Core.zBetween(k, null); assert.ok(n > k); k = n; }
+  assert.ok(k.length <= 4, 'append key length ' + k.length + ' (' + k + ')');
+  const first = Core.zBetween(Core.BASE_Z, null), back = Core.zBetween(Core.BASE_Z, first);
+  assert.ok(Core.BASE_Z < back && back < first && back.length <= 4, `${Core.BASE_Z} < ${back} < ${first}`);
+  // a list saved with keys at or below the base key is re-keyed in order; one above it is kept as is
+  const old = ['A00000000000000000000000001', 'A00000000000000000000000002', 'A0000000000000000000000000V'].map((z, i) => ({ id: i + 1, z }));
+  const re = Core.zAboveBase(old);
+  assert.deepEqual(re.map((o) => o.id), [1, 2, 3]);
+  assert.ok(re.every((o, i) => o.z > Core.BASE_Z && (!i || re[i - 1].z < o.z)), JSON.stringify(re));
+  assert.equal(Core.zAboveBase(re), re);
+});
+
+test('flattenRuns: an unselected object between selected ones ends the run only where it overlaps it', () => {
+  const r = (id, x, y, w, h, more) => ({ id, t: 'rect', a: { x, y }, b: { x: x + w, y: y + h }, size: 2, mode: 'fill', ...more });
+  const base = { id: 0, t: 'base', locked: true, x: 0, y: 0, w: 500, h: 500 };
+  const A = r(1, 10, 10, 50, 50), B = r(2, 40, 40, 50, 50), C = r(3, 200, 10, 50, 50), Bfar = r(2, 300, 300, 20, 20);
+  const ids = (runs) => runs.map((run) => run.map((o) => o.id));
+  assert.deepEqual(ids(Core.flattenRuns([base, A, B, C], new Set([1, 3]))), [[1], [3]], 'B covers part of A: A and C flatten apart');
+  assert.deepEqual(ids(Core.flattenRuns([base, A, Bfar, C], new Set([1, 3]))), [[1, 3]], 'B is elsewhere: one image');
+  assert.deepEqual(ids(Core.flattenRuns([base, A, C, B], new Set([1, 3]))), [[1, 3]], 'B above the selection: one image');
+  assert.deepEqual(ids(Core.flattenRuns([base, B, A, C], new Set([1, 3]))), [[1, 3]], 'B below the selection: one image');
+  // the run's box grows: an object over the second selected one also splits it
+  const D = r(4, 210, 20, 10, 10);
+  assert.deepEqual(ids(Core.flattenRuns([base, A, C, D, B], new Set([1, 3, 2]))), [[1, 3], [2]]);
+});
+
+test('History.forgetSave: not clean until the next save', () => {
+  const h = new Core.History({ maxCount: 10, maxBytes: 1e9 });
+  h.push({ bytes: 1 });
+  h.markSaved();
+  assert.ok(h.isClean());
+  h.forgetSave();
+  assert.ok(!h.isClean());
+  h.undo(); h.redo();
+  assert.ok(!h.isClean(), 'undo and redo cannot reach the saved state again');
+  h.markSaved();
+  assert.ok(h.isClean());
+});
+
+test('dirtyTiles: each grid tile a dirty pixel falls in, once, whole (clipped at the image edge)', () => {
+  const W = 1000, H = 700, T = 256;
+  let s = 3;
+  const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+  for (let n = 0; n < 30; n++) {
+    const rects = [];
+    for (let i = 0; i < 1 + n % 7; i++) rects.push({ x: rnd() * 1100 - 50, y: rnd() * 800 - 50, w: rnd() * 400, h: rnd() * 300 });
+    const tiles = Core.dirtyTiles(rects, W, H, T);
+    const want = new Set();
+    for (const r of rects) {
+      const x0 = Math.max(0, Math.floor(r.x)), y0 = Math.max(0, Math.floor(r.y)), x1 = Math.min(W, Math.ceil(r.x + r.w)), y1 = Math.min(H, Math.ceil(r.y + r.h));
+      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) want.add(Math.floor(y / T) * 4 + Math.floor(x / T));
+    }
+    assert.deepEqual(new Set(tiles.map((t) => t.key)), want);
+    assert.equal(tiles.length, want.size);
+    for (const t of tiles) {
+      assert.equal(t.x % T, 0); assert.equal(t.y % T, 0);
+      assert.equal(t.w, Math.min(T, W - t.x)); assert.equal(t.h, Math.min(T, H - t.y));
+    }
+  }
+  assert.deepEqual(Core.dirtyTiles([], W, H, T), []);
+});
+
+test('diffObjs / applyPairs: an entry holds only what changed, and swapping it undoes and redoes', () => {
+  let z = null;
+  const mk = (id) => { z = Core.zBetween(z, null); return { id, z, t: 'rect', a: { x: id, y: 0 }, b: { x: id + 5, y: 5 } }; };
+  const A = Array.from({ length: 50 }, (_, i) => mk(i + 1));
+  const moved = { ...A[10], a: { x: 99, y: 9 } };
+  const B = A.map((o) => (o.id === 11 ? moved : o)); // one edit
+  let pairs = Core.diffObjs(A, B);
+  assert.equal(pairs.length, 1);
+  assert.deepEqual(Core.applyPairs(B, pairs), A);
+  const swapped = pairs.map(([n, t]) => [t, n]);
+  assert.deepEqual(Core.applyPairs(A, swapped), B);
+  // add, delete and reorder in one step
+  const top = mk(99);
+  const C = B.filter((o) => o.id !== 3).concat(top);
+  const [x, y] = [C[5], C[6]];
+  C[5] = { ...y, z: x.z }; C[6] = { ...x, z: y.z };
+  pairs = Core.diffObjs(B, C);
+  assert.equal(pairs.length, 4); // the deleted one, the two that traded keys, the new one
+  assert.deepEqual(Core.applyPairs(C, pairs), B);
+  assert.deepEqual(Core.applyPairs(B, pairs.map(([n, t]) => [t, n])), C);
+  assert.deepEqual(Core.diffObjs(A, A), []);
+});
+
+test('stroke, text and bitmap objects: boxes, hit tests, moves, turns and flips', () => {
+  const pen = { t: 'pencil', pts: [10, 10, 20, 10], size: 3, color: '#000' };
+  assert.deepEqual(Core.objBox(pen), { x: 9, y: 9, w: 13, h: 3 }); // stamps cover x 9..22, y 9..12
+  assert.ok(Core.hitsObject(pen, { x: 15, y: 11 }, 0) && !Core.hitsObject(pen, { x: 15, y: 14 }, 0));
+  assert.deepEqual(Core.moveObj(pen, 2, 3).pts, [12, 13, 22, 13]);
+  // a turned stamp covers the pixels the turned image would: flipH maps pixel x to W - 1 - x (odd size)
+  assert.deepEqual(Core.transformObj(pen, 'flipH', 100, 50).pts, [89, 10, 79, 10]);
+  assert.deepEqual(Core.transformObj({ ...pen, size: 2 }, 'flipH', 100, 50).pts, [90, 10, 80, 10]);
+  const four = (o) => ['rotR', 'rotR', 'rotR', 'rotR'].reduce((q, k, i) => Core.transformObj(q, k, i % 2 ? 50 : 100, i % 2 ? 100 : 50), o);
+  assert.deepEqual(four(pen).pts, pen.pts);
+
+  const br = { t: 'brush', segs: [{ a: { x: 10, y: 10 }, c: null, b: { x: 30, y: 10 } }], size: 4, color: '#000' };
+  assert.deepEqual(Core.objBox(br), { x: 7, y: 7, w: 26, h: 6 });
+  assert.ok(Core.hitsObject(br, { x: 20, y: 11.5 }, 0) && !Core.hitsObject(br, { x: 20, y: 13 }, 0));
+  assert.deepEqual(Core.transformObj(br, 'flipH', 100, 50).segs[0].a, { x: 90, y: 10 });
+
+  const im = { t: 'image', x: 5, y: 6, w: 10, h: 4, asset: {} };
+  assert.deepEqual(Core.objBox(im), { x: 5, y: 6, w: 10, h: 4 });
+  const r = Core.transformObj(im, 'rotR', 100, 50); // the 10 x 4 image turns into a 4 x 10 one
+  assert.deepEqual(Core.objBox(r), { x: 40, y: 5, w: 4, h: 10 });
+  assert.ok(Core.hitsObject(r, { x: 42, y: 14 }, 0) && !Core.hitsObject(r, { x: 46, y: 14 }, 0));
+  assert.deepEqual(Core.objBox(four(im)), Core.objBox(im));
+  const fl = { t: 'fill', x: 0, y: 0, w: 2, h: 1, asset: { bits: new Uint8Array([1]) } };
+  assert.ok(Core.hitsObject(fl, { x: 0.5, y: 0.5 }, 0) && !Core.hitsObject(fl, { x: 1.5, y: 0.5 }, 0), 'a fill hits only its own pixels');
+  const tx = { t: 'text', x: 10, y: 10, lines: ['ab'], fs: 20, w: 30, base: 18, color: '#000', font: 'x' };
+  assert.deepEqual(Core.objBox(tx), { x: 0, y: 0, w: 50, h: 44 });
+  assert.deepEqual(Core.objHandles(tx), []);
+  assert.equal(Core.handleAt(tx, { x: 10, y: 10 }, 5), null);
+  assert.deepEqual(Core.scaleObj(im, 2, 2).m, [2, 0, 0, 2]);
+});
+
+test('PNG chunks: crc32, read, and a private chunk spliced in before IEND (replacing an old one)', () => {
+  assert.equal(Core.crc32(new TextEncoder().encode('IEND')), 0xae426082);
+  const chunk = (type, data) => {
+    const t = new TextEncoder().encode(type), out = new Uint8Array(12 + data.length), dv = new DataView(out.buffer);
+    dv.setUint32(0, data.length); out.set(t, 4); out.set(data, 8);
+    const c = new Uint8Array(4 + data.length); c.set(t); c.set(data, 4);
+    dv.setUint32(8 + data.length, Core.crc32(c));
+    return out;
+  };
+  const sig = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+  const cat = (...a) => { const n = a.reduce((s, x) => s + x.length, 0), o = new Uint8Array(n); let i = 0; for (const x of a) { o.set(x, i); i += x.length; } return o; };
+  const png = cat(sig, chunk('IHDR', new Uint8Array(13)), chunk('IDAT', new Uint8Array([1, 2, 3])), chunk('IEND', new Uint8Array(0)));
+  assert.deepEqual(Core.pngChunks(png).map((c) => c.type), ['IHDR', 'IDAT', 'IEND']);
+  assert.equal(Core.readChunk(png, 'paNt'), null);
+  const data = new Uint8Array([9, 8, 7, 6]);
+  const a = Core.withChunk(png, 'paNt', data);
+  assert.deepEqual(Core.pngChunks(a).map((c) => c.type), ['IHDR', 'IDAT', 'paNt', 'IEND']);
+  assert.deepEqual([...Core.readChunk(a, 'paNt')], [9, 8, 7, 6]);
+  assert.ok(Core.pngChunks(a).every((c) => c.crcOk));
+  const b = Core.withChunk(a, 'paNt', new Uint8Array([1]));
+  assert.deepEqual(Core.pngChunks(b).map((c) => c.type), ['IHDR', 'IDAT', 'paNt', 'IEND']);
+  assert.deepEqual([...Core.readChunk(b, 'paNt')], [1]);
+  assert.equal(Core.pngChunks(new Uint8Array([1, 2, 3])), null); // not a PNG
+});
+
+test('packObj / unpackObj: strokes stored compactly for the saved chunk, and restored exactly', () => {
+  const pen = { t: 'pencil', id: 3, z: 'a1', pts: [100, 200, 101, 205, 90, 190, 90, 190], size: 3, color: '#000' };
+  const pp = Core.packObj(pen);
+  assert.ok(!pp.pts && Array.isArray(pp.pd) && pp.pd.slice(2).every((d) => Math.abs(d) < 20), 'pencil points as deltas');
+  assert.deepEqual(Core.unpackObj(JSON.parse(JSON.stringify(pp))), pen);
+  const br = { t: 'brush', id: 4, z: 'a2', size: 6, color: '#123', segs: [{ a: { x: 1.123456789, y: 2.5 }, c: null, b: { x: 3.25, y: 4 } }, { a: { x: 3.25, y: 4 }, c: { x: 5.1, y: 6.2 }, b: { x: 7.0000001, y: 8 } }] };
+  const bp = Core.packObj(br);
+  assert.ok(!bp.segs && Array.isArray(bp.sg), 'brush segments flattened');
+  assert.deepEqual(Core.unpackObj(JSON.parse(JSON.stringify(bp))), br);
+  const r = { t: 'rect', id: 5, z: 'a3', a: { x: 1, y: 2 }, b: { x: 3, y: 4 }, size: 2 };
+  assert.deepEqual(Core.unpackObj(Core.packObj(r)), r);
+});

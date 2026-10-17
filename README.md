@@ -9,7 +9,7 @@ In Chrome you can install it as an app (install icon in the address bar). It the
 ## Features
 
 - Pencil, brush (smoothed), eraser, fill, colour picker, text
-- Line, rectangle and ellipse stay editable shapes until you flatten them (⌘E)
+- Every mark (strokes, shapes, text, fills, pastes) stays an editable object until you flatten it (⌘E); PNG saves keep them
 - Select, crop, resize, canvas size, rotate, flip
 - Open, paste or drop images, including TIFF; ⌘S saves back to the file you opened
 - Transparency: PNGs open and save with it. The checkered Transparent swatch erases: with color 2 set to it, the eraser, Delete, moving a selection and a bigger canvas leave transparent pixels, and pencil, brush and fill drawing with it clear
@@ -32,7 +32,7 @@ Press `?` in the app for the full list. ⌘ is Ctrl and ⌥ is Alt on Windows/Li
 
 | Keys | Action |
 |---|---|
-| V S P B E F I T L R O | Move (editable shapes; drag empty canvas to pan), Select, Pencil, Brush, Eraser, Fill, Picker, Text, Line, Rect, Ellipse |
+| V S P B E F I T L R O | Move (every mark is an editable object; drag empty canvas to box-select, ⇧-click to add; Space-drag pans), Select, Pencil, Brush, Eraser, Fill, Picker, Text, Line, Rect, Ellipse |
 | Left / right click | Draw with color 1 / color 2 (right-click or Shift-click a swatch sets color 2; the checkered swatch is Transparent) |
 | X | Swap colors |
 | [ ] | Smaller / bigger size |
@@ -43,9 +43,10 @@ Press `?` in the app for the full list. ⌘ is Ctrl and ⌥ is Alt on Windows/Li
 | Arrows (Shift = 10px) | Nudge selection |
 | ⌘C ⌘X ⌘V | Copy, cut, paste the selection. With nothing selected, ⌘C and ⌘X copy the whole image and leave it unchanged |
 | ⌘⇧X | Crop to selection |
-| ⌘D, ⌘] ⌘[, ⌘E | Shapes (line, rectangle, ellipse stay movable above your drawing): duplicate, bring forward / send backward, flatten all into pixels |
-| ⌥+drag (Move tool) | Duplicate a shape by dragging a copy off it |
-| Tab / Shift+Tab (Move tool, canvas focused) | Select the next / previous shape in drawing order; past the last one, focus moves on |
+| ⌘D, ⌘] ⌘[, ⌘E | Objects (every stroke, shape, text, fill and paste stays movable; new ones go on top; PNG saves keep them): duplicate, bring forward / send backward (⌘⇧] ⌘⇧[: to front / back; also buttons in the Move tool's bar), flatten into pixels (with the Move tool and a selection: just those, into image objects). The Fill tool inside a closed shape sets that shape's fill |
+| ⌥+drag (Move tool) | Duplicate an object by dragging a copy off it |
+| ⌥+drag (Eraser) | Delete every object the drag crosses (⌥ alone outlines the one under the pointer) |
+| Tab / Shift+Tab (Move tool, canvas focused) | Select the next / previous object in drawing order; past the last one, focus moves on |
 | Shift+R | Resize image (resample) |
 | Shift+C, or drag the handles on the right/bottom/corner | Canvas size (new area = color 2, or transparent; Shift+drag corner keeps aspect; Esc cancels) |
 | ⌘O ⌘S ⌘⇧S Alt+N | Open, save, save as, new |
@@ -69,3 +70,4 @@ More docs:
 - [CLAUDE.md](CLAUDE.md): architecture, all test commands, conventions
 - [task.md](task.md): design decisions and open backlog
 - [docs/objects.md](docs/objects.md): editable shapes
+- [docs/total-objects.md](docs/total-objects.md): every mark as an object (design, decisions, measurements)
