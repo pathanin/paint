@@ -3,7 +3,7 @@ import { img } from './doc.js';
 import { $, clamp, ov, ring, setProp, stage, textBox, vp } from './dom.js';
 import { doFill } from './fill.js';
 import { endCanvasDrag } from './handles.js';
-import { addObj, commitObjDrag, fillShape, groupBox, multi, newObjId, objSel, objs, selectMany, selObj, selectObj, showObjs, zAbove } from './objects.js';
+import { addObj, commitObjDrag, fillShape, groupBox, multi, newObjId, objSel, objs, restoreSel, selectMany, selObj, selectObj, showObjs, zAbove } from './objects.js';
 import { endLive, flushRedraw, hitAt, markDirty, objsIn, setLive } from './scene.js';
 import { dropSelection, inside, liftSelection, unlift } from './selection.js';
 import { S, SHAPES, drag, sel, setDrag, setSel } from './state.js';
@@ -37,6 +37,8 @@ function objCursor(hit) {
   if (hit && hit.erase) return 'crosshair';
   return hit ? (hit.h ? HANDLE_CURSORS[hit.h] : S.altKey && S.tool === 'move' ? 'copy' : 'move') : '';
 }
+// The selection as it was when a gesture began: Esc puts it back (cancelDrag).
+const selNow = () => ({ objSel, multi: multi.slice() });
 function objPointerDown(p, e) {
   const hit = objTarget(p);
   if (hit && hit.erase) return false; // the eraser's ⌥-drag takes it
@@ -45,7 +47,7 @@ function objPointerDown(p, e) {
     return false;
   }
   if (hit.group) { // a handle of a selected group's box: scale them all with it
-    setDrag({ t: 'objsize', h: hit.h, o: hit.o, src: hit.o, group: multi.slice(), box: hit.o, p, q: p, sx: e.clientX, sy: e.clientY, moved: false, shift: e.shiftKey, before: objs });
+    setDrag({ t: 'objsize', h: hit.h, o: hit.o, src: hit.o, group: new Set(multi), box: hit.o, p, q: p, sx: e.clientX, sy: e.clientY, moved: false, shift: e.shiftKey, before: objs, selWas: selNow() });
     return true;
   }
   // ⇧ on an object with the Move tool: a drag moves along one axis as ever; a click (no movement)
@@ -54,7 +56,7 @@ function objPointerDown(p, e) {
   if ((multi.includes(hit.o.id) || toggle) && !hit.h && (multi.length || objSel != null)) { // a drag on a selected group moves it all
     const ids = multi.length ? multi.slice() : [objSel];
     const group = ids.includes(hit.o.id) ? ids : [hit.o.id];
-    setDrag({ t: 'objmove', group, toggle, o: hit.o, src: hit.o, p, q: p, sx: e.clientX, sy: e.clientY, moved: false, shift: e.shiftKey, before: objs });
+    setDrag({ t: 'objmove', group: new Set(group), toggle, o: hit.o, src: hit.o, p, q: p, sx: e.clientX, sy: e.clientY, moved: false, shift: e.shiftKey, before: objs, selWas: selNow() });
     return true;
   }
   dropSelection();
@@ -62,7 +64,7 @@ function objPointerDown(p, e) {
   // q: the pointer now. Nothing moves until it has gone 3 screen px (moved), so a click only selects.
   // ⌥-drag on the body (Move tool, as in Figma) moves a copy, put just above the original.
   const dup = !hit.h && e.altKey && S.tool === 'move' ? { ...hit.o, id: newObjId(), z: zAbove(hit.o) } : null;
-  setDrag({ t: hit.h ? 'objsize' : 'objmove', h: hit.h, o: dup || hit.o, src: hit.o, dup: !!dup, p, q: p, sx: e.clientX, sy: e.clientY, moved: false, shift: e.shiftKey, before: objs });
+  setDrag({ t: hit.h ? 'objsize' : 'objmove', h: hit.h, o: dup || hit.o, src: hit.o, dup: !!dup, p, q: p, sx: e.clientX, sy: e.clientY, moved: false, shift: e.shiftKey, before: objs, selWas: selNow() });
   return true;
 }
 // Apply an object drag: the live list (one undo step on release). Shift locks a move to its main
@@ -75,10 +77,10 @@ function objDragUpdate(d) {
     const a = Core.normRect(d.box.a, d.box.b), b = Core.normRect(...(({ a: p, b: q }) => [p, q])(Core.resizeObj(d.box, d.h, dx, dy, d.shift)));
     if (b.w < 1 || b.h < 1 || !a.w || !a.h) return;
     const sx = b.w / a.w, sy = b.h / a.h;
-    showObjs(d.before.map((x) => (d.group.includes(x.id) ? Core.moveObj(Core.scaleObj(Core.moveObj(x, -a.x, -a.y), sx, sy), b.x, b.y) : x)));
+    showObjs(d.before.map((x) => (d.group.has(x.id) ? Core.moveObj(Core.scaleObj(Core.moveObj(x, -a.x, -a.y), sx, sy), b.x, b.y) : x)));
     return;
   }
-  if (d.group && d.group.length > 1) { showObjs(d.before.map((x) => (d.group.includes(x.id) ? Core.moveObj(x, dx, dy) : x))); return; }
+  if (d.group && d.group.size > 1) { showObjs(d.before.map((x) => (d.group.has(x.id) ? Core.moveObj(x, dx, dy) : x))); return; }
   const o = d.t === 'objmove' ? Core.moveObj(d.o, dx, dy) : Core.resizeObj(d.o, d.h, dx, dy, d.shift);
   if (d.dup) {
     const i = d.before.indexOf(d.src) + 1;
@@ -264,9 +266,8 @@ function cancelDrag() {
   if (d.t === 'canvas') { endCanvasDrag(false); return; }
   if (d.t === 'pan' || d.t === 'pencil' || d.t === 'eraser' || d.t === 'brush') return; // strokes finish normally
   setDrag(null);
-  if (d.t === 'objmove' || d.t === 'objsize') showObjs(d.before, d.box ? undefined : d.src.id);
+  if (d.t === 'objmove' || d.t === 'objsize') { showObjs(d.before); restoreSel(d.selWas); }
   if (d.t === 'erase') showObjs(d.before);
-  if (d.t === 'objmove' && d.group) showObjs(d.before);
   if (d.t === 'move' && sel) {
     if (d.lifted) unlift(); // undo the lift this drag made: no patch, no float, no history entry
     sel.x = d.ox; sel.y = d.oy;

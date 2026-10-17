@@ -5,23 +5,28 @@ import { S } from './state.js';
 import { updateChrome } from './view.js';
 
 // ---------- text ----------
-let textAt = null; // {x, y, color} while the text box is open
+let textAt = null; // {x, y, color, m?} while the text box is open
+// The box sits at the text's origin; a text that was turned, flipped or scaled (m, about its origin)
+// is edited in a box with the same transform, so it reads as it will be drawn.
 function placeTextBox() {
+  const m = textAt.m;
   Object.assign(textBox.style, {
     left: textAt.x * S.zoom + 'px',
     top: textAt.y * S.zoom + 'px',
     fontSize: S.fontSize * S.zoom + 'px',
     fontFamily: S.font,
     color: textAt.color,
+    transform: m ? `matrix(${m.join(', ')}, 0, 0)` : '',
+    transformOrigin: m ? '0 0' : '',
   });
 }
 // o: a text object to edit again (the text tool clicked it). It is hidden while the box is open, and
-// committing replaces it in one undo step.
+// committing replaces it in one undo step, keeping its transform.
 function startText(p, color, o) {
   textAt = { x: p.x, y: p.y, color, o: null };
   textBox.value = '';
-  if (o && !o.m) {
-    textAt = { x: o.x, y: o.y, color: o.color, o, before: objs };
+  if (o) {
+    textAt = { x: o.x, y: o.y, color: o.color, o, m: o.m, before: objs };
     S.font = o.font; S.fontSize = o.fs;
     const f = $('#font'), fs = $('#fontSize');
     if (f) f.value = o.font;
@@ -69,7 +74,7 @@ function commitText() {
   ctx.restore();
   // The baseline is measured now and kept, so a repaint at another zoom draws the text in place.
   const o = { t: 'text', x: t.x, y: t.y, lines, font: S.font, fs, color: t.color, base: textBaseline(fs), w };
-  if (t.o) setObjs(objs.map((x) => (x.id === t.o.id ? { ...o, id: t.o.id, z: t.o.z } : x)));
+  if (t.o) setObjs(objs.map((x) => (x.id === t.o.id ? { ...o, id: t.o.id, z: t.o.z, ...(t.o.m && { m: t.o.m }) } : x)));
   else addObj(o, { keepSel: true }); // on top, as a text object (docs/objects.md, item 9)
 }
 function cancelText() {

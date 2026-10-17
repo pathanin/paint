@@ -286,6 +286,18 @@ function hugeTiff() {
     ok(pan.running && pan.during === 'pan', 'the fill was still running during the pan: ' + JSON.stringify(pan));
     ok(pan.steps === 1 && panPx === '0,255,0,255' && !/cancelled/.test(pan.toast), 'a fill lands under a pan: ' + JSON.stringify({ ...pan, panPx }));
     ok(race.px === '255,255,255,255' && race.undo === 0 && race.redo === 1 && /Fill cancelled: the image changed/.test(race.toast), 'a fill whose image changed meanwhile is dropped: ' + JSON.stringify(race));
+    // ...and selecting or deselecting objects while it runs changes nothing seen: the fill lands
+    await P(() => { const p = window.__paint; p.newDoc(6000, 4000); p.fitZoom(false); p.setTool('rect'); document.querySelector('#toast').textContent = ''; });
+    await page.mouse.move(ob.x + 200, ob.y + 100); await page.mouse.down(); await page.mouse.move(ob.x + 300, ob.y + 160, { steps: 3 }); await page.mouse.up();
+    await P(() => { const p = window.__paint; p.setTool('fill'); p.S.tolerance = 0; p.S.primary = '#0000ff'; });
+    await page.mouse.click(ob.x + 3, ob.y + 3);
+    const pick = await P(async () => {
+      const p = window.__paint, running = !!p.filling, id = p.userObjs[0].id;
+      p.selectObj(id); p.selectMany([id]); p.selectObj(null); // what a click, Tab or Esc does meanwhile
+      await p.filling;
+      return { running, px: [...p.img.getContext('2d').getImageData(0, 0, 1, 1).data].join(), kinds: p.userObjs.map((o) => o.t).join(), toast: document.querySelector('#toast').textContent };
+    });
+    ok(pick.running && pick.px === '0,0,255,255' && pick.kinds === 'rect,fill' && !/cancelled/.test(pick.toast), 'a fill lands when only the selection changed meanwhile: ' + JSON.stringify(pick));
 
     ok(remote.length === 0, 'no requests leave the machine: ' + remote.slice(0, 3).join(' '));
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));

@@ -190,6 +190,48 @@ async function once() {
       await run(`${tag} undo all`, async () => { while (await P(() => window.__paint.hist.canUndo())) { await P(() => window.__paint.undo()); } });
       results[`${tag} undo steps kept`] = { steps: await P(() => window.__paint.hist.canRedo() ? window.__paint.hist.redoStack.length : 0) };
     }
+    // A long pencil stroke (10,000 points), drawn live: the cost of a move late in the stroke against
+    // one early on (each move plus the repaint it queues). It should stay flat as the stroke grows.
+    if (!only || '4000x3000 long stroke'.includes(only) || only.includes('long stroke')) {
+      await P(() => { window.__paint.newDoc(4000, 3000); window.__paint.fitZoom(false); window.__paint.setTool('pencil'); window.__paint.S.sizes.pencil = 3; });
+      await settle();
+      results['4000x3000 long stroke ms/move'] = await P(async () => {
+        const ov = document.querySelector('#overlay'), r = ov.getBoundingClientRect();
+        const ev = (type, x, y) => ov.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: r.left + x, clientY: r.top + y, isPrimary: true }));
+        const at = (i) => [r.width / 2 + r.width * 0.45 * Math.sin(i / 97) * Math.cos(i / 31), r.height / 2 + r.height * 0.45 * Math.sin(i / 53)];
+        const N = 10000, t = new Float64Array(N);
+        ev('pointerdown', ...at(0));
+        for (let i = 1; i < N; i++) { const t0 = performance.now(); ev('pointermove', ...at(i)); await null; t[i] = performance.now() - t0; }
+        ev('pointerup', ...at(N));
+        const avg = (a, b) => { let s = 0; for (let i = a; i < b; i++) s += t[i]; return s / (b - a); };
+        return { early: avg(1, 1001), late: avg(N - 1000, N) };
+      });
+    }
+    // A big paste (12 MP of noise, the canvas's size) committed, then the idle time after it: the longest main-thread task
+    // while the asset's CPU copy is read (one 48 MB read stalls the page; strips shouldn't).
+    if (!only || '4000x3000 paste idle'.includes(only) || only.includes('paste idle')) {
+      await P(() => { window.__paint.newDoc(4000, 3000); window.__paint.fitZoom(false); window.__paint.S.pristine = false; }); // else the paste becomes the document
+      await settle();
+      await P(() => { // the setup (12 MP of noise, the paste, its commit) is its own task, not counted
+        const p = window.__paint, c = document.createElement('canvas'); c.width = 4000; c.height = 3000;
+        const g = c.getContext('2d'), im = g.createImageData(4000, 3000), u = new Uint32Array(im.data.buffer);
+        let s = 7; for (let i = 0; i < u.length; i++) { s = (s * 1103515245 + 12345) >>> 0; u[i] = s | 0xff000000; }
+        g.putImageData(im, 0, 0);
+        window.__longs = [];
+        window.__po = new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__longs.push(e); });
+        window.__po.observe({ type: 'longtask' }); // from now, so an idle read between the two calls is seen
+        p.pasteImage(c); p.selectAll(); // selectAll commits the float: the image object and its asset
+        window.__t0 = performance.now(); // tasks starting after this are the idle work, not this setup
+      });
+      results['4000x3000 paste idle'] = await P(async () => {
+        const a = window.__paint.userObjs.find((o) => o.t === 'image').asset;
+        await (a.ready || new Promise((r) => setTimeout(r, 3000)));
+        await new Promise((r) => setTimeout(r, 300));
+        window.__po.disconnect();
+        const lt = window.__longs.filter((e) => e.startTime >= window.__t0).map((e) => e.duration);
+        return { maxLongMs: lt.length ? Math.max(...lt) : 0, longTasks: lt.length };
+      });
+    }
     // A dense scene (docs/total-objects.md): 5,000 short rectangle outlines, drawn by synthetic pointer
     // events in one task (so on any build they are objects made by the tools themselves), then one
     // dragged across them, a brush stroke over them and a full rebuild (rotate).
@@ -218,6 +260,17 @@ async function once() {
         for (let i = 1; i <= 60; i++) await page.mouse.move(sx + i * 4, sy + i * 2);
         await page.mouse.up();
         await P(() => window.__paint.setTool('pencil'));
+      });
+      // All 5,000 selected (a box drag over everything): the selection is looked up on every frame
+      // (status, group box, outlines, hover) and by every nudge.
+      await run(`${tag} select 5k, nudge`, async () => {
+        await P(() => { const p = window.__paint; p.setTool('move'); p.selectMany(p.userObjs.map((o) => o.id)); document.querySelector('#viewport').focus(); });
+        for (let i = 0; i < 10; i++) await page.keyboard.press('ArrowRight');
+      });
+      await run(`${tag} hover with 5k selected`, async () => {
+        const bx = await box();
+        for (let i = 0; i < 40; i++) await page.mouse.move(bx.x + 20 + i * 7, bx.y + 20 + i * 3);
+        await P(() => { window.__paint.selectObj(null); window.__paint.setTool('pencil'); });
       });
       await P(() => { window.__paint.setTool('brush'); window.__paint.S.sizes.brush = 30; });
       await run(`${tag} stroke over 5k`, () => stroke(300));

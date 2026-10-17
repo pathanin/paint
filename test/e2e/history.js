@@ -183,6 +183,19 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await P(() => window.__paint.base.dispatchEvent(new Event('contextlost')));
     await frame();
     ok(await P(() => !window.__paint.op && !window.__paint.sel && !window.__paint.userObjs.some((o) => o.t === 'rect' && o.a.x === 150 && o.b.x === 400)), 'context loss abandons a float (its canvas is blank) and its patch');
+    // ...and a paste that grew the canvas: abandoned, the canvas goes back to its size (no undo step
+    // could take the growth back), with the same pixels and history as before the paste
+    {
+      const g0 = await P(() => { const p = window.__paint; return { w: p.img.width, h: p.img.height, depth: p.hist.undoStack.length, clean: p.hist.isClean(), n: p.objs.length }; });
+      const px0 = await hash();
+      await P(([w, h]) => { const c = document.createElement('canvas'); c.width = w + 40; c.height = h + 30; c.getContext('2d').fillStyle = '#00a2e8'; c.getContext('2d').fillRect(0, 0, c.width, c.height); window.__paint.pasteImage(c); }, [g0.w, g0.h]);
+      ok(await P(() => window.__paint.img.width) === g0.w + 40, 'the paste grew the canvas (the case under test)');
+      await P(() => window.__paint.base.dispatchEvent(new Event('contextlost')));
+      await frame();
+      const g1 = await P(() => { const p = window.__paint; return { w: p.img.width, h: p.img.height, depth: p.hist.undoStack.length, clean: p.hist.isClean(), n: p.objs.length, sel: !!p.sel }; });
+      ok(g1.w === g0.w && g1.h === g0.h && g1.depth === g0.depth && g1.clean === g0.clean && g1.n === g0.n && !g1.sel && await hash() === px0,
+        'context loss during a paste that grew the canvas puts the canvas back: ' + JSON.stringify([g0, g1]));
+    }
     // #image is only a cache: when its context comes back (blank), the scene is repainted into it
     {
       const before = await hash();

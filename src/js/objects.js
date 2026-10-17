@@ -15,11 +15,14 @@ import { requestRender } from './view.js';
 // z-key (o.z, Core.zBetween) that sorts like the list, so the scene's R-tree hits sort into z order
 // and an undo entry can put an object back without knowing its index. They are drawn into #image's
 // cache over the base (scene.js), and are pixels only once flattened. objSel is the selected
-// object's id; objVer bumps on every change.
-let objs = [], objSel = null, objVer = 0, nextObjId = 1;
+// object's id; objVer bumps on every change, of the list or of the selection; sceneVer only when the
+// list changes (what is seen: a running fill watches it, so selecting doesn't cancel it).
+let objs = [], objSel = null, objVer = 0, sceneVer = 0, nextObjId = 1;
 // Several objects selected at once (a box drag or ⇧-click with the Move tool): their ids, with objSel
-// null. One selected object is objSel alone, with its handles.
-let multi = [];
+// null. One selected object is objSel alone, with its handles. multiSet holds the same ids, for lookups
+// (a box drag can select thousands); setMulti() keeps the two in step.
+let multi = [], multiSet = new Set();
+function setMulti(ids) { multi = ids; multiSet = new Set(ids); }
 // The box around a selected group, as a rectangle shape (its handles resize the group), or null.
 function groupBox() {
   if (multi.length < 2) return null;
@@ -28,10 +31,28 @@ function groupBox() {
   const x1 = Math.ceil(Math.max(...fs.map((f) => f.x + f.w))), y1 = Math.ceil(Math.max(...fs.map((f) => f.y + f.h)));
   return { t: 'rect', id: -1, a: { x: x0, y: y0 }, b: { x: x1, y: y1 }, size: 2, mode: 'outline' };
 }
-const selList = () => (multi.length ? objs.filter((o) => multi.includes(o.id)) : selObj() ? [selObj()] : []);
+// The selected objects, bottom to top. render() asks several times a frame, so the last answer is kept
+// until the list or the selection changes.
+let selMemo = { objs: null, multi: null, objSel: null, list: [] };
+function selList() {
+  const m = selMemo;
+  if (m.objs === objs && m.multi === multi && m.objSel === objSel) return m.list;
+  const list = multi.length ? objs.filter((o) => multiSet.has(o.id)) : selObj() ? [selObj()] : [];
+  selMemo = { objs, multi, objSel, list };
+  return list;
+}
 function selectMany(ids) {
-  ids = [...new Set(ids)].filter((id) => objs.some((o) => o.id === id));
-  if (ids.length === 1) { multi = []; objSel = ids[0]; } else { multi = ids; objSel = null; }
+  const have = new Set(objs.map((o) => o.id));
+  ids = [...new Set(ids)].filter((id) => have.has(id));
+  if (ids.length === 1) { setMulti([]); objSel = ids[0]; } else { setMulti(ids); objSel = null; }
+  objVer++;
+  requestRender();
+}
+// Put back a selection saved before a gesture ({objSel, multi}), leaving out ids that are gone.
+function restoreSel(s) {
+  const have = new Set(objs.map((o) => o.id));
+  setMulti(s.multi.filter((id) => have.has(id)));
+  objSel = s.objSel != null && have.has(s.objSel) ? s.objSel : null;
   objVer++;
   requestRender();
 }
@@ -53,7 +74,7 @@ const selObj = () => (objSel == null ? null : objs.find((o) => o.id === objSel) 
 // isn't walked to find it.
 function install(next, pairs) {
   const prev = objs;
-  objs = next; objVer++;
+  objs = next; objVer++; sceneVer++;
   sceneSwap(prev, next, pairs);
 }
 // History entries hold diffs, not lists (Core.diffObjs / applyPairs), so an entry's size is per
@@ -102,12 +123,12 @@ function mapObjs(map, w, h) {
   const before = objs;
   install(objs.map((o) => (isBase(o) ? o : map(o))).filter((o) => { const b = Core.objBox(o); return isBase(o) || (b.x < w && b.y < h && b.x + b.w > 0 && b.y + b.h > 0); }));
   if (!selObj()) objSel = null;
-  multi = [];
+  setMulti([]);
   return before;
 }
-function resetObjs() { install([baseRec()]); objSel = null; multi = []; }
+function resetObjs() { install([baseRec()]); objSel = null; setMulti([]); }
 // Objects read back from a saved file (persist.js): the list as it was, ids from where it left off.
-function loadObjs(list, nextId) { install([baseRec()].concat(Core.zAboveBase(list))); objSel = null; multi = []; nextObjId = Math.max(nextId || 1, ...list.map((o) => o.id + 1)); }
+function loadObjs(list, nextId) { install([baseRec()].concat(Core.zAboveBase(list))); objSel = null; setMulti([]); nextObjId = Math.max(nextId || 1, ...list.map((o) => o.id + 1)); }
 const objIdNext = () => nextObjId;
 const userObjs = () => objs.filter((o) => !isBase(o));
 // Undo/redo of an obj entry (a diff), or of a flatten's region entry or a whole-image op's doc entry
@@ -122,7 +143,7 @@ function applyObjHist(e) {
     const o = objs; install(e.objs); e.objs = o;
   } else return;
   if (!selObj()) objSel = null;
-  multi = multi.filter((id) => objs.some((o) => o.id === id));
+  if (multi.length) { const have = new Set(objs.map((o) => o.id)); setMulti(multi.filter((id) => have.has(id))); }
 }
 // The end of a move or resize drag: one undo step from the list before it.
 function commitObjDrag(before) {
@@ -141,7 +162,7 @@ function addObj(o, opt) {
 }
 function selectObj(id) {
   if (objSel === id && !multi.length) return;
-  objSel = id; multi = []; objVer++;
+  objSel = id; setMulti([]); objVer++;
   requestRender();
 }
 // Tab / ⇧Tab on the canvas with the Move tool: the next or previous shape, in drawing order. Past
@@ -159,14 +180,16 @@ function cycleObj(dir) {
 function deleteObj() {
   const list = selList();
   if (!list.length) return false;
-  objSel = null; multi = [];
-  setObjs(objs.filter((x) => !list.includes(x)));
+  objSel = null; setMulti([]);
+  const gone = new Set(list);
+  setObjs(objs.filter((x) => !gone.has(x)));
   return true;
 }
 function nudgeObj(dx, dy) {
   const list = selList();
   if (!list.length) return;
-  setObjs(objs.map((x) => (list.includes(x) ? Core.moveObj(x, dx, dy) : x)), 'nudge:' + list.map((o) => o.id).join());
+  const set = new Set(list);
+  setObjs(objs.map((x) => (set.has(x) ? Core.moveObj(x, dx, dy) : x)), 'nudge:' + list.map((o) => o.id).join());
 }
 // key: coalesce a stream of the same restyle (see setObjs).
 function restyleObj(props, key) {
@@ -187,14 +210,15 @@ function duplicateObj() {
 function reorderObj(dir) {
   const list = selList();
   if (!list.length) return;
-  const rest = objs.filter((o) => !list.includes(o));
+  const set = new Set(list), rest = objs.filter((o) => !set.has(o));
   let at; // index in rest after which the selection goes
   if (dir === 'front') at = rest.length - 1;
   else if (dir === 'back') at = 0; // just above the base
   else {
-    const first = objs.indexOf(list[0]), last = objs.indexOf(list[list.length - 1]);
-    const below = rest.filter((o) => objs.indexOf(o) < first).length - 1; // the one under the lowest selected
-    if (dir > 0) { const above = rest.findIndex((o) => objs.indexOf(o) > last); if (above < 0) return; at = above; }
+    const idx = new Map(objs.map((o, i) => [o, i]));
+    const first = idx.get(list[0]), last = idx.get(list[list.length - 1]);
+    const below = rest.filter((o) => idx.get(o) < first).length - 1; // the one under the lowest selected
+    if (dir > 0) { const above = rest.findIndex((o) => idx.get(o) > last); if (above < 0) return; at = above; }
     else { if (below < 1) return; at = below - 1; }
   }
   const lo = rest[at] ? rest[at].z : null, hi = rest[at + 1] ? rest[at + 1].z : null;
@@ -207,18 +231,25 @@ function fillShape(o, c) {
   const next = o.mode === 'fill' ? { ...o, color: c } : { ...o, mode: 'both', alt: c };
   setObjs(objs.map((x) => (x.id === o.id ? next : x)));
 }
-// ⌘E with objects selected: just those become one image object, in place of the topmost of them.
+// ⌘E with objects selected: just those become pixels, as image objects. Selected objects next to each
+// other in the stack become one image, at the top one's place; an unselected object between them that
+// covers part of one below would end up under it, so it splits them into two images (Core.flattenRuns):
+// what is seen doesn't change. One undo step; the new images are selected.
 function flattenSelected() {
   const list = selList();
   if (!list.length) return false;
-  const bs = list.map((o) => Core.objBox(o)), x = Math.min(...bs.map((b) => b.x)), y = Math.min(...bs.map((b) => b.y));
-  const c = makeCanvas(Math.max(...bs.map((b) => b.x + b.w)) - x, Math.max(...bs.map((b) => b.y + b.h)) - y), g = c.getContext('2d');
-  g.translate(-x, -y);
-  for (const o of list) drawObj(g, o);
-  const top = list[list.length - 1];
-  const im = { t: 'image', x, y, w: c.width, h: c.height, asset: makeAsset(c), id: nextObjId++, z: top.z };
-  setObjs(objs.filter((o) => !list.includes(o) || o === top).map((o) => (o === top ? im : o)));
-  selectObj(im.id);
+  const swap = new Map(); // the top of each run -> its image (the rest of the run goes)
+  for (const run of Core.flattenRuns(objs, new Set(list.map((o) => o.id)))) {
+    const bs = run.map((o) => Core.objBox(o)), x = Math.min(...bs.map((b) => b.x)), y = Math.min(...bs.map((b) => b.y));
+    const c = makeCanvas(Math.max(...bs.map((b) => b.x + b.w)) - x, Math.max(...bs.map((b) => b.y + b.h)) - y), g = c.getContext('2d');
+    g.translate(-x, -y);
+    for (const o of run) drawObj(g, o);
+    const top = run[run.length - 1];
+    swap.set(top, { t: 'image', x, y, w: c.width, h: c.height, asset: makeAsset(c), id: nextObjId++, z: top.z });
+  }
+  const gone = new Set(list);
+  setObjs(objs.filter((o) => !gone.has(o) || swap.has(o)).map((o) => swap.get(o) || o));
+  selectMany([...swap.values()].map((o) => o.id));
   return true;
 }
 // Bake every object into the pixels (⌘E) as one undo step: the base becomes a copy of the cache, so it
@@ -232,7 +263,7 @@ function flattenObjs() {
   flushRedraw();
   const before = base, list = objs;
   setDoc(cloneCanvas(img));
-  install(objs.filter(isBase)); objSel = null; multi = [];
+  install(objs.filter(isBase)); objSel = null; setMulti([]);
   pushDocHist(before, list);
   requestRender();
 }
@@ -242,4 +273,4 @@ function composite() {
   return img;
 }
 
-export { addObj, groupBox, hasObjs, isBase, syncBase, userObjs, fillShape, loadObjs, multi, objIdNext, selectMany, selList, applyObjHist, commitObjDrag, composite, cycleObj, deleteObj, duplicateObj, flattenObjs, mapObjs, newObjId, nudgeObj, objs, objSel, objVer, reorderObj, resetObjs, restyleObj, selectObj, selObj, setObjs, showObjs, zAbove };
+export { addObj, groupBox, restoreSel, sceneVer, hasObjs, isBase, syncBase, userObjs, fillShape, loadObjs, multi, objIdNext, selectMany, selList, applyObjHist, commitObjDrag, composite, cycleObj, deleteObj, duplicateObj, flattenObjs, mapObjs, newObjId, nudgeObj, objs, objSel, objVer, reorderObj, resetObjs, restyleObj, selectObj, selObj, setObjs, showObjs, zAbove };

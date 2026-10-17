@@ -3,7 +3,7 @@ import { makeAsset, pathAsset } from './assets.js';
 import { base, ctx, img } from './doc.js';
 import { hexToU32, makeCanvas } from './dom.js';
 import { startWorker, used, workerCall } from './libs.js';
-import { addObj, composite, objVer } from './objects.js';
+import { addObj, composite, sceneVer } from './objects.js';
 import { S, sel } from './state.js';
 import { flash } from './toast.js';
 
@@ -37,12 +37,12 @@ function doFill(p, color) {
   filling = runFill(p, c, S.tolerance).finally(() => { filling = null; });
 }
 async function runFill(p, c, tolerance) {
-  const src = base, v0 = objVer, float = sel && sel.float;
+  const src = base, v0 = sceneVer, float = sel && sel.float;
   const W = img.width, H = img.height;
-  // Every way the picture changes shows here: an object added, changed or removed bumps objVer, a
-  // lift makes a float, crop/resize/New swap the base. Drags that change nothing yet (pan, marquee,
-  // a stroke still being drawn: it lands on top later) don't count.
-  const changed = () => base !== src || objVer !== v0 || (sel && sel.float) !== float;
+  // Every way the picture changes shows here: an object added, changed or removed bumps sceneVer, a
+  // lift makes a float, crop/resize/New swap the base. What changes nothing seen doesn't count: a
+  // pan, a marquee, selecting or deselecting objects, a stroke still being drawn (it lands on top later).
+  const changed = () => base !== src || sceneVer !== v0 || (sel && sel.float) !== float;
   const job = (buf) => ({ buf, w: W, h: H, x: p.x, y: p.y, color: c, tolerance });
   const read = () => composite().getContext('2d').getImageData(0, 0, W, H).data.buffer;
   let shown = false; // say so only if it takes a noticeable time
