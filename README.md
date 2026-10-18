@@ -65,6 +65,43 @@ npm test                 # unit tests
 node test/e2e/smoke.js   # browser smoke test (needs a build served on :8765 and Google Chrome)
 ```
 
+### Testing in Safari
+
+Build and serve first (`npm run build && npm run serve`, or keep `npm run dev` running). There are three levels, from automatic to by hand.
+
+**1. Safari's engine (WebKit), automatic.** Playwright's WebKit is close to Safari but isn't Safari.
+
+```bash
+npx playwright install webkit            # once, about 150 MB
+BROWSER=webkit node test/e2e/smoke.js    # also: history, preview, filledge, objects, alpha, libs, shots
+```
+
+pwa, bench and parity are Chrome only.
+
+**2. Real Safari, automatic.** `test/e2e/safari.js` drives Safari itself through Apple's safaridriver. It hasn't connected on the machine it was written on yet, so treat a first failure as a setup problem.
+
+1. Once: in Safari → Settings → Advanced, turn on "Show features for web developers". Then in Settings → Developer, turn on "Allow remote automation".
+2. Once: run `sudo safaridriver --enable`.
+3. Quit Safari completely (⌘Q). It has to restart after step 1.
+4. Run:
+   ```bash
+   safaridriver -p 4445 &
+   node test/e2e/safari.js                 # opens its own Safari window (orange address bar)
+   ```
+
+If it says "session timed out while connecting to a Safari instance", check that the setting from step 1 is still on, and quit Safari again.
+
+**3. Real Safari, by hand.** These are the things neither script can do:
+
+- **Pinch:** a real trackpad pinch over the image zooms the image, not the page.
+- **Copy:** ⌘C, then paste into another app (Preview → File → New from Clipboard). ⌘V of an image copied elsewhere.
+- **Save:** the first save asks to allow downloads, and the file arrives. On a big image (File → New, 10000 × 10000), if nothing arrives the message offers **Download again**.
+- **Save as .webp:** saves `name.png`, since Safari can't write WebP.
+- **Feel at 10000 × 10000:** draw, fill, rotate and undo stay responsive.
+- **Shortcuts:** ⌘Y, ⌘0, ⌘= / ⌘−, and with a shape selected ⌘D and ⌘E act in the app, not in Safari's menus.
+- **Text:** type, press Enter, then press a tool letter (B). The tool changes.
+- **Add to Dock** (File → Add to Dock): the app gets the blue brush icon.
+
 More docs:
 
 - [CLAUDE.md](CLAUDE.md): architecture, all test commands, conventions
