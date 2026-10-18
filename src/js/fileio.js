@@ -1,7 +1,7 @@
 import Core from './core.js';
 import { hist, img, setDoc } from './doc.js';
 import { $, makeCanvas, textBox } from './dom.js';
-import { loadUTIF, startWorker, used, workerCall } from './libs.js';
+import { encodeBlob, loadUTIF, startWorker, used, workerCall } from './libs.js';
 import { composite, hasObjs, loadObjs, objIdNext, resetObjs, userObjs } from './objects.js';
 import { readScene, withScene } from './persist.js';
 import { commitSelection } from './selection.js';
@@ -98,7 +98,7 @@ function encode(type, src = composite()) {
     g.drawImage(src, 0, 0);
     src = c;
   }
-  return new Promise((res, rej) => src.toBlob((b) => (b ? res(b) : rej(new Error('encode failed'))), type, 0.92));
+  return encodeBlob(src, type, 0.92);
 }
 // UPNG compresses harder than the browser's PNG encoder. In a test (Chrome, M4), its files were
 // ~60% smaller on a screenshot, 40-46% on a drawing, 92% on a gradient, 16% on a photo and 13% on
@@ -113,7 +113,7 @@ const UPNG_MAX_PIXELS = 3840 * 2160, UPNG_BUDGET_MS = 750;
 const upngMs = (pixels, nativeRatio) => pixels / 1e6 * (nativeRatio < 0.25 ? 100 : 300);
 async function encodePng() {
   const tryUpng = img.width * img.height <= UPNG_MAX_PIXELS;
-  // Read the pixels in the same tick as toBlob() snapshots them, so both encoders see one image.
+  // Read the pixels in the same tick as encode() snapshots them, so both encoders see one image.
   const src = composite(); // with any objects drawn over the pixels
   const w = src.width, h = src.height, raw = tryUpng && src.getContext('2d').getImageData(0, 0, w, h).data.buffer;
   const native = await encode('image/png', src);

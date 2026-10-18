@@ -2,6 +2,7 @@ import Core from './core.js';
 import { makeAsset } from './assets.js';
 import { base } from './doc.js';
 import { makeCanvas } from './dom.js';
+import { encodeBlob } from './libs.js';
 
 // ---------- objects inside a PNG ----------
 // A PNG saved with objects carries them in a private chunk, paNt (docs/total-objects.md, Phase 5):
@@ -19,7 +20,7 @@ const idatHash = (u8) => {
   }
   return h >>> 0;
 };
-const toPng = (cv) => new Promise((res, rej) => cv.toBlob((b) => (b ? b.arrayBuffer().then((a) => res(new Uint8Array(a))) : rej(new Error('encode failed'))), 'image/png'));
+const toPng = (cv) => encodeBlob(cv, 'image/png').then((b) => b.arrayBuffer()).then((a) => new Uint8Array(a));
 
 // The PNG bytes png (the picture) with the scene of objs and base spliced in.
 async function withScene(png, objs, nextId) {
