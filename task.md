@@ -16,7 +16,14 @@ All of this is done and merged to `master`:
 ## Open
 
 **Not verified:**
-- Firefox and Safari: the download-save path, `:has()`, `field-sizing`, `text-wrap: balance`, and performance.
+- Firefox (no runs at all yet).
+- Real Safari. Every suite except pwa runs in Playwright's WebKit (`BROWSER=webkit`, 2026-10-18), which is close to Safari 27 but not Safari. Still to try by hand: trackpad pinch (only synthetic gesture events are tested), real clipboard copy/paste, the first-download prompt, Add to Dock, and feel at 10000² (a functional pass at 10000² and 16384×6100 in WebKit was fine: no blank canvases, no canvas-memory warnings). WebKit dropped its total canvas memory cap in June 2023 (bug 195325): running out now gets the tab killed and reloaded, losing unsaved work, so an 8 GB Mac at 100 MP is the tightest case. Safari 16.x may still have the old cap (RAM/4); a failed `getContext` there would throw in doc ops without a toast.
+- Safari's download path marks the document saved once `a.click()` runs. If Safari silently blocks a download started after a long encode, the document looks clean, so after an encode over 1 s the toast offers "Download again" (a fresh click; user's call, 2026-10-18).
+- `test/e2e/safari.js` drives the real Safari through safaridriver. It has never connected here: with "Allow remote automation" on and `safaridriver --enable` done, session creation still timed out (Safari probably needs a restart after the setting). Its checks are unverified until it runs.
+- Superseded big canvases (the old base after a rotate) wait for GC rather than being freed at once: the history and objects may still refer to them, so it wasn't changed.
+- iPad: per-canvas cap 8192² (67 MP); `canvasFits()` now refuses bigger documents with a message instead of a blank picture. iOS Safari never shows a `beforeunload` prompt.
+- WebKit flake: smoke's "mid-stroke: ink reaches the pointer" failed once in about five WebKit runs (a 50 ms wait).
+- Safari draws range sliders natively: it ignores `accent-color` there, so Size/Smoothing are grey, not blue.
 - A real Windows machine (labels were checked only with a `navigator.platform` override).
 - A VoiceOver pass over dialogs, toasts and the canvas label.
 - The DPR-change path (`matchMedia` watcher); CDP emulation doesn't fire `change`.
@@ -57,7 +64,7 @@ All of this is done and merged to `master`:
 - **Bench baselines on `master`** (new `bench.js` rows, `--only 5k`, 1 run): `scene 5k objects` 151 / 133 ms (4000×3000 / 10000²), `move one in 5k` 226 / 235 ms, `stroke over 5k` 1130 / 1534 ms (12 long frames at 10000²), `rebuild 5k (rotate)` 17 / 19 ms.
 
 1. **Not yet verified:**
-   - Firefox and Safari. Neither has the File System Access API, so the download-save path runs there. The `:has()`, `field-sizing` and `text-wrap: balance` CSS also needs checking.
+   - Firefox. It has no File System Access API, so the download-save path runs there. The `:has()`, `field-sizing` and `text-wrap: balance` CSS also needs checking. (Safari: see Open above.)
    - A real Windows machine.
    - A VoiceOver pass over dialogs, toasts and the canvas label.
 2. **Phone widths (<600px)** are out of scope, since the app is desktop-first. The top bar and options bar scroll sideways there rather than reflowing.

@@ -10,7 +10,10 @@
 // copy is complete. (Fills drawn from paths keep nothing on the GPU.)
 const STRIP_PX = 1 << 20; // pixels read per step: ~4 MB, a few ms
 const onIdle = window.requestIdleCallback ? (f) => window.requestIdleCallback(f, { timeout: 2000 })
-  : (f) => setTimeout(() => f({ timeRemaining: () => 8 }), 0);
+  : (f) => setTimeout(() => { // Safari has no requestIdleCallback: an 8 ms slice that counts down
+    const t0 = performance.now();
+    f({ timeRemaining: () => Math.max(0, 8 - (performance.now() - t0)) });
+  }, 0);
 let restored = () => {};
 const onRestored = (f) => { restored = f; };
 // Keep cv's pixels on the CPU (read in strips at idle) and refill cv from them when its context comes back.

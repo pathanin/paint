@@ -329,6 +329,12 @@ button.labeled { padding: 0 9px 0 7px; }
 }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 #toast.error { background: #b42318; pointer-events: auto; display: flex; align-items: center; gap: 10px; padding-right: 6px; }
+#toast.act { pointer-events: auto; display: flex; align-items: center; gap: 12px; padding-right: 6px; }
+#toast .toast-act {
+  min-width: 0; height: 26px; padding: 0 10px; flex: none;
+  border-radius: 5px; border: 0; background: rgba(255,255,255,.14); color: inherit; font: inherit; font-weight: 600;
+}
+#toast .toast-act:hover { background: rgba(255,255,255,.24); }
 #toast .toast-x {
   min-width: 0; width: 24px; height: 24px; padding: 0; flex: none;
   border-radius: 5px; background: none; color: inherit; opacity: .85;
@@ -412,11 +418,10 @@ dialog .seg.wide label { flex: 1; text-align: center; }
 dialog menu { display: flex; justify-content: flex-end; gap: 8px; margin: 20px 0 0; padding: 0; }
 dialog menu button { min-width: 80px; border-color: var(--border-strong); }
 dialog menu button.primary { border-color: transparent; }
-dialog fieldset {
-  display: flex; align-items: center; gap: 14px;
-  border: 0; padding: 0; margin: 14px 0 0;
-}
-dialog fieldset legend { float: left; color: var(--muted); font-size: 12px; margin-right: 4px; padding: 0; }
+/* Legend floated beside a flex row: Safari won't make a legend a flex item of its fieldset */
+dialog fieldset { border: 0; padding: 0; margin: 14px 0 0; }
+dialog fieldset legend { float: left; color: var(--muted); font-size: 12px; line-height: 66px; margin-right: 18px; padding: 0; } /* 66px: the anchor grid */
+dialog fieldset .row { display: flex; align-items: center; gap: 14px; }
 dialog fieldset .note { margin: 0; }
 dialog fieldset:disabled { opacity: .4; }
 .anchor { display: grid; grid-template-columns: repeat(3, 20px); gap: 3px; }

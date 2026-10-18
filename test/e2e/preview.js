@@ -3,12 +3,12 @@
 // #preview only covers the visible part of the image, so check by screen pixels that floating
 // selections, marching ants and shape previews show up where they should at several zooms and
 // scroll positions, and that a new float always replaces the old one on screen.
-const { chromium } = require('playwright');
+const { launch } = require('./browser.js');
 const url = process.argv[2] || 'http://localhost:8765/';
 let fails = 0, passes = 0;
 const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m); } };
 (async () => {
-  const browser = await chromium.launch({ channel: 'chrome' });
+  const browser = await launch();
   try {
     for (const dpr of [1, 2]) {
       const page = await browser.newPage({ viewport: { width: 1000, height: 700 }, deviceScaleFactor: dpr });

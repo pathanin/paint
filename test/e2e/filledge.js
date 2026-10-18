@@ -5,12 +5,12 @@
 //    tolerance. Every pixel must end up a blend of black ink and a fill colour: no light fringe.
 // 2. A brush stroke committed over many pointer moves equals its segments drawn as one path, also
 //    once a long stroke on a big image has had its undo tiles read back mid-stroke.
-const { chromium } = require('playwright');
+const { launch } = require('./browser.js');
 const url = process.argv[2] || 'http://localhost:8765/';
 let fails = 0, passes = 0;
 const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m); } };
 (async () => {
-  const browser = await chromium.launch({ channel: 'chrome' });
+  const browser = await launch();
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     const errs = [];

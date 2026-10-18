@@ -320,10 +320,18 @@ ov.addEventListener('pointerleave', () => { setHover(null); ring.hidden = true; 
 ov.addEventListener('mousedown', (e) => e.preventDefault()); // keep focus where we put it (text box)
 vp.addEventListener('contextmenu', (e) => e.preventDefault());
 
+// Safari sends a trackpad pinch as gesture events (scale since gesturestart), and zooms the page
+// unless they are cancelled. It may send ctrl+wheel as well: during a gesture that is ignored, so the
+// pinch zooms once.
+let pinch = null;
+vp.addEventListener('gesturestart', (e) => { e.preventDefault(); pinch = { z: S.zoom }; });
+vp.addEventListener('gesturechange', (e) => { e.preventDefault(); if (pinch) setZoom(pinch.z * e.scale, e.clientX, e.clientY); });
+vp.addEventListener('gestureend', (e) => { e.preventDefault(); pinch = null; });
+window.addEventListener('blur', () => { pinch = null; }); // a gestureend missed while away mustn't block ctrl+wheel
 vp.addEventListener('wheel', (e) => {
   if (!(e.ctrlKey || e.metaKey)) return;
   e.preventDefault(); // trackpad pinch arrives as ctrl+wheel; zoom the image, not the page
-  setZoom(S.zoom * Math.exp(-clamp(e.deltaY, -100, 100) * 0.005), e.clientX, e.clientY);
+  if (!pinch) setZoom(S.zoom * Math.exp(-clamp(e.deltaY, -100, 100) * 0.005), e.clientX, e.clientY);
 }, { passive: false });
 
 export { cancelDrag, objCursor, objDragUpdate, objGap, objTarget, updateRing };

@@ -84,8 +84,10 @@ async function loadFile(file, handle, decoded) {
 }
 
 // Formats we can encode. Anything else (GIF, BMP, ...) is saved as a new PNG rather than overwritten.
-const canWrite = (name) => /\.(png|jpe?g|webp)$/i.test(name);
-const asPng = (name) => Core.saveName(name) || 'untitled.png'; // foo.gif -> foo.png
+// Safari has no WebP encoder (toBlob and convertToBlob quietly return a PNG), so there WebP is one of those.
+const WEBP = (() => { try { return makeCanvas(1, 1).toDataURL('image/webp').startsWith('data:image/webp'); } catch { return false; } })();
+const canWrite = (name) => (WEBP ? /\.(png|jpe?g|webp)$/i : /\.(png|jpe?g)$/i).test(name);
+const asPng = (name) => (Core.saveName(name) || 'untitled.png').replace(/\.webp$/i, '.png'); // foo.gif -> foo.png
 function mimeFor(name) {
   const ext = name.split('.').pop().toLowerCase();
   return ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'webp' ? 'image/webp' : 'image/png';
@@ -96,7 +98,7 @@ function encode(type, src = composite()) {
     g.fillStyle = '#ffffff';
     g.fillRect(0, 0, c.width, c.height);
     g.drawImage(src, 0, 0);
-    src = c;
+    return encodeBlob(c, type, 0.92).finally(() => { c.width = 0; }); // free its pixels now, not at some later GC
   }
   return encodeBlob(src, type, 0.92);
 }
@@ -142,6 +144,7 @@ async function encodeFor(name) {
 // The running save's promise, or null: one picker/write at a time (another Save meanwhile does nothing).
 // Tests await __paint.saving before reading what a save did.
 let saving = null;
+const SLOW_DOWNLOAD_MS = 1000;
 function save(as) {
   if (saving) return saving;
   saving = saveNow(as).finally(() => { saving = null; });
@@ -164,18 +167,20 @@ async function saveNow(as) {
     if (!h) {
       if (!window.showSaveFilePicker) {
         if (as) { // no save picker here: ask for the name, so Save As differs from Save
-          const typed = Core.saveName(prompt('Save as (PNG, JPEG or WebP; PNG if no extension)', name));
+          const typed = Core.saveName(prompt(`Save as (PNG, JPEG${WEBP ? ' or WebP' : ''}; PNG if no extension)`, name));
           if (!typed) return;
-          name = typed;
+          name = canWrite(typed) ? typed : asPng(typed);
         }
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(await encodeFor(name));
-        a.download = name;
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+        const t0 = performance.now();
+        const href = URL.createObjectURL(await encodeFor(name));
+        const download = () => { const a = document.createElement('a'); a.href = href; a.download = name; a.click(); };
+        download();
+        setTimeout(() => URL.revokeObjectURL(href), 60000); // Safari may first ask to allow downloads
         S.fileName = name;
         hist.markSaved(savedAt); updateChrome();
-        flash('Downloaded ' + name);
+        // Safari may block a download started this long after the click: offer one from a fresh click.
+        if (performance.now() - t0 > SLOW_DOWNLOAD_MS) flash(`Downloaded ${name}. Nothing arrived?`, false, { label: 'Download again', run: download });
+        else flash('Downloaded ' + name);
         return;
       }
       h = await window.showSaveFilePicker({
@@ -183,7 +188,7 @@ async function saveNow(as) {
         types: [
           { description: 'PNG', accept: { 'image/png': ['.png'] } },
           { description: 'JPEG', accept: { 'image/jpeg': ['.jpg', '.jpeg'] } },
-          { description: 'WebP', accept: { 'image/webp': ['.webp'] } },
+          ...(WEBP ? [{ description: 'WebP', accept: { 'image/webp': ['.webp'] } }] : []),
         ],
       });
     }
