@@ -17,7 +17,10 @@ All of this is done and merged to `master`:
 
 **Not verified:**
 - Firefox (no runs at all yet).
-- Real Safari. Every suite except pwa runs in Playwright's WebKit (`BROWSER=webkit`, 2026-10-18), which is close to Safari 27 but not Safari. Still to try by hand: trackpad pinch (only synthetic gesture events are tested), real clipboard copy/paste, the first-download prompt, Add to Dock, and feel at 10000² (a functional pass at 10000² and 16384×6100 in WebKit was fine: no blank canvases, no canvas-memory warnings). Safari's total canvas memory cap is RAM/4 (at least ~2.1 GB), so an 8 GB Mac at 100 MP is the tightest case.
+- Real Safari. Every suite except pwa runs in Playwright's WebKit (`BROWSER=webkit`, 2026-10-18), which is close to Safari 27 but not Safari. Still to try by hand: trackpad pinch (only synthetic gesture events are tested), real clipboard copy/paste, the first-download prompt, Add to Dock, and feel at 10000² (a functional pass at 10000² and 16384×6100 in WebKit was fine: no blank canvases, no canvas-memory warnings). WebKit dropped its total canvas memory cap in June 2023 (bug 195325): running out now gets the tab killed and reloaded, losing unsaved work, so an 8 GB Mac at 100 MP is the tightest case. Safari 16.x may still have the old cap (RAM/4); a failed `getContext` there would throw in doc ops without a toast.
+- Safari's download path marks the document saved once `a.click()` runs. If Safari silently blocks a download started after a long encode, the document looks clean. A toast with a Download button (a fresh gesture) after slow encodes would close that gap; not done.
+- Superseded big canvases (the old base after a rotate) wait for GC rather than being freed at once: the history and objects may still refer to them, so it wasn't changed.
+- iPad: per-canvas cap 8192² (67 MP); `canvasFits()` now refuses bigger documents with a message instead of a blank picture. iOS Safari never shows a `beforeunload` prompt.
 - WebKit flake: smoke's "mid-stroke: ink reaches the pointer" failed once in about five WebKit runs (a 50 ms wait).
 - Safari draws range sliders natively: it ignores `accent-color` there, so Size/Smoothing are grey, not blue.
 - A real Windows machine (labels were checked only with a `navigator.platform` override).

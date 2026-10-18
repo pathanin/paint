@@ -39,12 +39,41 @@ const PALETTE = [
 const MAX_DIM = 16384;
 const MAX_PIXELS = 100e6; // ~400 MB per canvas; history keeps several
 const megapixels = (w, h) => +(w * h / 1e6).toFixed(1);
+// Whether this browser can hold a w x h canvas. Past its cap a canvas still gets a context, but draws
+// nothing, reads back zeros and won't encode (iPadOS caps a canvas at 8192², 67 MP; macOS Safari and
+// Chrome at 16384², above MAX_PIXELS). Tried once per new largest area: draw the far corner, read it.
+const SAFE_AREA = 8192 * 8192;
+let fitsUpTo = SAFE_AREA, failsFrom = Infinity;
+function canvasFits(w, h) {
+  const a = w * h;
+  if (a <= fitsUpTo) return true;
+  if (a >= failsFrom) return false;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  let ok = false;
+  try {
+    const g = c.getContext('2d');
+    if (g) {
+      g.fillRect(w - 1, h - 1, 1, 1);
+      const one = document.createElement('canvas');
+      one.width = one.height = 1;
+      const o = one.getContext('2d');
+      o.drawImage(c, w - 1, h - 1, 1, 1, 0, 0, 1, 1);
+      ok = o.getImageData(0, 0, 1, 1).data[3] === 255;
+    }
+  } catch { ok = false; }
+  c.width = 0;
+  if (ok) fitsUpTo = a; else failsFrom = a;
+  return ok;
+}
 // User-facing reason a w x h document can't exist, or null.
 function sizeProblem(w, h) {
   const e = Core.sizeError(w, h, MAX_DIM, MAX_PIXELS);
-  if (!e) return null;
-  return e.reason === 'range' ? `sides must be between 1 and ${MAX_DIM} px`
-    : `${w} × ${h} px (${megapixels(w, h)} MP) is over the ${MAX_PIXELS / 1e6} MP limit`;
+  if (e) {
+    return e.reason === 'range' ? `sides must be between 1 and ${MAX_DIM} px`
+      : `${w} × ${h} px (${megapixels(w, h)} MP) is over the ${MAX_PIXELS / 1e6} MP limit`;
+  }
+  return canvasFits(w, h) ? null : `${w} × ${h} px (${megapixels(w, h)} MP) is more than this browser can hold in one canvas`;
 }
 
-export { CLEAR, drag, isClear, MAX_DIM, MAX_PIXELS, PALETTE, S, sel, setDrag, setSel, SHAPES, sizeProblem, TOOL_KEYS };
+export { canvasFits, CLEAR, drag, isClear, MAX_DIM, MAX_PIXELS, PALETTE, S, sel, setDrag, setSel, SHAPES, sizeProblem, TOOL_KEYS };

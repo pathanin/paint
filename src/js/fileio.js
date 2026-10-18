@@ -98,7 +98,7 @@ function encode(type, src = composite()) {
     g.fillStyle = '#ffffff';
     g.fillRect(0, 0, c.width, c.height);
     g.drawImage(src, 0, 0);
-    src = c;
+    return encodeBlob(c, type, 0.92).finally(() => { c.width = 0; }); // free its pixels now, not at some later GC
   }
   return encodeBlob(src, type, 0.92);
 }
@@ -174,7 +174,7 @@ async function saveNow(as) {
         a.href = URL.createObjectURL(await encodeFor(name));
         a.download = name;
         a.click();
-        setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+        setTimeout(() => URL.revokeObjectURL(a.href), 60000); // Safari may first ask to allow downloads
         S.fileName = name;
         hist.markSaved(savedAt); updateChrome();
         flash('Downloaded ' + name);

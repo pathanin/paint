@@ -116,6 +116,8 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     ok(await P(() => document.activeElement.id) === 'textInput', 'focus back in text box after mouse font change');
     await page.keyboard.press('Enter');
     ok(await P(() => document.querySelector('#textInput').hidden), 'Enter commits text');
+    // a canvas past the browser's cap (iPadOS: 67 MP) is refused, not opened blank; every engine holds 67 MP
+    ok(await P(() => [window.__paint.canvasFits(8192, 8192), window.__paint.canvasFits(10000, 10000), window.__paint.canvasFits(20000, 20000)].join()) === 'true,true,false', 'canvasFits: 67 MP and 100 MP fit, 400 MP (over every engine\'s cap) doesn\'t');
     // resize: too large keeps dialog open with an error
     await page.keyboard.press('Shift+KeyR');
     await page.waitForTimeout(100);

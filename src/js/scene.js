@@ -162,17 +162,22 @@ function paintLater() {
 }
 // A WebGL2 fence after the work queued on #image so far: a 1 px copy of #image into a small canvas,
 // uploaded to a texture (GPU to GPU, so ordered after it), then fenceSync. Polling it never blocks.
-// Without WebGL2 there is no fence, and nothing waits.
-let gl = null, tiny = null, tex = null;
+// Without WebGL2 there is no fence, and nothing waits. In WebKit the upload itself waits for the GPU
+// (~125 ms on the main thread after a 10000² repaint, measured in Playwright WebKit), which is the
+// stall the fence is there to avoid: two slow uploads in a row turn it off for the session.
+let gl = null, tiny = null, tex = null, slowUploads = 0;
 function fenceAfter() {
   if (gl === null) {
     try { gl = new OffscreenCanvas(1, 1).getContext('webgl2') || false; } catch { gl = false; }
     if (gl) { tiny = makeCanvas(1, 1).getContext('2d'); tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex); }
   }
-  if (!gl || gl.isContextLost()) return;
+  if (!gl || slowUploads >= 2 || gl.isContextLost()) return;
+  const t0 = performance.now();
   tiny.clearRect(0, 0, 1, 1);
   tiny.drawImage(img, 0, 0, 1, 1, 0, 0, 1, 1);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tiny.canvas);
+  slowUploads = performance.now() - t0 > 8 ? slowUploads + 1 : 0;
+  if (slowUploads >= 2) return; // a fence still pending passes as usual
   const f = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
   if (!f) return;
   gl.flush();
