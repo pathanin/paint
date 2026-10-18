@@ -78,18 +78,25 @@ async function once() {
       window.__ints = 0; // trusted presses (a drag is one): the entries above leave out anything under 16 ms
       for (const t of ['pointerdown', 'keydown']) addEventListener(t, (e) => { if (e.isTrusted && !e.repeat) window.__ints++; }, true);
       window.__inp = (t0) => {
-        // per interaction: its longest event, and how much of that was main thread (input delay + handlers)
-        // rather than rendering and presenting the frame after it
+        // per interaction: its longest event (and the frame it ends at), and how much of that was main thread
+        // (input delay + handlers) rather than rendering and presenting the frame after it
         const by = new Map();
         for (const e of window.__ev) {
           if (e.startTime < t0) continue;
-          const o = by.get(e.interactionId) || { d: 0, main: 0 };
-          by.set(e.interactionId, { d: Math.max(o.d, e.duration), main: Math.max(o.main, e.processingEnd - e.startTime) });
+          const o = by.get(e.interactionId) || { d: 0, end: 0, main: 0 };
+          if (e.duration > o.d) { o.d = e.duration; o.end = e.startTime + e.duration; }
+          o.main = Math.max(o.main, e.processingEnd - e.startTime);
+          by.set(e.interactionId, o);
         }
         const d = [...by.values()].sort((x, y) => y.d - x.d), lt = window.__lt.filter((e) => e.startTime >= t0 && !window.__flushes.some(([a, b]) => e.startTime <= a && e.startTime + e.duration >= b)).map((e) => e.duration);
         window.__flushes = [];
         window.__ev = window.__ev.filter((e) => e.startTime >= t0); window.__lt = window.__lt.filter((e) => e.startTime >= t0);
-        return { inp: d.length ? d[0].d : 0, inpMain: d.length ? d[0].main : 0, inp200: d.filter((x) => x.d > 200).length, longMax: lt.length ? Math.max(...lt) : 0 };
+        // inpMain: the longest main-thread part among the interactions presented in the worst one's frame
+        // (durations are rounded to 8 ms). A ⌘C press is two interactions, the Meta keydown and the c keydown,
+        // and both wait for the frame that c's handler holds up: their durations tie, and the Meta one,
+        // whose own main part is ~0, would otherwise be the one reported.
+        const inpMain = d.filter((x) => Math.abs(x.end - d[0]?.end) <= 8).reduce((m, x) => Math.max(m, x.main), 0);
+        return { inp: d.length ? d[0].d : 0, inpMain, inp200: d.filter((x) => x.d > 200).length, longMax: lt.length ? Math.max(...lt) : 0 };
       };
     });
     // two frames after any fill still running in its worker has landed
