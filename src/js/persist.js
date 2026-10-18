@@ -22,15 +22,16 @@ const idatHash = (u8) => {
 };
 const toPng = (cv) => encodeBlob(cv, 'image/png').then((b) => b.arrayBuffer()).then((a) => new Uint8Array(a));
 
-// The PNG bytes png (the picture) with the scene of objs and base spliced in.
-async function withScene(png, objs, nextId) {
+// The picture's PNG bytes (pngBytes, a promise: the scene's own PNGs encode meanwhile) with the scene
+// of objs and base spliced in.
+async function withScene(pngBytes, objs, nextId) {
   const blobs = [await toPng(base)], at = new Map();
   for (const o of objs) {
     if (!o.asset || at.has(o.asset)) continue;
     at.set(o.asset, blobs.length);
     blobs.push(await toPng(o.asset.cv));
   }
-  const list = objs.map((o) => Core.packObj(o.asset ? { ...o, asset: at.get(o.asset) } : o));
+  const png = await pngBytes, list = objs.map((o) => Core.packObj(o.asset ? { ...o, asset: at.get(o.asset) } : o));
   const head = new TextEncoder().encode(JSON.stringify({ v: 1, w: base.width, h: base.height, idat: idatHash(png), nextId, objs: list, blobs: blobs.map((b) => b.length) }));
   const data = new Uint8Array(4 + head.length + blobs.reduce((n, b) => n + b.length, 0));
   new DataView(data.buffer).setUint32(0, head.length);

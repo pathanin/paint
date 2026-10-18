@@ -388,7 +388,7 @@ function hugeTiff() {
     ok(/Can't open nochunk\.tif: the TIFF reader didn’t load\. Reload the page/.test(tt), 'TIFF without its chunk says to reload: ' + tt);
     const png = await bp.evaluate(async () => {
       const p = window.__paint;
-      p.newDoc(200, 100);
+      p.newDoc(2000, 1500); // past encodeBlob's small size, which skips the worker
       let blob = null;
       p.S.fileName = 'out.png';
       p.S.fileHandle = { name: 'out.png', queryPermission: async () => 'granted', requestPermission: async () => 'granted',

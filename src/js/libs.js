@@ -39,10 +39,13 @@ function workerCall(w, msg, transfer) {
 // src (a canvas) as a file of the given type, like toBlob(), but encoded in blob-worker.js. The snapshot
 // is taken now (createImageBitmap, a GPU copy), so later edits can't leak in; kickFrame() keeps it from
 // holding the next frame. It is transferred: posting a copy would read it back here first. One worker
-// per call, so its full-size CPU canvas is freed after. If the worker can't start or fails, src itself
-// is encoded with toBlob() (the canvases passed here are never drawn on again, except #image, whose
-// later edits a save keeps unsaved anyway).
+// per call, so its full-size CPU canvas is freed after. A small src is encoded here with toBlob(), and
+// so is src itself if the worker can't start or fails (the canvases passed here are never drawn on
+// again, except #image, whose later edits a save keeps unsaved anyway).
+const SMALL_PX = 1 << 21; // up to here (one strip) the readback costs a few ms: not worth a worker
 function encodeBlob(src, type = 'image/png', quality) {
+  const builtin = () => new Promise((res, rej) => src.toBlob((b) => (b ? res(b) : rej(new Error('encode failed'))), type, quality));
+  if (src.width * src.height <= SMALL_PX) { used.encode = 'builtin'; return builtin(); }
   const snap = createImageBitmap(src);
   kickFrame();
   return snap.then(async (bmp) => {
@@ -53,7 +56,7 @@ function encodeBlob(src, type = 'image/png', quality) {
       return blob;
     } catch {
       used.encode = 'builtin';
-      return new Promise((res, rej) => src.toBlob((b) => (b ? res(b) : rej(new Error('encode failed'))), type, quality));
+      return builtin();
     } finally {
       worker.terminate();
     }

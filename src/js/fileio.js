@@ -134,9 +134,10 @@ async function encodePng() {
 // A PNG keeps the objects in a private chunk (persist.js); JPEG and WebP can't, so they get the picture.
 async function encodeFor(name) {
   if (mimeFor(name) !== 'image/png') return encode(mimeFor(name));
-  const png = await encodePng();
+  const png = encodePng();
   if (!hasObjs()) return png;
-  return new Blob([await withScene(new Uint8Array(await png.arrayBuffer()), userObjs(), objIdNext())], { type: 'image/png' });
+  const bytes = png.then((b) => b.arrayBuffer()).then((a) => new Uint8Array(a));
+  return new Blob([await withScene(bytes, userObjs(), objIdNext())], { type: 'image/png' });
 }
 // The running save's promise, or null: one picker/write at a time (another Save meanwhile does nothing).
 // Tests await __paint.saving before reading what a save did.
