@@ -144,6 +144,7 @@ async function encodeFor(name) {
 // The running save's promise, or null: one picker/write at a time (another Save meanwhile does nothing).
 // Tests await __paint.saving before reading what a save did.
 let saving = null;
+const SLOW_DOWNLOAD_MS = 1000;
 function save(as) {
   if (saving) return saving;
   saving = saveNow(as).finally(() => { saving = null; });
@@ -170,14 +171,16 @@ async function saveNow(as) {
           if (!typed) return;
           name = canWrite(typed) ? typed : asPng(typed);
         }
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(await encodeFor(name));
-        a.download = name;
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(a.href), 60000); // Safari may first ask to allow downloads
+        const t0 = performance.now();
+        const href = URL.createObjectURL(await encodeFor(name));
+        const download = () => { const a = document.createElement('a'); a.href = href; a.download = name; a.click(); };
+        download();
+        setTimeout(() => URL.revokeObjectURL(href), 60000); // Safari may first ask to allow downloads
         S.fileName = name;
         hist.markSaved(savedAt); updateChrome();
-        flash('Downloaded ' + name);
+        // Safari may block a download started this long after the click: offer one from a fresh click.
+        if (performance.now() - t0 > SLOW_DOWNLOAD_MS) flash(`Downloaded ${name}. Nothing arrived?`, false, { label: 'Download again', run: download });
+        else flash('Downloaded ' + name);
         return;
       }
       h = await window.showSaveFilePicker({

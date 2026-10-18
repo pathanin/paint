@@ -248,6 +248,19 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
         if (magic === '52494646') ok(bytes.subarray(8, 12).toString() === 'WEBP', 'the .webp is a WebP file (RIFF….WEBP)');
         ok(dl.suggestedFilename() === want && head === magic && await P(() => window.__paint.S.fileName) === want, `Save As ${typed} downloads ${dl.suggestedFilename()} starting ${head} (want ${want}, ${magic})`);
       }
+      // A slow encode: the toast offers the download again from a fresh click (Safari may block the late one)
+      {
+        await P(() => { window.prompt = () => 'slow.png'; const tb = HTMLCanvasElement.prototype.toBlob; window.__tb = tb; HTMLCanvasElement.prototype.toBlob = function (...a) { setTimeout(() => tb.apply(this, a), 1200); }; });
+        const [d1] = await Promise.all([page.waitForEvent('download'), page.keyboard.press('Meta+Shift+KeyS')]); await saved();
+        await P(() => { HTMLCanvasElement.prototype.toBlob = window.__tb; });
+        const btn = page.locator('#toast.show .toast-act');
+        ok(d1.suggestedFilename() === 'slow.png' && await btn.count() === 1 && /Download again/.test(await btn.textContent()), 'after a slow encode the toast offers Download again: ' + await page.locator('#toast').textContent());
+        const [d2] = await Promise.all([page.waitForEvent('download'), btn.click()]);
+        ok(d2.suggestedFilename() === 'slow.png' && require('fs').statSync(await d2.path()).size === require('fs').statSync(await d1.path()).size && !(await P(() => document.querySelector('#toast').classList.contains('show'))), 'Download again downloads the same file and closes the toast');
+        await P(() => { window.prompt = () => 'quick.png'; });
+        await Promise.all([page.waitForEvent('download'), page.keyboard.press('Meta+Shift+KeyS')]); await saved();
+        ok(await page.locator('#toast .toast-act').count() === 0 && /Downloaded quick\.png$/.test(await page.locator('#toast').textContent()), 'a quick save has no extra button');
+      }
       // round 12: a dot isn't an extension; names are sanitised so title and download agree; prompt says what's accepted
       for (const [typed, want] of [['report v1.2', 'report v1.2.png'], ['a/b.png', 'a_b.png']]) {
         await P((t) => { window.prompt = (m) => { window.__promptMsg = m; return t; }; }, typed);

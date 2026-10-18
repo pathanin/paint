@@ -329,6 +329,12 @@ button.labeled { padding: 0 9px 0 7px; }
 }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 #toast.error { background: #b42318; pointer-events: auto; display: flex; align-items: center; gap: 10px; padding-right: 6px; }
+#toast.act { pointer-events: auto; display: flex; align-items: center; gap: 12px; padding-right: 6px; }
+#toast .toast-act {
+  min-width: 0; height: 26px; padding: 0 10px; flex: none;
+  border-radius: 5px; border: 0; background: rgba(255,255,255,.14); color: inherit; font: inherit; font-weight: 600;
+}
+#toast .toast-act:hover { background: rgba(255,255,255,.24); }
 #toast .toast-x {
   min-width: 0; width: 24px; height: 24px; padding: 0; flex: none;
   border-radius: 5px; background: none; color: inherit; opacity: .85;
