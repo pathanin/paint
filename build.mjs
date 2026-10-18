@@ -1,5 +1,5 @@
 // Builds dist/ from src/: the modules in src/js bundled (with the npm libraries) into ES modules,
-// dist/app.js plus the two workers, with the libraries split into chunks/ that load on first use;
+// dist/app.js plus the three workers, with the libraries split into chunks/ that load on first use;
 // the other files in src/ are copied as they are. The page needs http(s): ES modules don't load from
 // file://. sw.js gets the build's file list and a version (a hash of the files), so an installed
 // copy updates when anything changes, and works offline.
@@ -15,7 +15,8 @@ const SRC = 'src', OUT = 'dist';
 
 const options = {
   // The workers are entries of their own; libs.js starts them by these names.
-  entryPoints: { app: `${SRC}/js/main.js`, 'fill-worker': `${SRC}/js/fill-worker.js`, 'png-worker': `${SRC}/js/png-worker.js` },
+  entryPoints: { app: `${SRC}/js/main.js`, 'fill-worker': `${SRC}/js/fill-worker.js`, 'png-worker': `${SRC}/js/png-worker.js`,
+    'blob-worker': `${SRC}/js/blob-worker.js` },
   bundle: true,
   format: 'esm',
   splitting: true, // code shared by entries, and each import(), becomes a chunk

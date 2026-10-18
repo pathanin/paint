@@ -2,6 +2,7 @@ import Core from './core.js';
 import { makeAsset } from './assets.js';
 import { base } from './doc.js';
 import { makeCanvas } from './dom.js';
+import { encodeBlob } from './libs.js';
 
 // ---------- objects inside a PNG ----------
 // A PNG saved with objects carries them in a private chunk, paNt (docs/total-objects.md, Phase 5):
@@ -19,17 +20,18 @@ const idatHash = (u8) => {
   }
   return h >>> 0;
 };
-const toPng = (cv) => new Promise((res, rej) => cv.toBlob((b) => (b ? b.arrayBuffer().then((a) => res(new Uint8Array(a))) : rej(new Error('encode failed'))), 'image/png'));
+const toPng = (cv) => encodeBlob(cv, 'image/png').then((b) => b.arrayBuffer()).then((a) => new Uint8Array(a));
 
-// The PNG bytes png (the picture) with the scene of objs and base spliced in.
-async function withScene(png, objs, nextId) {
+// The picture's PNG bytes (pngBytes, a promise: the scene's own PNGs encode meanwhile) with the scene
+// of objs and base spliced in.
+async function withScene(pngBytes, objs, nextId) {
   const blobs = [await toPng(base)], at = new Map();
   for (const o of objs) {
     if (!o.asset || at.has(o.asset)) continue;
     at.set(o.asset, blobs.length);
     blobs.push(await toPng(o.asset.cv));
   }
-  const list = objs.map((o) => Core.packObj(o.asset ? { ...o, asset: at.get(o.asset) } : o));
+  const png = await pngBytes, list = objs.map((o) => Core.packObj(o.asset ? { ...o, asset: at.get(o.asset) } : o));
   const head = new TextEncoder().encode(JSON.stringify({ v: 1, w: base.width, h: base.height, idat: idatHash(png), nextId, objs: list, blobs: blobs.map((b) => b.length) }));
   const data = new Uint8Array(4 + head.length + blobs.reduce((n, b) => n + b.length, 0));
   new DataView(data.buffer).setUint32(0, head.length);

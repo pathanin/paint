@@ -5,7 +5,7 @@
 // that boot loads none of them, that each library path actually runs (a silent fallback must not
 // pass), that each feature keeps its built-in path past the library's budget, the results
 // (pixel-exact TIFF and PNG round trips, less moiré than the built-in resampler), that the page
-// asks no other server for anything, and that the paint bucket runs in its worker. Then, with the
+// asks no other server for anything, and that the paint bucket and file encoding run in their workers. Then, with the
 // chunks and workers blocked (a tab left open across a deploy), that each feature still works or
 // says why not.
 const { chromium } = require('playwright');
@@ -53,7 +53,7 @@ function hugeTiff() {
     const P = (f, a) => page.evaluate(f, a);
     const toast = () => page.locator('#toast').textContent();
     at = 'checks';
-    const LAZY = /\/(chunks\/(pica|UTIF)-[^/]*|fill-worker|png-worker)\.js$/;
+    const LAZY = /\/(chunks\/(pica|UTIF)-[^/]*|fill-worker|png-worker|blob-worker)\.js$/;
     ok(!requested.some((u) => LAZY.test(u)), 'boot loads no library chunk or worker: ' + requested.filter((u) => LAZY.test(u)).join(' '));
 
     // ---- resize: pica online, built-in otherwise; a clean result either way
@@ -298,6 +298,65 @@ function hugeTiff() {
       return { running, px: [...p.img.getContext('2d').getImageData(0, 0, 1, 1).data].join(), kinds: p.userObjs.map((o) => o.t).join(), toast: document.querySelector('#toast').textContent };
     });
     ok(pick.running && pick.px === '0,0,255,255' && pick.kinds === 'rect,fill' && !/cancelled/.test(pick.toast), 'a fill lands when only the selection changed meanwhile: ' + JSON.stringify(pick));
+    // The worker reads the picture back in 2 MP strips (699 rows at 3000 wide, the last one short): a fill
+    // over anti-aliased lines crossing every strip edge must give what the same plan gives on pixels read here.
+    const strips = await P(async () => {
+      const p = window.__paint, W = 3000, H = 2400;
+      p.newDoc(W, H); p.fitZoom(false); p.S.pristine = false;
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const g = c.getContext('2d'); g.strokeStyle = 'rgba(30, 30, 160, 0.8)'; g.lineWidth = 3;
+      for (let i = -H; i < W; i += 170) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i + H * 0.7, H); g.stroke(); }
+      g.beginPath(); g.arc(1500, 1398, 900, 0, 7); g.stroke();
+      p.pasteImage(c); p.setTool('fill'); // the tool switch commits the paste
+      p.S.tolerance = 10; p.S.primary = '#ff7f27';
+      const x = 1490, y = 1390, before = new Uint32Array(p.img.getContext('2d').getImageData(0, 0, W, H).data.buffer);
+      const plan = p.Core.fillPlan(before, W, H, x, y, p.Core.colorToU32('#ff7f27'), 10);
+      return { x, y, region: plan && plan.box, ok: !!plan };
+    });
+    ok(strips.ok && strips.region.y < 699 && strips.region.y + strips.region.h > 2097, 'the strip test fill spans every strip edge: ' + JSON.stringify(strips.region));
+    const sb = await page.locator('#overlay').boundingBox(), sz = await P(() => window.__paint.S.zoom);
+    await page.mouse.click(sb.x + strips.x * sz + sz / 2, sb.y + strips.y * sz + sz / 2);
+    const stripRes = await P(async ([x0, y0]) => {
+      const p = window.__paint, W = 3000, H = 2400;
+      await p.filling;
+      const fill = p.userObjs.at(-1);
+      p.undo();
+      const seen = new Uint32Array(p.img.getContext('2d').getImageData(0, 0, W, H).data.buffer);
+      p.redo();
+      const after = new Uint32Array(p.img.getContext('2d').getImageData(0, 0, W, H).data.buffer);
+      const want = p.Core.fillPlan(seen, W, H, x0, y0, after[y0 * W + x0], 10); // seen becomes the expected picture
+      let diff = 0;
+      for (let i = 0; i < after.length; i++) if (after[i] !== seen[i]) diff++;
+      return { used: p.used.fill, kind: fill.t, planned: !!want, diff };
+    }, [strips.x, strips.y]);
+    ok(stripRes.used === 'worker' && stripRes.kind === 'fill' && stripRes.planned && stripRes.diff === 0, 'a fill read back in strips equals the plan on pixels read in the page: ' + JSON.stringify(stripRes));
+
+    // Files are encoded in blob-worker.js from a snapshot read back in 2 MP strips (699 rows at 3000 wide,
+    // the last one short): soft, semi-transparent edges across every strip edge must give the same PNG
+    // bytes as the browser's own toBlob(), and decode to the pixels read here.
+    const enc = await P(async () => {
+      const p = window.__paint, W = 3000, H = 2400;
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const g = c.getContext('2d'); g.lineWidth = 7;
+      for (let i = -H, k = 0; i < W; i += 130, k++) {
+        g.strokeStyle = `rgba(${k * 37 % 256}, ${k * 91 % 256}, 160, ${0.05 + (k % 9) / 10})`;
+        g.beginPath(); g.moveTo(i, 0); g.lineTo(i + H * 0.7, H); g.stroke();
+      }
+      const blob = await p.encodeBlob(c, 'image/png'), via = p.used.encode;
+      const native = await new Promise((r) => c.toBlob(r, 'image/png'));
+      const a = new Uint8Array(await blob.arrayBuffer()), b = new Uint8Array(await native.arrayBuffer());
+      let same = a.length === b.length;
+      for (let i = 0; same && i < a.length; i++) same = a[i] === b[i];
+      const bmp = await createImageBitmap(blob, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+      const d = document.createElement('canvas'); d.width = W; d.height = H;
+      d.getContext('2d').drawImage(bmp, 0, 0);
+      const x = d.getContext('2d').getImageData(0, 0, W, H).data, y = g.getImageData(0, 0, W, H).data;
+      let diff = 0, soft = 0;
+      for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) diff++;
+      for (let i = 3; i < y.length; i += 4) if (y[i] > 0 && y[i] < 255) soft++;
+      return { via, same, diff, soft, dims: [bmp.width, bmp.height].join() };
+    });
+    ok(enc.via === 'worker' && enc.same && enc.diff === 0 && enc.soft > 1e5 && enc.dims === '3000,2400', 'a PNG encoded from strips in the worker equals the browser\'s: ' + JSON.stringify(enc));
 
     ok(remote.length === 0, 'no requests leave the machine: ' + remote.slice(0, 3).join(' '));
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));
@@ -329,15 +388,15 @@ function hugeTiff() {
     ok(/Can't open nochunk\.tif: the TIFF reader didn’t load\. Reload the page/.test(tt), 'TIFF without its chunk says to reload: ' + tt);
     const png = await bp.evaluate(async () => {
       const p = window.__paint;
-      p.newDoc(200, 100);
+      p.newDoc(2000, 1500); // past encodeBlob's small size, which skips the worker
       let blob = null;
       p.S.fileName = 'out.png';
       p.S.fileHandle = { name: 'out.png', queryPermission: async () => 'granted', requestPermission: async () => 'granted',
         createWritable: async () => ({ write: async (x) => { blob = x; }, close: async () => {} }) };
       await p.save(false);
-      return { used: p.used.png, ok: !!blob && blob.type === 'image/png' && blob.size > 0 };
+      return { used: p.used.png, encode: p.used.encode, ok: !!blob && blob.type === 'image/png' && blob.size > 0 };
     });
-    ok(png.used === 'builtin' && png.ok, 'PNG save without its worker uses the browser encoder: ' + JSON.stringify(png));
+    ok(png.used === 'builtin' && png.encode === 'builtin' && png.ok, 'PNG save without its workers uses the browser encoder: ' + JSON.stringify(png));
     ok(berrs.length === 0, 'blocked: no page errors: ' + berrs.join(' | '));
     await bctx.close();
   } finally {

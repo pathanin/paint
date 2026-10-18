@@ -1,11 +1,12 @@
 import Core from './core.js';
 import { makeAsset, pathAsset } from './assets.js';
-import { base, ctx, img } from './doc.js';
+import { base, img } from './doc.js';
 import { hexToU32, makeCanvas } from './dom.js';
 import { startWorker, used, workerCall } from './libs.js';
 import { addObj, composite, sceneVer } from './objects.js';
 import { S, sel } from './state.js';
 import { flash } from './toast.js';
+import { kickFrame } from './view.js';
 
 // ---------- fill ----------
 const BAND = 256;
@@ -20,20 +21,29 @@ function band(bands, col, x, y, w, h) {
   }
 }
 // The flood fill and its soft edge (Core.fillPlan) run in fill-worker.js, so a big fill (~0.9 s at
-// 100 MP) doesn't freeze the page; only reading the pixels and building the result stay here. If
+// 100 MP) doesn't freeze the page. Reading the pixels happens there too: the page sends a snapshot of
+// what is seen (createImageBitmap, a GPU copy), since getImageData here took ~280 ms of the click at
+// 100 MP. Only building the result stays here. If
 // the worker can't start or fails, the same function runs on the main thread. A fill reads what is
 // seen (every object) and becomes a fill object on top: a bitmap of the pixels it changed, frozen
 // at fill time (decision 5a). The page stays live meanwhile, so a fill whose picture changed before
 // it finished is dropped, like a resize.
 let worker = null; // created on the first fill; false once it has failed
 let filling = null; // the running fill's promise (for the tests)
+let one = null; // a 1 px canvas, for reading the clicked pixel
 function doFill(p, color) {
   const src = composite(), W = src.width, H = src.height;
   if (p.x < 0 || p.y < 0 || p.x >= W || p.y >= H) return;
   if (filling) { flash('Still filling'); return; }
   const c = hexToU32(color);
   // Exact-match fill on a pixel that already has the colour changes nothing: skip the full readback.
-  if (Math.round(S.tolerance * 255 / 100) === 0 && new Uint32Array(ctx.getImageData(p.x, p.y, 1, 1).data.buffer)[0] === c) return;
+  // The pixel is copied out first: getImageData on #image itself held the next frame for ~250 ms at 10000².
+  if (Math.round(S.tolerance * 255 / 100) === 0) {
+    one = one || makeCanvas(1, 1).getContext('2d');
+    one.globalCompositeOperation = 'copy';
+    one.drawImage(src, p.x, p.y, 1, 1, 0, 0, 1, 1);
+    if (new Uint32Array(one.getImageData(0, 0, 1, 1).data.buffer)[0] === c) return;
+  }
   filling = runFill(p, c, S.tolerance).finally(() => { filling = null; });
 }
 async function runFill(p, c, tolerance) {
@@ -43,17 +53,19 @@ async function runFill(p, c, tolerance) {
   // lift makes a float, crop/resize/New swap the base. What changes nothing seen doesn't count: a
   // pan, a marquee, selecting or deselecting objects, a stroke still being drawn (it lands on top later).
   const changed = () => base !== src || sceneVer !== v0 || (sel && sel.float) !== float;
-  const job = (buf) => ({ buf, w: W, h: H, x: p.x, y: p.y, color: c, tolerance });
+  const job = (pixels) => ({ ...pixels, w: W, h: H, x: p.x, y: p.y, color: c, tolerance });
   const read = () => composite().getContext('2d').getImageData(0, 0, W, H).data.buffer;
   let shown = false; // say so only if it takes a noticeable time
   const slow = setTimeout(() => { shown = true; flash('Filling…'); }, 300);
   try {
     let res = null;
     if (worker !== false) {
-      const buf = read();
       try {
+        const snap = createImageBitmap(composite());
+        kickFrame();
+        const bmp = await snap;
         worker = worker || startWorker('fill-worker');
-        res = await workerCall(worker, job(buf), [buf]);
+        res = await workerCall(worker, job({ bmp }), [bmp]);
         used.fill = 'worker';
       } catch {
         if (worker) worker.terminate();

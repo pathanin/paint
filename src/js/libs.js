@@ -4,6 +4,8 @@
 // worker caches the chunks, so they load offline too. Each caller still keeps a built-in path, for
 // inputs past the library's budget and in case it throws or doesn't load (a tab left open across
 // a deploy asks for chunks the server no longer has).
+import { kickFrame } from './view.js';
+
 const loadPica = () => import('pica').then((m) => m.default);
 const loadUTIF = () => import('utif2').then((m) => m.default);
 
@@ -34,4 +36,31 @@ function workerCall(w, msg, transfer) {
   });
 }
 
-export { loadPica, loadUTIF, startWorker, used, workerCall };
+// src (a canvas) as a file of the given type, like toBlob(), but encoded in blob-worker.js. The snapshot
+// is taken now (createImageBitmap, a GPU copy), so later edits can't leak in; kickFrame() keeps it from
+// holding the next frame. It is transferred: posting a copy would read it back here first. One worker
+// per call, so its full-size CPU canvas is freed after. A small src is encoded here with toBlob(), and
+// so is src itself if the worker can't start or fails (the canvases passed here are never drawn on
+// again, except #image, whose later edits a save keeps unsaved anyway).
+const SMALL_PX = 1 << 21; // up to here (one strip) the readback costs a few ms: not worth a worker
+function encodeBlob(src, type = 'image/png', quality) {
+  const builtin = () => new Promise((res, rej) => src.toBlob((b) => (b ? res(b) : rej(new Error('encode failed'))), type, quality));
+  if (src.width * src.height <= SMALL_PX) { used.encode = 'builtin'; return builtin(); }
+  const snap = createImageBitmap(src);
+  kickFrame();
+  return snap.then(async (bmp) => {
+    const worker = startWorker('blob-worker');
+    try {
+      const { blob } = await workerCall(worker, { bmp, type, quality }, [bmp]);
+      used.encode = 'worker';
+      return blob;
+    } catch {
+      used.encode = 'builtin';
+      return builtin();
+    } finally {
+      worker.terminate();
+    }
+  });
+}
+
+export { encodeBlob, loadPica, loadUTIF, startWorker, used, workerCall };

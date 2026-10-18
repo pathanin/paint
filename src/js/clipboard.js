@@ -5,6 +5,7 @@ import { composite, deleteObj, objs, selList, selectObj } from './objects.js';
 import { deleteSelection, dropSelection } from './selection.js';
 import { S, isClear, sel, setSel, sizeProblem } from './state.js';
 import { commitText } from './text.js';
+import { encodeBlob } from './libs.js';
 import { errText, flash } from './toast.js';
 import { drawObj, setTool } from './tools.js';
 import { fitZoom, requestRender, updateChrome } from './view.js';
@@ -19,7 +20,7 @@ function selectionCanvas() {
     for (const o of list) drawObj(g, o);
     return c;
   }
-  if (!sel) return composite(); // toBlob() encodes a snapshot, so later edits can't leak in
+  if (!sel) return composite(); // encodeBlob() encodes a snapshot, so later edits can't leak in
   if (sel.float) return sel.float;
   const c = makeCanvas(sel.w, sel.h);
   c.getContext('2d').drawImage(composite(), sel.x, sel.y, sel.w, sel.h, 0, 0, sel.w, sel.h); // copy what is seen
@@ -28,7 +29,7 @@ function selectionCanvas() {
 async function copySel(cut) {
   commitText();
   const c = selectionCanvas();
-  const blob = new Promise((res) => c.toBlob(res, 'image/png'));
+  const blob = encodeBlob(c, 'image/png');
   const some = !!sel || selList().length > 0;
   const didCut = cut && some; // with nothing selected, ⌘X copies the whole image and keeps it
   if (didCut && !deleteObj()) deleteSelection();
