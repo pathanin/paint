@@ -1,11 +1,11 @@
 // Live shapes (objects above the pixels, docs/objects.md) e2e test. Dev-only, like smoke.js.
 // usage: node objects.js [url]   exit 0 = all pass
-const { chromium } = require('playwright');
+const { engine, launch } = require('./browser.js');
 const url = process.argv[2] || 'http://localhost:8765/';
 let fails = 0, passes = 0;
 const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m); } };
 (async () => {
-  const browser = await chromium.launch({ channel: 'chrome' });
+  const browser = await launch();
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     const errs = [];
@@ -286,10 +286,12 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await drag([[200, 200], [1000, 800]]);
     await page.keyboard.press('KeyV');
     await page.keyboard.press('Escape');
-    const dj = await depth();
+    const dj = await depth(), a0 = JSON.stringify((await objs())[0].a); // where the drag put it
+    // WebKit's input is whole CSS px, so at 25% the corner lands within 4 image px of 200, 200
+    if (engine !== 'webkit') ok(a0 === '{"x":200,"y":200}', 'at 25% the drag puts the corner at 200, 200: ' + a0);
     { const [x, y] = await at(200, 500); await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x + 1, y + 1); await page.mouse.up(); await frame(); }
     o = await objs();
-    ok(o[0].a.x === 200 && o[0].a.y === 200 && await depth() === dj && await objSel() === o[0].id, 'at 25% a 1 px wobble while clicking selects the shape and leaves it put: ' + JSON.stringify(o[0].a));
+    ok(JSON.stringify(o[0].a) === a0 && await depth() === dj && await objSel() === o[0].id, 'at 25% a 1 px wobble while clicking selects the shape and leaves it put: ' + JSON.stringify(o[0].a));
     await drag([[200, 500], [240, 500]]);
     ok((await objs())[0].a.x === 240 && await depth() === dj + 1, 'a real drag still moves it, by the whole distance');
 

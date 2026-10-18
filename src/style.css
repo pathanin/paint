@@ -412,11 +412,10 @@ dialog .seg.wide label { flex: 1; text-align: center; }
 dialog menu { display: flex; justify-content: flex-end; gap: 8px; margin: 20px 0 0; padding: 0; }
 dialog menu button { min-width: 80px; border-color: var(--border-strong); }
 dialog menu button.primary { border-color: transparent; }
-dialog fieldset {
-  display: flex; align-items: center; gap: 14px;
-  border: 0; padding: 0; margin: 14px 0 0;
-}
-dialog fieldset legend { float: left; color: var(--muted); font-size: 12px; margin-right: 4px; padding: 0; }
+/* Legend floated beside a flex row: Safari won't make a legend a flex item of its fieldset */
+dialog fieldset { border: 0; padding: 0; margin: 14px 0 0; }
+dialog fieldset legend { float: left; color: var(--muted); font-size: 12px; line-height: 66px; margin-right: 18px; padding: 0; } /* 66px: the anchor grid */
+dialog fieldset .row { display: flex; align-items: center; gap: 14px; }
 dialog fieldset .note { margin: 0; }
 dialog fieldset:disabled { opacity: .4; }
 .anchor { display: grid; grid-template-columns: repeat(3, 20px); gap: 3px; }

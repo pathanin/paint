@@ -8,6 +8,14 @@ import { updateChrome } from './view.js';
 let textAt = null; // {x, y, color, m?} while the text box is open
 // The box sits at the text's origin; a text that was turned, flipped or scaled (m, about its origin)
 // is edited in a box with the same transform, so it reads as it will be drawn.
+// The box grows with its text through CSS field-sizing; Safari before 26.2 lacks it, so there it is
+// sized to its content here, on each edit and restyle.
+const FIELD_SIZING = CSS.supports('field-sizing', 'content');
+function fitTextBox() {
+  if (FIELD_SIZING || textBox.hidden) return;
+  Object.assign(textBox.style, { width: '0', height: '0' });
+  Object.assign(textBox.style, { width: textBox.scrollWidth + 'px', height: textBox.scrollHeight + 'px' });
+}
 function placeTextBox() {
   const m = textAt.m;
   Object.assign(textBox.style, {
@@ -19,6 +27,7 @@ function placeTextBox() {
     transform: m ? `matrix(${m.join(', ')}, 0, 0)` : '',
     transformOrigin: m ? '0 0' : '',
   });
+  fitTextBox();
 }
 // o: a text object to edit again (the text tool clicked it). It is hidden while the box is open, and
 // committing replaces it in one undo step, keeping its transform.
@@ -56,10 +65,16 @@ function textBaseline(fs) {
   probe.remove();
   return y / k;
 }
+// Safari keeps focus on a focused element that gets hidden (Chrome moves it to the body), and a
+// focused text box swallows the single-key shortcuts: let go of it first.
+function hideTextBox() {
+  if (document.activeElement === textBox) textBox.blur(); // textAt is already null: the blur commits nothing
+  textBox.hidden = true;
+}
 function commitText() {
   if (!textAt) return;
   const t = textAt; textAt = null;
-  textBox.hidden = true;
+  hideTextBox();
   $('#stHint').hidden = true;
   $('#stIntro').hidden = !S.pristine;
   const lines = textBox.value.split('\n');
@@ -80,12 +95,12 @@ function commitText() {
 function cancelText() {
   if (textAt && textAt.o) showObjs(textAt.before);
   textAt = null;
-  textBox.hidden = true;
+  hideTextBox();
   $('#stHint').hidden = true;
   $('#stIntro').hidden = !S.pristine;
   textBox.value = '';
 }
 
-textBox.addEventListener('input', updateChrome);
+textBox.addEventListener('input', () => { fitTextBox(); updateChrome(); });
 
 export { cancelText, commitText, placeTextBox, startText, textAt };

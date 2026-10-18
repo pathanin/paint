@@ -3,12 +3,12 @@
 // 1. Every kind of edit, on an image full of semi-transparent noise, undoes and redoes pixel-exactly.
 // 2. Undo depth on a large photo: many strokes must stay undoable (they used to evict each other,
 //    because each region entry stored before+after of the whole stroke bbox).
-const { chromium } = require('playwright');
+const { launch } = require('./browser.js');
 const url = process.argv[2] || 'http://localhost:8765/';
 let fails = 0, passes = 0;
 const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m); } };
 (async () => {
-  const browser = await chromium.launch({ channel: 'chrome' });
+  const browser = await launch();
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     const errs = [];

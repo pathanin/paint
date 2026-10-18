@@ -21,7 +21,7 @@ const options = {
   format: 'esm',
   splitting: true, // code shared by entries, and each import(), becomes a chunk
   chunkNames: 'chunks/[name]-[hash]',
-  target: 'chrome110',
+  target: ['chrome110', 'safari16.4'], // Safari 16.4: OffscreenCanvas 2D in workers (blob-worker, fill-worker)
   outdir: OUT,
   minify: !dev,
   sourcemap: dev ? 'inline' : 'linked',

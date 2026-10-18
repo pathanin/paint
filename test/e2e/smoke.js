@@ -1,11 +1,11 @@
 // End-to-end smoke test (Playwright + installed Chrome). See task.md / README for how to run.
 // Functional smoke test. usage: node smoke.js [url]   exit 0 = all pass
-const { chromium } = require('playwright');
+const { engine, launch } = require('./browser.js');
 const url = process.argv[2] || 'http://localhost:8765/';
 let fails = 0, passes = 0;
 const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m); } };
 (async () => {
-  const browser = await chromium.launch({ channel: 'chrome' });
+  const browser = await launch();
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     const errs = [];
@@ -194,6 +194,23 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.keyboard.press('Shift+Digit0');
     ok(await P(() => window.__paint.S.zoom) === 1 && zf !== 1, 'Shift+1 fits, Shift+0 actual size');
     ok(/100%/.test(await page.locator('#zoomBtn').getAttribute('aria-label')), 'zoom button label carries value');
+    // pinch: ctrl+wheel (Chrome, Firefox) or Safari's gesture events, which must zoom once, not also by wheel
+    {
+      const pz = await P(() => {
+        const vp = document.querySelector('#viewport'), r = vp.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2, Z = () => window.__paint.S.zoom;
+        const g = (type, scale) => { const e = new Event(type, { bubbles: true, cancelable: true }); Object.assign(e, { scale, clientX: x, clientY: y }); vp.dispatchEvent(e); return e.defaultPrevented; };
+        const wheel = () => { const e = new WheelEvent('wheel', { deltaY: -50, ctrlKey: true, clientX: x, clientY: y, bubbles: true, cancelable: true }); vp.dispatchEvent(e); return e.defaultPrevented; };
+        const z0 = Z(), out = {};
+        out.wheelPrevented = wheel(); out.wheel = Z() / z0;
+        window.__paint.setZoom(1);
+        out.startPrevented = g('gesturestart', 1); g('gesturechange', 1.5); out.mid = Z(); wheel(); out.afterWheel = Z(); g('gesturechange', 2);
+        out.endPrevented = g('gestureend', 2); out.end = Z();
+        window.__paint.setZoom(1);
+        return out;
+      });
+      ok(pz.wheelPrevented && pz.wheel > 1.2, 'ctrl+wheel zooms in, not the page: ' + JSON.stringify(pz));
+      ok(pz.startPrevented && pz.endPrevented && pz.mid === 1.5 && pz.afterWheel === 1.5 && pz.end === 2, 'a gesture pinch zooms by its scale, and ctrl+wheel meanwhile adds nothing: ' + JSON.stringify(pz));
+    }
     // download-save feedback
     await page.evaluate(() => { delete window.showSaveFilePicker; window.showSaveFilePicker = undefined; });
     await page.click('[data-cmd="save"]');
@@ -218,6 +235,14 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       await P(() => { window.prompt = () => 'photo.jpg'; });
       await page.keyboard.press('Meta+Shift+KeyS'); await saved();
       ok(await P(() => window.__paint.S.fileName) === 'photo.jpg', 'Save As keeps a writable extension');
+      // The bytes match the extension. A browser without a WebP encoder (Safari) saves a PNG copy of a .webp.
+      const webp = await P(() => document.createElement('canvas').toDataURL('image/webp').startsWith('data:image/webp'));
+      for (const [typed, want, magic] of [['photo.jpg', 'photo.jpg', 'ffd8ff'], ['pic.webp', webp ? 'pic.webp' : 'pic.png', webp ? '52494646' : '89504e47']]) {
+        await P((t) => { window.prompt = () => t; }, typed);
+        const [dl] = await Promise.all([page.waitForEvent('download'), page.keyboard.press('Meta+Shift+KeyS')]); await saved();
+        const head = require('fs').readFileSync(await dl.path()).subarray(0, magic.length / 2).toString('hex');
+        ok(dl.suggestedFilename() === want && head === magic && await P(() => window.__paint.S.fileName) === want, `Save As ${typed} downloads ${dl.suggestedFilename()} starting ${head} (want ${want}, ${magic})`);
+      }
       // round 12: a dot isn't an extension; names are sanitised so title and download agree; prompt says what's accepted
       for (const [typed, want] of [['report v1.2', 'report v1.2.png'], ['a/b.png', 'a_b.png']]) {
         await P((t) => { window.prompt = (m) => { window.__promptMsg = m; return t; }; }, typed);
@@ -889,7 +914,17 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       ok(await Q(() => window.__paint.S.smoothing === 0 && document.querySelector('#smoothOut').textContent === '0'), 'Smoothing slider sets 0');
       await draw(200); await bp.mouse.up(); await bp.waitForTimeout(50);
       const raw = await centre(200);
-      let missed = 0; for (let x = 61; x <= 300; x++) if (await px(x, jig(x, 200)) >= 128) missed++;
+      // The pixel(s) nearest where each sample landed: WebKit's input truncates the pointer to whole CSS
+      // px, which at 100% is a pixel corner (4 pixels equally near), not the centre scr() aims at.
+      const landed = (v, o) => (engine === 'webkit' ? Math.floor(o + (v + 0.5) * z) - o : (v + 0.5) * z) / z;
+      const nearest = async (x, y) => {
+        const qx = landed(x, bb.x), qy = landed(y, bb.y);
+        let best = 255;
+        for (let i = Math.floor(qx - 1); i <= qx; i++) for (let j = Math.floor(qy - 1); j <= qy; j++)
+          if (Math.hypot(i + 0.5 - qx, j + 0.5 - qy) < 0.75) best = Math.min(best, await px(i, j));
+        return best;
+      };
+      let missed = 0; for (let x = 61; x <= 300; x++) if (await nearest(x, jig(x, 200)) >= 128) missed++;
       ok(missed === 0, 'smoothing 0 paints every sampled point, missed ' + missed);
       ok(sd(raw) > 1.5 && sd(smooth) < sd(raw) / 2, `smoothing steadies jitter: sd ${sd(smooth).toFixed(2)} vs raw ${sd(raw).toFixed(2)}`);
       // the radius is fixed at pointerdown: zooming mid-stroke doesn't jump or break the stroke

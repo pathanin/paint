@@ -16,7 +16,10 @@ All of this is done and merged to `master`:
 ## Open
 
 **Not verified:**
-- Firefox and Safari: the download-save path, `:has()`, `field-sizing`, `text-wrap: balance`, and performance.
+- Firefox (no runs at all yet).
+- Real Safari. Every suite except pwa runs in Playwright's WebKit (`BROWSER=webkit`, 2026-10-18), which is close to Safari 27 but not Safari. Still to try by hand: trackpad pinch (only synthetic gesture events are tested), real clipboard copy/paste, the first-download prompt, Add to Dock, and feel at 10000² (a functional pass at 10000² and 16384×6100 in WebKit was fine: no blank canvases, no canvas-memory warnings). Safari's total canvas memory cap is RAM/4 (at least ~2.1 GB), so an 8 GB Mac at 100 MP is the tightest case.
+- WebKit flake: smoke's "mid-stroke: ink reaches the pointer" failed once in about five WebKit runs (a 50 ms wait).
+- Safari draws range sliders natively: it ignores `accent-color` there, so Size/Smoothing are grey, not blue.
 - A real Windows machine (labels were checked only with a `navigator.platform` override).
 - A VoiceOver pass over dialogs, toasts and the canvas label.
 - The DPR-change path (`matchMedia` watcher); CDP emulation doesn't fire `change`.
@@ -57,7 +60,7 @@ All of this is done and merged to `master`:
 - **Bench baselines on `master`** (new `bench.js` rows, `--only 5k`, 1 run): `scene 5k objects` 151 / 133 ms (4000×3000 / 10000²), `move one in 5k` 226 / 235 ms, `stroke over 5k` 1130 / 1534 ms (12 long frames at 10000²), `rebuild 5k (rotate)` 17 / 19 ms.
 
 1. **Not yet verified:**
-   - Firefox and Safari. Neither has the File System Access API, so the download-save path runs there. The `:has()`, `field-sizing` and `text-wrap: balance` CSS also needs checking.
+   - Firefox. It has no File System Access API, so the download-save path runs there. The `:has()`, `field-sizing` and `text-wrap: balance` CSS also needs checking. (Safari: see Open above.)
    - A real Windows machine.
    - A VoiceOver pass over dialogs, toasts and the canvas label.
 2. **Phone widths (<600px)** are out of scope, since the app is desktop-first. The top bar and options bar scroll sideways there rather than reflowing.

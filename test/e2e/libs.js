@@ -8,7 +8,11 @@
 // asks no other server for anything, and that the paint bucket and file encoding run in their workers. Then, with the
 // chunks and workers blocked (a tab left open across a deploy), that each feature still works or
 // says why not.
-const { chromium } = require('playwright');
+const { engine, launch } = require('./browser.js');
+// How the tests decode a saved PNG to compare its pixels: unpremultiplied, so semi-transparent
+// pixels aren't rounded. WebKit draws such a bitmap as if it were premultiplied (wrong colours), so
+// there the default decode, which round-trips exactly through its canvas.
+const RAW = engine === 'webkit' ? {} : { premultiplyAlpha: 'none', colorSpaceConversion: 'none' };
 const path = require('path');
 const url = process.argv[2] || 'http://localhost:8765/';
 const FIX = path.join(__dirname, '..', 'fixtures');
@@ -39,7 +43,7 @@ function hugeTiff() {
 }
 
 (async () => {
-  const browser = await chromium.launch({ channel: 'chrome' });
+  const browser = await launch();
   try {
     const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
     const errs = [], remote = [];
@@ -188,7 +192,7 @@ function hugeTiff() {
       ['over the size cap', 4000, 2200, 'flat', 'palette', false],
     ];
     for (const [label, w, h, scene, kind, wantUpng] of PNG_CASES) {
-      const s = await P(async ([w, h, scene]) => {
+      const s = await P(async ([w, h, scene, raw]) => {
         const p = window.__paint;
         await p.resizeDoc(w, h, 'canvas', 'tl');
         const g = p.img.getContext('2d');
@@ -221,14 +225,14 @@ function hugeTiff() {
         await p.save(false);
         const native = await new Promise((r) => p.img.toBlob(r, 'image/png'));
         if (!blob) return { err: document.querySelector('#toast').textContent };
-        const bmp = await createImageBitmap(blob, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+        const bmp = await createImageBitmap(blob, raw);
         const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
         const cg = c.getContext('2d'); cg.drawImage(bmp, 0, 0);
         const a = cg.getImageData(0, 0, c.width, c.height).data;
         let diff = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) diff++;
         const head = new Uint8Array(await blob.slice(0, 33).arrayBuffer()); // IHDR colour type: 3 = palette, 6 = RGBA
         return { used: p.used.png, size: blob.size, native: native.size, dims: [bmp.width, bmp.height], diff, clean: p.hist.isClean(), colours: colours.size, ctype: head[25] };
-      }, [w, h, scene]);
+      }, [w, h, scene, RAW]);
       if (s.err) { ok(false, `${label}: save failed: ${s.err}`); continue; }
       ok((kind === 'palette') === (s.colours <= 256), `${label}: scene has ${s.colours > 256 ? '> 256' : s.colours} colours`);
       ok(s.used === (wantUpng ? 'upng' : 'builtin'), `${label}: PNG encoded by ${s.used}`);
@@ -334,7 +338,7 @@ function hugeTiff() {
     // Files are encoded in blob-worker.js from a snapshot read back in 2 MP strips (699 rows at 3000 wide,
     // the last one short): soft, semi-transparent edges across every strip edge must give the same PNG
     // bytes as the browser's own toBlob(), and decode to the pixels read here.
-    const enc = await P(async () => {
+    const enc = await P(async (raw) => {
       const p = window.__paint, W = 3000, H = 2400;
       const c = document.createElement('canvas'); c.width = W; c.height = H;
       const g = c.getContext('2d'); g.lineWidth = 7;
@@ -347,7 +351,7 @@ function hugeTiff() {
       const a = new Uint8Array(await blob.arrayBuffer()), b = new Uint8Array(await native.arrayBuffer());
       let same = a.length === b.length;
       for (let i = 0; same && i < a.length; i++) same = a[i] === b[i];
-      const bmp = await createImageBitmap(blob, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+      const bmp = await createImageBitmap(blob, raw);
       const d = document.createElement('canvas'); d.width = W; d.height = H;
       d.getContext('2d').drawImage(bmp, 0, 0);
       const x = d.getContext('2d').getImageData(0, 0, W, H).data, y = g.getImageData(0, 0, W, H).data;
@@ -355,7 +359,7 @@ function hugeTiff() {
       for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) diff++;
       for (let i = 3; i < y.length; i += 4) if (y[i] > 0 && y[i] < 255) soft++;
       return { via, same, diff, soft, dims: [bmp.width, bmp.height].join() };
-    });
+    }, RAW);
     ok(enc.via === 'worker' && enc.same && enc.diff === 0 && enc.soft > 1e5 && enc.dims === '3000,2400', 'a PNG encoded from strips in the worker equals the browser\'s: ' + JSON.stringify(enc));
 
     ok(remote.length === 0, 'no requests leave the machine: ' + remote.slice(0, 3).join(' '));
@@ -363,11 +367,13 @@ function hugeTiff() {
 
     // ---- chunks and workers that don't load: the built-in paths, or a reason
     at = 'blocked';
-    const bctx = await browser.newContext({ viewport: { width: 1000, height: 700 } }); // its own HTTP cache
+    // Its own HTTP cache. In WebKit a service worker's fetches skip the route, so no service worker there.
+    const bctx = await browser.newContext({ viewport: { width: 1000, height: 700 }, ...(engine === 'webkit' && { serviceWorkers: 'block' }) });
     await bctx.route(LAZY, (r) => r.fulfill({ status: 404, body: 'gone' })); // the workers' requests too
     const bp = await bctx.newPage();
     const berrs = [];
     bp.on('pageerror', (e) => berrs.push(e.message));
+    bp.on('dialog', (d) => d.accept()); // WebKit opens the TIFF itself, so the discard prompt comes up
     await bp.goto(url);
     await bp.waitForFunction(() => window.__paint);
     await bp.evaluate(() => { const p = window.__paint; p.newDoc(300, 200); p.fitZoom(false); });
@@ -385,7 +391,10 @@ function hugeTiff() {
     }, tif);
     await bp.waitForFunction(() => /nochunk/.test(document.querySelector('#toast').textContent), null, { timeout: 5000 }).catch(() => {});
     const tt = await bp.locator('#toast').textContent();
-    ok(/Can't open nochunk\.tif: the TIFF reader didn’t load\. Reload the page/.test(tt), 'TIFF without its chunk says to reload: ' + tt);
+    if (engine === 'webkit') { // Safari decodes TIFF itself: the chunk isn't needed
+      const nm = await bp.evaluate(() => window.__paint.S.fileName + ' ' + window.__paint.img.width);
+      ok(nm === 'nochunk.tif 4' && !/nochunk/.test(tt), 'WebKit opens a TIFF without the UTIF chunk: ' + nm + ' ' + tt);
+    } else ok(/Can't open nochunk\.tif: the TIFF reader didn’t load\. Reload the page/.test(tt), 'TIFF without its chunk says to reload: ' + tt);
     const png = await bp.evaluate(async () => {
       const p = window.__paint;
       p.newDoc(2000, 1500); // past encodeBlob's small size, which skips the worker

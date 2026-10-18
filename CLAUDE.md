@@ -20,7 +20,7 @@ npm test                                    # unit tests for src/js/core.js (no 
 node --test --test-name-pattern="History" test/*.test.js   # single test by name
 ```
 
-The e2e scripts test the **built** app: run `npm run build` (or keep `npm run dev` running) first. They drive an installed Google Chrome (`channel: 'chrome'`). End-to-end smoke test: `test/e2e/smoke.js` runs about 290 checks in one sequential script, and later sections depend on state from earlier ones.
+The e2e scripts test the **built** app: run `npm run build` (or keep `npm run dev` running) first. They drive an installed Google Chrome (`channel: 'chrome'`), or Playwright's WebKit (Safari's engine) with `BROWSER=webkit` (`test/e2e/browser.js`; once: `npx playwright install webkit`). smoke, history, preview, filledge, objects, alpha, libs and shots run in both; pwa, bench and parity use CDP or Chrome-only behaviour and stay on Chrome. WebKit's injected mouse input is whole CSS px (truncated), so checks that aim at pixel centres allow for that. End-to-end smoke test: `test/e2e/smoke.js` runs about 300 checks in one sequential script, and later sections depend on state from earlier ones.
 
 ```bash
 node test/e2e/smoke.js                      # http://localhost:8765/
@@ -84,7 +84,8 @@ When smoke fails, read the **first** `FAIL` line, because later failures often c
   - `keyId(e)` maps keys by the character on the user's layout and falls back to the physical key for non-Latin letters. Digits stay physical.
   - Order in the keydown handler: a focus tooltip swallows the first Esc; dialogs and text fields return; while `drag` is set only Esc (cancel) and Shift (constrain shapes) act; then come modifier shortcuts, then single keys.
   - Arrows nudge the selection only when focus is on the canvas. Toolbars use roving tabindex through `rove()`.
-- **Focus rules:** after a pointer click on a toolbar control, focus is released so single-letter shortcuts work. Keyboard activation keeps focus. The text box doesn't commit when focus moves into `.chrome`. `releaseFocus()` returns focus to an open text box.
+- **Focus rules:** after a pointer click on a toolbar control, focus is released so single-letter shortcuts work. Keyboard activation keeps focus. The text box doesn't commit when focus moves into `.chrome`. `releaseFocus()` returns focus to an open text box. Safari differs twice: a focused element that gets hidden keeps focus (so `hideTextBox()` blurs the text box first), and clicking a button doesn't focus it (so the text box's blur takes the pointerdown target as its `relatedTarget`).
+- **Pinch:** Chrome and Firefox send a trackpad pinch as ctrl+wheel; Safari sends `gesturestart/change/end` (cumulative `scale`), which `pointer.js` cancels and zooms by, ignoring any ctrl+wheel meanwhile.
 
 ## Libraries
 
@@ -109,8 +110,9 @@ When smoke fails, read the **first** `FAIL` line, because later failures often c
 
 ## Constraints and conventions
 
+- Safari is supported from 16.4 (OffscreenCanvas 2D in workers); `build.mjs` targets `chrome110` and `safari16.4`. Safari has no File System Access API, so Open uses the file input and Save downloads. It decodes TIFF itself (UTIF isn't loaded there). `createImageBitmap(…, { premultiplyAlpha: 'none' })` drawn into a canvas gives wrong colours in WebKit: don't use it.
 - `confirmDiscard()` uses the synchronous native `confirm()` on purpose. Open must call `showOpenFilePicker` within the user gesture, and New applies on the synchronous `submit`, not `close`. An async in-app dialog would break both.
-- Saving writes PNG, JPEG or WebP according to the file extension. A PNG with objects also carries them in a private `paNt` chunk (`persist.js`, `Core.withChunk`), so they come back on reopen; one re-encoded by another app (its IDAT hash differs) opens as pixels. Any other format (GIF, BMP) is saved as a PNG copy and never overwritten.
+- Saving writes PNG, JPEG or WebP according to the file extension. A PNG with objects also carries them in a private `paNt` chunk (`persist.js`, `Core.withChunk`), so they come back on reopen; one re-encoded by another app (its IDAT hash differs) opens as pixels. Any other format (GIF, BMP) is saved as a PNG copy and never overwritten. So is a `.webp` where the browser has no WebP encoder (Safari: `toBlob` quietly returns a PNG), detected once in `fileio.js` (`WEBP`).
 - After a main-thread snapshot of `#image` (`createImageBitmap`, or `drawImage` of it into another canvas), call `kickFrame()` (`view.js`). Otherwise the compositor's next frame waits until some canvas changes again (a fill click at 10000² showed nothing for ~300 ms; a bench row only sees it if the input also changes something on screen).
 - Don't call `toBlob()` on a big canvas, or post an `ImageBitmap` to a worker without transferring it: both read the whole thing back on the main thread (posting a copy serializes it). Use `encodeBlob()`, and transfer bitmaps.
 - Drawing part of a GPU-backed `ImageBitmap` or canvas into a `willReadFrequently` (CPU) canvas reads the whole source back every time (~95 ms per call at 10000²). Cut the part out on a GPU canvas and `getImageData` that (`fill-worker.js`). Don't `getImageData` on `#image` itself for a pixel either: copy it into a 1 px canvas.

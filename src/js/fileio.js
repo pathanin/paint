@@ -84,8 +84,10 @@ async function loadFile(file, handle, decoded) {
 }
 
 // Formats we can encode. Anything else (GIF, BMP, ...) is saved as a new PNG rather than overwritten.
-const canWrite = (name) => /\.(png|jpe?g|webp)$/i.test(name);
-const asPng = (name) => Core.saveName(name) || 'untitled.png'; // foo.gif -> foo.png
+// Safari has no WebP encoder (toBlob and convertToBlob quietly return a PNG), so there WebP is one of those.
+const WEBP = (() => { try { return makeCanvas(1, 1).toDataURL('image/webp').startsWith('data:image/webp'); } catch { return false; } })();
+const canWrite = (name) => (WEBP ? /\.(png|jpe?g|webp)$/i : /\.(png|jpe?g)$/i).test(name);
+const asPng = (name) => (Core.saveName(name) || 'untitled.png').replace(/\.webp$/i, '.png'); // foo.gif -> foo.png
 function mimeFor(name) {
   const ext = name.split('.').pop().toLowerCase();
   return ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'webp' ? 'image/webp' : 'image/png';
@@ -164,9 +166,9 @@ async function saveNow(as) {
     if (!h) {
       if (!window.showSaveFilePicker) {
         if (as) { // no save picker here: ask for the name, so Save As differs from Save
-          const typed = Core.saveName(prompt('Save as (PNG, JPEG or WebP; PNG if no extension)', name));
+          const typed = Core.saveName(prompt(`Save as (PNG, JPEG${WEBP ? ' or WebP' : ''}; PNG if no extension)`, name));
           if (!typed) return;
-          name = typed;
+          name = canWrite(typed) ? typed : asPng(typed);
         }
         const a = document.createElement('a');
         a.href = URL.createObjectURL(await encodeFor(name));
@@ -183,7 +185,7 @@ async function saveNow(as) {
         types: [
           { description: 'PNG', accept: { 'image/png': ['.png'] } },
           { description: 'JPEG', accept: { 'image/jpeg': ['.jpg', '.jpeg'] } },
-          { description: 'WebP', accept: { 'image/webp': ['.webp'] } },
+          ...(WEBP ? [{ description: 'WebP', accept: { 'image/webp': ['.webp'] } }] : []),
         ],
       });
     }

@@ -1,9 +1,9 @@
 // Screenshots of key UI states: node test/e2e/shots.js OUT_PREFIX (needs the dev server on :8765).
 // usage: node shot.js out-prefix [scheme]  — screenshots main states
-const { chromium } = require('playwright');
+const { launch } = require('./browser.js');
 (async () => {
   const out = process.argv[2] || 'shot';
-  const browser = await chromium.launch({ channel: 'chrome' });
+  const browser = await launch();
   for (const scheme of ['light', 'dark']) {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2, colorScheme: scheme });
     const errs = [];

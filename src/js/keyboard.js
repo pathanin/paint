@@ -30,9 +30,14 @@ textBox.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { e.preventDefault(); cancelText(); }
   else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commitText(); }
 });
+// Safari doesn't focus a button on click, so the blur it causes has no relatedTarget: the element
+// under the pointerdown (same task as the blur) stands in for it.
+let downOn = null;
+document.addEventListener('pointerdown', (e) => { downOn = e.target; setTimeout(() => { downOn = null; }); }, true);
 textBox.addEventListener('blur', (e) => {
   // Picking a font, size or color in the toolbars restyles the open text instead of committing it.
-  if (e.relatedTarget && e.relatedTarget.closest('.chrome')) return; // toolbar commands commit it themselves when needed
+  const to = e.relatedTarget || downOn;
+  if (to && to.closest && to.closest('.chrome')) return; // toolbar commands commit it themselves when needed
   commitText();
 });
 
@@ -112,7 +117,8 @@ window.addEventListener('keydown', (e) => {
   switch (k) {
     case 'KeyX': swapColors(); break;
     case 'Tab': if (onCanvas && S.tool === 'move' && !e.altKey && cycleObj(e.shiftKey ? -1 : 1)) e.preventDefault(); break;
-    case 'Delete': case 'Backspace': if (!onCanvas) return; e.preventDefault(); if (!deleteObj()) deleteSelection(); break;
+    // preventDefault first: WebKit can take Backspace on a focused button as Back
+    case 'Delete': case 'Backspace': e.preventDefault(); if (!onCanvas) return; if (!deleteObj()) deleteSelection(); break;
     case 'Escape': if (objSel != null || multi.length) selectObj(null); else dropSelection(); break;
     case 'BracketLeft': setSize(Core.stepSize(S.sizes[S.tool], -1)); restyleObj(S.sizes[S.tool] != null ? { size: S.sizes[S.tool] } : {}, 'size'); break;
     case 'BracketRight': setSize(Core.stepSize(S.sizes[S.tool], 1)); restyleObj(S.sizes[S.tool] != null ? { size: S.sizes[S.tool] } : {}, 'size'); break;

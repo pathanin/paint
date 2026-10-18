@@ -2,12 +2,12 @@
 // The pixel tools clear with it, a lift / Delete / grown canvas leave transparency, shapes and text
 // refuse it, and PNG keeps the alpha it makes.
 // usage: node alpha.js [url]   exit 0 = all pass
-const { chromium } = require('playwright');
+const { launch } = require('./browser.js');
 const url = process.argv[2] || 'http://localhost:8765/';
 let fails = 0, passes = 0;
 const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m); } };
 (async () => {
-  const browser = await chromium.launch({ channel: 'chrome' });
+  const browser = await launch();
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     const errs = [];
