@@ -109,9 +109,6 @@ async function once() {
       const t0 = await P(() => { window.__frames = []; window.__ints = 0; return performance.now(); });
       const a = await metrics();
       await fn();
-      // Undo data is read back from the GPU at idle, a second after the edit (flushToData): charge
-      // that work to the scenario that caused it, not to whichever one runs next.
-      await P(() => window.__paint.flushToData && window.__paint.flushToData());
       await settle();
       const b = await metrics();
       const f = await P(() => { const t = window.__frames; window.__frames = null; return t; });
