@@ -627,6 +627,17 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.mouse.click(mx, my); await page.keyboard.type('ok');
     await page.click('[data-cmd="zoomIn"]');
     ok(await P(() => !document.querySelector('#textInput').hidden), 'zoom click keeps text editing open');
+    // ...but a click on toolbar background or a disabled button (nothing to act on) commits it, and
+    // never leaves it open without focus
+    for (const sel of ['#topbar', '[data-cmd="redo"]']) {
+      await P(() => window.__paint.setTool('text'));
+      await page.mouse.click(mx + 40, my + 40); await page.keyboard.type('x');
+      if (sel === '[data-cmd="redo"]') ok(await page.locator(sel).isDisabled(), 'Redo disabled for the commit check');
+      const b = await page.locator(sel).boundingBox();
+      await page.mouse.click(b.x + b.width / 2, sel === '#topbar' ? b.y + b.height - 3 : b.y + b.height / 2); // the topbar's bottom edge: no control there
+      const st = await P(() => [document.querySelector('#textInput').hidden, document.activeElement.id].join());
+      ok(/^true,/.test(st) || st === 'false,textInput', `clicking ${sel} while typing commits the text or keeps it focused: ${st}`);
+    }
     await page.keyboard.press('Escape');
     // --- round 8 review fixes ---
     await page.setViewportSize({ width: 1280, height: 800 });

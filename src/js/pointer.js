@@ -327,6 +327,7 @@ let pinch = null;
 vp.addEventListener('gesturestart', (e) => { e.preventDefault(); pinch = { z: S.zoom }; });
 vp.addEventListener('gesturechange', (e) => { e.preventDefault(); if (pinch) setZoom(pinch.z * e.scale, e.clientX, e.clientY); });
 vp.addEventListener('gestureend', (e) => { e.preventDefault(); pinch = null; });
+window.addEventListener('blur', () => { pinch = null; }); // a gestureend missed while away mustn't block ctrl+wheel
 vp.addEventListener('wheel', (e) => {
   if (!(e.ctrlKey || e.metaKey)) return;
   e.preventDefault(); // trackpad pinch arrives as ctrl+wheel; zoom the image, not the page

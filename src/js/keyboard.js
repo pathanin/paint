@@ -30,10 +30,14 @@ textBox.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { e.preventDefault(); cancelText(); }
   else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commitText(); }
 });
-// Safari doesn't focus a button on click, so the blur it causes has no relatedTarget: the element
-// under the pointerdown (same task as the blur) stands in for it.
+// Safari doesn't focus a button on click, so the blur it causes has no relatedTarget: the control
+// under the pointerdown (same task as the blur) stands in for it. Only a control that acts on the
+// click (releaseFocus() then returns focus to the text); toolbar background or a disabled button commits.
 let downOn = null;
-document.addEventListener('pointerdown', (e) => { downOn = e.target; setTimeout(() => { downOn = null; }); }, true);
+document.addEventListener('pointerdown', (e) => {
+  downOn = e.target.closest && e.target.closest('button:not(:disabled), input:not(:disabled), select:not(:disabled), label');
+  setTimeout(() => { downOn = null; });
+}, true);
 textBox.addEventListener('blur', (e) => {
   // Picking a font, size or color in the toolbars restyles the open text instead of committing it.
   const to = e.relatedTarget || downOn;
