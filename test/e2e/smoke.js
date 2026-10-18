@@ -645,6 +645,29 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       await page.evaluate(() => { const dt = new DataTransfer(); dt.setData('text/plain', 'hello'); window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); });
       await page.waitForTimeout(100);
       ok(/No image on the clipboard/.test(await page.locator('#toast').textContent()), 'paste without image explains');
+      // a paste event's image file is pasted; Safari lists an image the async Clipboard API wrote
+      // but its getAsFile() is null, so that one is read through navigator.clipboard.read()
+      for (const [how, safari] of [['file', false], ['Safari fallback', true]]) {
+        const before = await P(() => [window.__paint.img.width, window.__paint.img.height].join('x'));
+        const got = await page.evaluate(async (safari) => {
+          const c = document.createElement('canvas'); c.width = 7; c.height = 5;
+          const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+          const dt = new DataTransfer();
+          if (safari) {
+            dt.items.add('', 'image/png'); // listed, but not as a file
+            const read = navigator.clipboard.read;
+            navigator.clipboard.read = async () => [new ClipboardItem({ 'image/png': blob })];
+            setTimeout(() => { navigator.clipboard.read = read; }, 500);
+          } else dt.items.add(new File([blob], 'p.png', { type: 'image/png' }));
+          window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+          for (let i = 0; i < 50 && !(window.__paint.sel && window.__paint.sel.float); i++) await new Promise((r) => setTimeout(r, 20));
+          const f = window.__paint.sel && window.__paint.sel.float;
+          return f ? f.width + 'x' + f.height : document.querySelector('#toast').textContent;
+        }, safari);
+        ok(got === '7x5', `paste (${how}) floats the image, got ${got}`);
+        await page.evaluate(() => window.__paint.undo());
+        ok(await P(() => !window.__paint.sel && [window.__paint.img.width, window.__paint.img.height].join('x')) === before, `undo of paste (${how}) restores`);
+      }
       // SVG explains
       await page.setInputFiles('#fileInput', { name: 't.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>') });
       await page.waitForTimeout(200);

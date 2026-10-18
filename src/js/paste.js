@@ -7,13 +7,32 @@ import { updateStatus } from './view.js';
 
 // ---------- paste / drop / unload ----------
 const modalOpen = () => !!document.querySelector('dialog[open]');
+const isImage = (t) => t.startsWith('image/');
+// The pasted image file; undefined when an image is listed but the event won't hand it over
+// (Safari lists one written by the async Clipboard API, but its getAsFile() is null); null when
+// there is none.
+function clipboardImage(dt) {
+  if (!dt) return null;
+  const file = [...dt.files].find((f) => isImage(f.type))
+    || [...dt.items].filter((i) => i.kind === 'file' && isImage(i.type)).map((i) => i.getAsFile()).find(Boolean);
+  if (file) return file;
+  return [...dt.items].some((i) => isImage(i.type)) || dt.types.some(isImage) ? undefined : null;
+}
+async function readClipboardImage() {
+  if (!navigator.clipboard || !navigator.clipboard.read) throw new Error('the clipboard image couldn’t be read');
+  for (const it of await navigator.clipboard.read()) {
+    const t = it.types.find(isImage);
+    if (t) return it.getType(t);
+  }
+  throw new Error('the clipboard image couldn’t be read');
+}
 window.addEventListener('paste', async (e) => {
   if (isTyping(e.target) || modalOpen()) return;
-  const item = [...(e.clipboardData ? e.clipboardData.items : [])].find((i) => i.type.startsWith('image/'));
-  if (!item) { flash('No image on the clipboard'); return; }
+  const file = clipboardImage(e.clipboardData);
+  if (file === null) { flash('No image on the clipboard'); return; }
   e.preventDefault();
   try {
-    const bmp = await createImageBitmap(item.getAsFile());
+    const bmp = await createImageBitmap(file || await readClipboardImage());
     pasteImage(bmp);
     bmp.close();
   } catch (err) {
