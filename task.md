@@ -7,13 +7,11 @@ Open work, settled decisions, and measured gotchas. Read before changing UX beha
 All of this is done and merged to `master`:
 
 - UI polish: 15 review rounds (2026-10-13); the last two found nothing.
-- Performance: undo on the GPU with idle readback, fill in a worker, crisp marching ants, smooth brush. Measure with `test/e2e/bench.js` + `bench-compare.js`.
+- Performance: fill in a worker, crisp marching ants, smooth brush. Measure with `test/e2e/bench.js` + `bench-compare.js`.
 - Objects: line, rect and ellipse are editable shapes, with a Move tool (V).
-
-In review (PR 14, branch `total-objects-plan`):
-
-- **Total objects:** every mark (strokes, eraser, fill, text, images, the opened picture) is an object, with tldraw-style z-keys, an R-tree and diff history over `#image` as a document-resolution cache of the scene. See `docs/total-objects.md`. The user took all ten recommended defaults (2026-10-17); Phase 0's measurements are below.
 - Build step (esbuild), installable PWA, GitHub Pages deploy, libraries bundled from npm and lazy-loaded.
+- **Total objects** (PR 14): every mark (strokes, eraser, fill, text, images, the opened picture) is an object, with tldraw-style z-keys, an R-tree and diff history over `#image` as a document-resolution cache of the scene. See `docs/total-objects.md`. The user took all ten recommended defaults (2026-10-17); Phase 0's measurements are below. Undo tiles and the idle readback are gone.
+- **INP at 10000²** (PR 15): scene repaint on a pool of scratch tiles behind a GPU fence (nudge 864 → 88 ms), fill readback in its worker (312 → 32 ms), copy and save encoded in `blob-worker.js` (152–160 → 32 ms), and bench `inp …` rows (Event Timing with real input). The `second fill click (with damage)` row was checked only on a software GPU (inp200 1 without `kickFrame()`, 0 with); not yet on the M4.
 
 ## Open
 
@@ -121,4 +119,6 @@ In review (PR 14, branch `total-objects-plan`):
 - A DOM write inside `pointermove` forces a layout in the hit test.
 - Comparing against a `style` read-back never matches for fractional px; cache the last value written.
 - `WeakMap` has no `.size`.
+- `createImageBitmap(#image)` leaves GPU work that only a frame with a changed canvas sends off: call `kickFrame()` after it, or the next frame waits ~310 ms. Only a second or later fill shows it, and only if the click also changes something on screen.
+- `toBlob()` on a 10000² GPU canvas reads it all back on the main thread inside the call (~180 ms); `encodeBlob()` does it in a worker.
 - Bench: `task` varies ±15% between runs. The `10000 pencil stroke` long-frame count swings 1–80 depending on earlier scenarios; compare against a same-filter master run.

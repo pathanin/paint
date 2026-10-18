@@ -35,6 +35,7 @@ node test/e2e/pwa.js                        # installable app: manifest, offline
 node test/e2e/parity.js http://localhost:8766/   # same session on a master build (served on :8766) and this one: pixels equal
                                             # after every step (since the switch: --flatten-ref)
 node test/e2e/bench.js --json /tmp/pw/a.json   # perf benchmark (3 runs, medians)
+node test/e2e/bench.js --only "inp 10000x10000 fill"   # one row; an inp row's filter must start with "inp <w>x<h>", or it's skipped silently
 node test/e2e/bench-compare.js /tmp/pw/before.json /tmp/pw/a.json   # deltas; exit 1 on a regression
 ```
 
