@@ -116,6 +116,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     ok(await P(() => document.activeElement.id) === 'textInput', 'focus back in text box after mouse font change');
     await page.keyboard.press('Enter');
     ok(await P(() => document.querySelector('#textInput').hidden), 'Enter commits text');
+    ok(await P(() => document.activeElement.id !== 'textInput'), 'focus leaves the text box once it is committed (Safari keeps focus on hidden elements)');
     // a canvas past the browser's cap (iPadOS: 67 MP) is refused, not opened blank; every engine holds 67 MP
     ok(await P(() => [window.__paint.canvasFits(8192, 8192), window.__paint.canvasFits(10000, 10000), window.__paint.canvasFits(20000, 20000)].join()) === 'true,true,false', 'canvasFits: 67 MP and 100 MP fit, 400 MP (over every engine\'s cap) doesn\'t');
     // resize: too large keeps dialog open with an error
@@ -205,13 +206,14 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
         const z0 = Z(), out = {};
         out.wheelPrevented = wheel(); out.wheel = Z() / z0;
         window.__paint.setZoom(1);
-        out.startPrevented = g('gesturestart', 1); g('gesturechange', 1.5); out.mid = Z(); wheel(); out.afterWheel = Z(); g('gesturechange', 2);
-        out.endPrevented = g('gestureend', 2); out.end = Z();
+        out.startPrevented = g('gesturestart', 1); out.changePrevented = g('gesturechange', 1.5); out.mid = Z(); wheel(); out.afterWheel = Z(); out.changePrevented = g('gesturechange', 2) && out.changePrevented;
+        out.endPrevented = g('gestureend', 2); out.end = Z(); wheel(); out.wheelAfterEnd = Z();
         window.__paint.setZoom(1);
         return out;
       });
       ok(pz.wheelPrevented && pz.wheel > 1.2, 'ctrl+wheel zooms in, not the page: ' + JSON.stringify(pz));
-      ok(pz.startPrevented && pz.endPrevented && pz.mid === 1.5 && pz.afterWheel === 1.5 && pz.end === 2, 'a gesture pinch zooms by its scale, and ctrl+wheel meanwhile adds nothing: ' + JSON.stringify(pz));
+      ok(pz.wheelAfterEnd > 2.2, 'ctrl+wheel zooms again after the gesture ends: ' + JSON.stringify(pz));
+      ok(pz.startPrevented && pz.changePrevented && pz.endPrevented && pz.mid === 1.5 && pz.afterWheel === 1.5 && pz.end === 2, 'a gesture pinch zooms by its scale, and ctrl+wheel meanwhile adds nothing: ' + JSON.stringify(pz));
     }
     // download-save feedback
     await page.evaluate(() => { delete window.showSaveFilePicker; window.showSaveFilePicker = undefined; });
@@ -242,7 +244,8 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       for (const [typed, want, magic] of [['photo.jpg', 'photo.jpg', 'ffd8ff'], ['pic.webp', webp ? 'pic.webp' : 'pic.png', webp ? '52494646' : '89504e47']]) {
         await P((t) => { window.prompt = () => t; }, typed);
         const [dl] = await Promise.all([page.waitForEvent('download'), page.keyboard.press('Meta+Shift+KeyS')]); await saved();
-        const head = require('fs').readFileSync(await dl.path()).subarray(0, magic.length / 2).toString('hex');
+        const bytes = require('fs').readFileSync(await dl.path()), head = bytes.subarray(0, magic.length / 2).toString('hex');
+        if (magic === '52494646') ok(bytes.subarray(8, 12).toString() === 'WEBP', 'the .webp is a WebP file (RIFF….WEBP)');
         ok(dl.suggestedFilename() === want && head === magic && await P(() => window.__paint.S.fileName) === want, `Save As ${typed} downloads ${dl.suggestedFilename()} starting ${head} (want ${want}, ${magic})`);
       }
       // round 12: a dot isn't an extension; names are sanitised so title and download agree; prompt says what's accepted
@@ -832,7 +835,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await P(() => { window.__paint.setTool('select'); window.__paint.selectAll(); });
     await page.focus('#palette button'); ok(await P(() => document.activeElement.matches('#palette button')), 'swatch focused for the Delete check');
     await page.keyboard.press('Backspace'); await page.keyboard.press('Delete'); await page.waitForTimeout(50);
-    ok(await P(() => !!window.__paint.sel), 'Backspace/Delete on a focused swatch keep the selection');
+    ok(await P(() => !!window.__paint && !!window.__paint.sel) && page.url() === url, 'Backspace/Delete on a focused swatch keep the selection and the page (WebKit can take Backspace as Back)');
     await P(() => document.activeElement.blur()); await page.keyboard.press('Delete'); await page.waitForTimeout(50); // as after a pointer click
     ok(await P(() => !window.__paint.sel), 'Delete with focus released still clears the selection');
     await P(() => document.querySelector('#viewport').focus()); await page.keyboard.press('Escape');
@@ -950,6 +953,27 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       ok(await Q(() => window.__paint.drag === null && window.__paint.hist.undoStack.length) === n0 + 1, 'zoom mid-stroke: one undo step');
       ok(await px(60, 300) < 128 && await px(118, 300) < 128, 'zoom mid-stroke: stroke drawn start to end');
       await bp.close();
+    }
+    // without CSS field-sizing (Safari < 26.2) the text box is sized to its text in JS
+    {
+      const fp = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+      await fp.addInitScript(() => {
+        const sup = CSS.supports;
+        CSS.supports = (a, v) => (/field-sizing/.test(a) ? false : sup.call(CSS, a, v));
+        document.addEventListener('DOMContentLoaded', () => document.head.insertAdjacentHTML('beforeend', '<style>#textInput{field-sizing:fixed!important}</style>'));
+      });
+      await fp.goto(url); await fp.waitForTimeout(200);
+      const size = () => fp.evaluate(() => { const t = document.querySelector('#textInput'); return { w: t.offsetWidth, h: t.offsetHeight, clipped: t.scrollWidth > t.clientWidth + 1 || t.scrollHeight > t.clientHeight + 1 }; });
+      await fp.keyboard.press('KeyT');
+      const ob = await fp.locator('#overlay').boundingBox(); await fp.mouse.click(ob.x + 80, ob.y + 80);
+      const s0 = await size(); await fp.keyboard.type('Hello wide world'); const s1 = await size();
+      await fp.keyboard.press('Shift+Enter'); await fp.keyboard.type('two'); const s2 = await size();
+      ok(s1.w > s0.w * 3 && s2.h > s1.h * 1.5 && !s1.clipped && !s2.clipped, 'fallback sizing: the text box grows with its text: ' + JSON.stringify([s0, s1, s2]));
+      await fp.keyboard.press('Enter');
+      await fp.mouse.click(ob.x + 85, ob.y + 85); // reopen the text object
+      const s3 = await size();
+      ok(await fp.evaluate(() => !document.querySelector('#textInput').hidden) && s3.w >= s1.w && s3.h >= s2.h && !s3.clipped, 'fallback sizing: a reopened text object gets a box that fits it: ' + JSON.stringify(s3));
+      await fp.close();
     }
     // non-Mac labels
     const wpage = await browser.newPage({ viewport: { width: 1280, height: 800 } });

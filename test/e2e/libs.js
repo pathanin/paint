@@ -137,11 +137,14 @@ function hugeTiff() {
     // ---- open TIFF with UTIF
     await P(() => window.__paint.resizeDoc(321, 123, 'canvas', 'tl')); // not 4 × 2, so an open shows
     for (const [f, want] of [['rgba-raw.tif', RGBA], ['rgba-deflate.tif', RGBA], ['rgb-lzw.tif', RGB]]) {
+      await P(() => { window.__paint.used.open = null; });
       await page.setInputFiles('#fileInput', path.join(FIX, f));
       await page.waitForFunction((f) => window.__paint.S.fileName === f || /TIFF/.test(document.querySelector('#toast').textContent), f, { timeout: 8000 }).catch(() => {});
       const got = await P(() => { const p = window.__paint; return { name: p.S.fileName, w: p.img.width, h: p.img.height, px: [...p.img.getContext('2d').getImageData(0, 0, p.img.width, p.img.height).data].join(',') }; });
       ok(got.name === f && got.w === 4 && got.h === 2, `${f} opens at 4 × 2 (${got.name} ${got.w}×${got.h})`);
       ok(got.px === flat(want), `${f} pixels exact: ${got.px.slice(0, 80)}`);
+      const dec = await P(() => window.__paint.used.open);
+      ok(dec === (engine === 'webkit' ? null : 'utif'), `${f} decoded by ${dec || 'the browser'} (WebKit reads TIFF itself, Chrome needs UTIF)`);
     }
     {
       // Saving a TIFF writes a PNG copy: there's no TIFF encoder.
@@ -373,7 +376,7 @@ function hugeTiff() {
     const bp = await bctx.newPage();
     const berrs = [];
     bp.on('pageerror', (e) => berrs.push(e.message));
-    bp.on('dialog', (d) => d.accept()); // WebKit opens the TIFF itself, so the discard prompt comes up
+    if (engine === 'webkit') bp.on('dialog', (d) => d.accept()); // WebKit opens the TIFF itself, so the discard prompt comes up
     await bp.goto(url);
     await bp.waitForFunction(() => window.__paint);
     await bp.evaluate(() => { const p = window.__paint; p.newDoc(300, 200); p.fitZoom(false); });
