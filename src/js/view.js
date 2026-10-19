@@ -134,7 +134,9 @@ function render() {
   rafPending = false;
   updateRing(hoverPt);
   const hit = !drag && hoverPt && hasObjs() ? objTarget(hoverPt) : null;
-  if (!drag) setProp(ov.style, 'cursor', objCursor(hit) || (S.tool === 'move' ? 'grab' : '') || (S.tool === 'select' && sel && hoverPt && inside(hoverPt, sel) ? 'move' : ''));
+  // The Move tool shows the arrow its button shows (the stylesheet's default) and the move cursor over
+  // what a drag would move, as in Figma and Photoshop; the hand is only for panning (#stage.panning).
+  if (!drag) setProp(ov.style, 'cursor', objCursor(hit) || (S.tool === 'select' && sel && hoverPt && inside(hoverPt, sel) ? 'move' : ''));
   // The Move tool outlines the shape a click would pick (not the selected one: it has its own).
   placeObjHover(hit && !hit.h && (hit.erase || (S.tool === 'move' && hit.o.id !== objSel)) ? hit.o : null); // ⌥ + Eraser: what a click would delete
   if (drag && drag.t === 'canvas') showGhost(drag);

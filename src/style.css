@@ -238,8 +238,9 @@ button.labeled { padding: 0 9px 0 7px; }
 #overlay { touch-action: none; cursor: crosshair; }
 #stage[data-tool=text] #overlay { cursor: text; }
 #stage[data-tool=move] #overlay { cursor: default; }
-#stage.panning #overlay { cursor: grab; }
-#stage.panning.dragging #overlay { cursor: grabbing; }
+/* Over render()'s inline cursor (move, resize): while Space is held or a pan is under way, it's the hand. */
+#stage.panning #overlay { cursor: grab !important; }
+#stage.panning.dragging #overlay { cursor: grabbing !important; }
 #ring {
   position: absolute; z-index: 1; left: 0; top: 0;
   pointer-events: none;

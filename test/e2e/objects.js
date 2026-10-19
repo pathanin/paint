@@ -824,6 +824,40 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       ok(r33.mid && r33.after && r33.kinds === tool && r33.n > 500, `a long ${tool} stroke: cache == fresh render while drawn and once joined: ` + JSON.stringify(r33));
     }
 
+    // ---- 34. Move tool cursors: the arrow its button shows, move over an object, the hand only for panning ----
+    await P(() => { const p = window.__paint; p.newDoc(300, 200); p.setZoom(2); const v = document.querySelector('#viewport'); v.scrollLeft = v.scrollTop = 0; });
+    await frame();
+    await page.keyboard.press('KeyR');
+    await drag([[20, 20], [100, 80]]);
+    await page.keyboard.press('KeyV');
+    const cur = async () => { await frame(); return P(() => getComputedStyle(document.querySelector('#overlay')).cursor); };
+    const hover = async (ix, iy) => { const [x, y] = await at(ix, iy); await page.mouse.move(x, y); return cur(); };
+    ok(await hover(200, 150) === 'default', 'Move tool over empty canvas: the arrow, not a hand');
+    ok(await hover(20, 35) === 'move', 'Move tool over an object: the move cursor');
+    await page.mouse.down();
+    { const [x, y] = await at(40, 45); await page.mouse.move(x, y, { steps: 4 }); }
+    ok(await cur() === 'move', 'dragging an object keeps the move cursor');
+    await page.mouse.up();
+    ok(await hover(200, 150) === 'default', 'back to the arrow once off it');
+    await page.mouse.down();
+    { const [x, y] = await at(250, 180); await page.mouse.move(x, y, { steps: 4 }); }
+    ok(await cur() === 'default', 'a box-select drag keeps the arrow');
+    await page.mouse.up();
+    await hover(40, 45);
+    await page.keyboard.down('Space');
+    ok(await cur() === 'grab', 'Space held over an object: the open hand, not move');
+    await page.mouse.down();
+    { const [x, y] = await at(60, 60); await page.mouse.move(x, y, { steps: 4 }); }
+    ok(await cur() === 'grabbing', 'Space-dragging: the closed hand');
+    await page.mouse.up();
+    ok(await cur() === 'grab', 'released, Space still held: the open hand again');
+    await page.keyboard.up('Space');
+    ok(await hover(200, 150) === 'default', 'Space released: the arrow again');
+    await page.mouse.down({ button: 'middle' });
+    ok(await cur() === 'grabbing', 'a middle-button pan: the closed hand');
+    await page.mouse.up({ button: 'middle' });
+    ok(await hover(200, 150) === 'default', 'after the middle-button pan: the arrow');
+
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));
   } catch (e) {
     fails++; console.log('FAIL: threw', e);
