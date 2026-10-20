@@ -467,40 +467,87 @@
     return Math.abs(deg) % 180 === 90 ? { w: h, h: w } : { w, h };
   }
 
-  // Smoothed freehand path for the brush. Two ideas combined:
+  // Smoothed freehand path for the brush. Three stages:
   // - lazy-brush stabiliser: the brush stays put while the pointer is within `radius`, then is pulled
   //   along by (distance - radius). Position-based, so it doesn't depend on the event rate or drift when idle.
+  // - with span > 0, the brush's path is resampled every `step` and each point is replaced by a triangular
+  //   average of the span points on either side. The lazy brush alone keeps most of a mouse's whole-pixel
+  //   staircase (it filters over `radius`, the staircase repeats every 1 / slope px), so a shallow line
+  //   came out faceted. Resampling makes the window a fixed length, whatever the event rate. The window
+  //   shrinks to fit near either end, so the ends stay put. Without span, `step` is the minimum spacing.
   // - midpoint quadratic chain (as tldraw renders freehand): curves run through the midpoints of
   //   consecutive points, with the points as control points, so there are no polyline corners.
   // add() returns segments that will never change (commit them); tail() is the rest of the path if the
   // stroke ended at q now, and finish() returns the same. The path starts at the pointerdown point and
-  // ends exactly at the release point; in between it stays within radius (+ minStep) of every sample.
+  // ends exactly at the release point; in between it stays within radius (+ step, + the average's pull
+  // on a bend) of every sample.
   // Segments are { a, c, b }: a quadratic from a to b with control c, or a straight line when c is null.
   const mid = (p, q) => ({ x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 });
   class Stroke {
-    constructor(p, radius = 0, minStep = 0) {
-      this.radius = radius; this.minStep = minStep;
-      this.pts = [{ x: p.x, y: p.y }];
+    constructor(p, radius = 0, step = 0, span = 0) {
+      this.radius = radius; this.step = step; this.span = step > 0 ? span : 0;
       this.brush = { x: p.x, y: p.y };
+      this.raw = [{ x: p.x, y: p.y }]; // the brush's path (resampled when span > 0)
+      this.left = 0; // with span: how far the brush has gone past the last resampled point
+      this.pts = this.span ? [] : this.raw; // the chain's points: averages, settled once their window is complete
     }
     // Segment k of the chain over points X: ends at the midpoint of X[k-1] and X[k].
     static seg(X, k) {
       return { a: k === 2 ? X[0] : mid(X[k - 2], X[k - 1]), c: X[k - 1], b: mid(X[k - 1], X[k]) };
     }
+    // Append points to R every h along from → to, where the last one lies `left` before from. Returns the new left.
+    static walk(R, from, to, left, h) {
+      const dx = to.x - from.x, dy = to.y - from.y, d = Math.hypot(dx, dy);
+      let t = h - left;
+      for (; t <= d; t += h) R.push({ x: from.x + dx * t / d, y: from.y + dy * t / d });
+      return d - (t - h);
+    }
+    // Triangular average of R around k, over at most span points each side, shrunk to fit in R[0..last].
+    avg(R, k, last) {
+      const n = Math.min(this.span, k, last - k);
+      if (!n) return R[k];
+      let x = 0, y = 0, w = 0;
+      for (let j = -n; j <= n; j++) {
+        const wt = n + 1 - Math.abs(j);
+        x += R[k + j].x * wt; y += R[k + j].y * wt; w += wt;
+      }
+      return { x: x / w, y: y / w };
+    }
     add(q) {
       const b = this.brush, dx = q.x - b.x, dy = q.y - b.y, d = Math.hypot(dx, dy);
       if (d <= this.radius) return [];
-      const k = (d - this.radius) / d;
+      const k = (d - this.radius) / d, from = { x: b.x, y: b.y };
       b.x += dx * k; b.y += dy * k;
-      const last = this.pts[this.pts.length - 1];
+      const P = this.pts, out = [];
+      if (this.span) {
+        this.left = Stroke.walk(this.raw, from, b, this.left, this.step);
+        while (P.length + this.span < this.raw.length) {
+          P.push(this.avg(this.raw, P.length, Infinity));
+          if (P.length >= 3) out.push(Stroke.seg(P, P.length - 1));
+        }
+        return out;
+      }
+      const last = P[P.length - 1];
       const step = Math.hypot(b.x - last.x, b.y - last.y);
-      if (!step || step < this.minStep) return [];
-      this.pts.push({ x: b.x, y: b.y });
-      return this.pts.length >= 3 ? [Stroke.seg(this.pts, this.pts.length - 1)] : [];
+      if (!step || step < this.step) return [];
+      P.push({ x: b.x, y: b.y });
+      return P.length >= 3 ? [Stroke.seg(P, P.length - 1)] : [];
     }
     tail(q) {
-      const P = this.pts, last = P[P.length - 1];
-      const X = q.x === last.x && q.y === last.y ? P : P.concat({ x: q.x, y: q.y });
+      const P = this.pts;
+      let X;
+      if (this.span) {
+        // The brush's path as if it went straight to q now; its unsettled averages close in on q.
+        const R = this.raw.slice();
+        Stroke.walk(R, this.brush, q, this.left, this.step);
+        const end = R[R.length - 1];
+        if (end.x !== q.x || end.y !== q.y) R.push({ x: q.x, y: q.y });
+        X = P.slice();
+        for (let k = P.length; k < R.length; k++) X.push(this.avg(R, k, R.length - 1));
+      } else {
+        const last = P[P.length - 1];
+        X = q.x === last.x && q.y === last.y ? P : P.concat({ x: q.x, y: q.y });
+      }
       const m = X.length - 1;
       if (m === 0) return [];
       const out = [];

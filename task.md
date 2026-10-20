@@ -101,7 +101,7 @@ All of this is done and merged to `master`:
 - Help (`?`) has three columns.
 
 **Painting**
-- Brush smoothing: lazy-brush radius (screen px) + midpoint quadratic curves, live tail on the overlay, ends exactly at release. Default 2, 0 = off. Pencil and eraser stay pixel-exact.
+- Brush smoothing: lazy-brush radius (screen px), then a triangular average along the path (points 2 screen px apart, 3 × smoothing either side, shrinking at the ends) + midpoint quadratic curves, live tail on the overlay, ends exactly at release. The average is what removes a mouse's whole-pixel staircase on shallow lines: the lazy brush alone filters over only its radius. Default 2, 0 = off. Pencil and eraser stay pixel-exact.
 - Brush stays anti-aliased and is never inked twice at its edges (`test/e2e/filledge.js`): a stroke is one object, drawn as one path per 512² tile of the scene cache, live as it grows (on `master`: each batch redrawn from the stroke's undo tiles as one clipped path).
 - Fill recolours the anti-aliased ring around the region (`Core.fillEdge`, up to 8 px) so no fringe is left. Pixels that aren't a clean blend are left untouched.
 - Transparent is a colour value (`CLEAR`) either slot can hold, from a tall checkered chip in an 11th palette column (user's call, 2026-10-16, over a per-document mode or always erasing like Paint.NET). Pixel tools clear with it; Delete, a lift and a grown canvas leave it; shapes and text refuse it; a shape fill in it is no fill. Default colour 2 stays white.
