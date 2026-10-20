@@ -140,7 +140,7 @@ ov.addEventListener('pointerdown', (e) => {
     case 'brush': {
       // Smoothing radius is in screen px (2 per step), fixed for the stroke even if the zoom changes.
       const o = { t, segs: [{ a: p, c: null, b: { x: p.x + 1e-3, y: p.y } }], color, size: S.sizes.brush }; // the dot under the pointer (a 0-length line draws nothing)
-      setDrag({ t, color, size: o.size, ptr: p, o, stroke: new Core.Stroke(p, S.smoothing * 2 / S.zoom, 0.5 / S.zoom) });
+      setDrag({ t, color, size: o.size, ptr: p, o, stroke: brushStroke(p) });
       setLive(o);
       break;
     }
@@ -236,6 +236,13 @@ function eraseAlong(d, p) {
   }
   d.last = p;
   return hit;
+}
+
+// Smoothing n (screen px, so it feels the same at every zoom): a lazy radius of 2n, then an average over
+// 6n either side, on points 2 px apart. 0 follows every sample (≥ 0.5 px apart).
+function brushStroke(p) {
+  const n = S.smoothing;
+  return n ? new Core.Stroke(p, 2 * n / S.zoom, 2 / S.zoom, 3 * n) : new Core.Stroke(p, 0, 0.5 / S.zoom);
 }
 
 // Settled brush segments join the live stroke; only their boxes are repainted.
