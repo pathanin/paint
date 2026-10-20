@@ -751,6 +751,52 @@ test('Stroke lazy step moves the brush by distance − radius (lazy-brush rule)'
   assert.deepEqual(s.brush, { x: 10, y: 0 });
 });
 
+// A shallow line as a mouse reports it: whole pixels, so a staircase that repeats every 40 px.
+const stair = Array.from({ length: 400 }, (_, i) => ({ x: 20 + i, y: Math.round(50 + i / 40) }));
+const offLine = (segs) => Math.max(...flatten(segs).filter((p) => p.x > 60 && p.x < 380).map((p) => Math.abs(p.y - (50 + (p.x - 20) / 40))));
+function runSpan(samples, radius, step, span) {
+  const s = new Core.Stroke(samples[0], radius, step, span);
+  const segs = [];
+  for (const q of samples.slice(1)) segs.push(...s.add(q));
+  return segs.concat(s.finish(samples[samples.length - 1]));
+}
+
+test('Stroke span averages away a mouse staircase the lazy brush alone keeps', () => {
+  const lazy = offLine(run(stair, 4, 0.5)), avg = offLine(runSpan(stair, 4, 2, 6));
+  assert.ok(lazy > 0.3, 'lazy brush keeps the steps: ' + lazy);
+  assert.ok(avg < lazy * 0.6, `span 6: ${avg} vs ${lazy}`);
+  assert.ok(offLine(runSpan(stair, 4, 2, 10)) < avg, 'a wider span is smoother');
+});
+
+test('Stroke span keeps the ends, continuity and tail = finish', () => {
+  const segs = runSpan(wobble, 4, 2, 6);
+  assert.deepEqual(segs[0].a, wobble[0]);
+  assert.deepEqual(segs[segs.length - 1].b, wobble[wobble.length - 1]);
+  for (let i = 1; i < segs.length; i++) assert.ok(Math.hypot(segs[i].a.x - segs[i - 1].b.x, segs[i].a.y - segs[i - 1].b.y) < 1e-9, 'gap at ' + i);
+  const s = new Core.Stroke(wobble[0], 4, 2, 6);
+  for (const q of wobble.slice(1, 200)) s.add(q);
+  assert.deepEqual(s.tail(wobble[199]), s.tail(wobble[199]));
+  assert.deepEqual(s.finish(wobble[199]), s.tail(wobble[199]));
+});
+
+test('Stroke span averages the same whatever the event rate', () => {
+  // The same path sampled every 0.25 px and every 4 px settles on (nearly) the same curve (radius 0:
+  // the lazy brush's own pull depends a little on how far apart the samples are).
+  const at = (t) => ({ x: 20 + t, y: 80 + 30 * Math.sin(t / 40) });
+  const fine = Array.from({ length: 1601 }, (_, i) => at(i / 4)), coarse = Array.from({ length: 101 }, (_, i) => at(i * 4));
+  const a = flatten(runSpan(fine, 0, 2, 6)), b = flatten(runSpan(coarse, 0, 2, 6));
+  assert.ok(Math.max(...a.filter((_, i) => i % 9 === 0).map((p) => distToPolyline(p, b))) < 0.05);
+});
+
+test('Stroke span: clicks and short moves still draw from the start to the release point', () => {
+  const s = new Core.Stroke({ x: 5, y: 5 }, 4, 2, 6);
+  assert.deepEqual(s.add({ x: 5, y: 5 }), []);
+  assert.deepEqual(s.finish({ x: 5, y: 5 }), []);
+  const segs = runSpan([{ x: 5, y: 5 }, { x: 8, y: 5 }, { x: 13, y: 6 }], 4, 2, 6);
+  assert.deepEqual(segs[0].a, { x: 5, y: 5 });
+  assert.deepEqual(segs[segs.length - 1].b, { x: 13, y: 6 });
+});
+
 test('History.dropLost drops lost entries and everything only reachable through them', () => {
   const dropped = [];
   const h = new Core.History({ onDrop: (e) => dropped.push(e.id) });
