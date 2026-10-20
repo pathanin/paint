@@ -134,8 +134,9 @@ function drawCells(g, a, lb) {
   let list = a.cells;
   if (lb) {
     list = [];
-    const i0 = Math.max(0, Math.floor((lb.x + a.sx) / a.C)), i1 = Math.min(a.cols - 1, Math.floor((lb.x + lb.w + a.sx) / a.C));
-    const j0 = Math.max(0, Math.floor((lb.y + a.sy) / a.C)), j1 = Math.min(a.rows - 1, Math.floor((lb.y + lb.h + a.sy) / a.C));
+    // the cells lb overlaps: its far edges are exclusive (a tile that ends where a cell starts doesn't meet it)
+    const i0 = Math.max(0, Math.floor((lb.x + a.sx) / a.C)), i1 = Math.min(a.cols - 1, Math.ceil((lb.x + lb.w + a.sx) / a.C) - 1);
+    const j0 = Math.max(0, Math.floor((lb.y + a.sy) / a.C)), j1 = Math.min(a.rows - 1, Math.ceil((lb.y + lb.h + a.sy) / a.C) - 1);
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const c = a.at.get(j * a.cols + i); if (c) list.push(c); }
   }
   const fill = (p, style, op) => { g.globalCompositeOperation = op; g.fillStyle = style; g.fill(p); };

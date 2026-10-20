@@ -818,6 +818,22 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await frame();
     ok(await chash() === seen32b, 'after its canvas comes back blank, the cell is rebuilt from its pixels and repaints exactly');
 
+    // ---- 32b. a tile repaint draws only the cells of a fill that the tile meets: one, for a fill that hasn't moved ----
+    const cells32 = await P(async () => {
+      const p = window.__paint; p.newDoc(2048, 1024); p.fitZoom(false); p.S.pristine = false;
+      p.setTool('fill'); p.S.tolerance = 0; p.S.primary = '#22b14c';
+      return true;
+    });
+    await page.mouse.click(...await at(3, 3)); await P(() => window.__paint.filling); await frame();
+    const fills32 = await P(() => {
+      const p = window.__paint, proto = CanvasRenderingContext2D.prototype, fill = proto.fill;
+      let n = 0;
+      proto.fill = function (...a) { if (this.fillStyle === '#22b14c') n++; return fill.apply(this, a); };
+      try { p.markAll(); p.flushRedraw(); } finally { proto.fill = fill; }
+      return { n, cells: p.userObjs.at(-1).asset.cells.length };
+    });
+    ok(cells32 && fills32.cells === 8 && fills32.n === 8, 'a whole-image fill is one cell per tile, and repainting the 8 tiles fills 8 times: ' + JSON.stringify(fills32));
+
     // ---- 33. a long stroke, drawn live piece by piece: the cache equals the scene drawn fresh, during and after ----
     for (const tool of ['pencil', 'brush', 'eraser']) {
       const r33 = await P(async (tool) => {
