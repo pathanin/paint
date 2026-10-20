@@ -1,5 +1,6 @@
 import Core from './core.js';
-import { $, clamp, makeCanvas, ring, setAttr, setData, stage, toHex } from './dom.js';
+import { drawCells } from './assets.js';
+import { $, clamp, pixelAt, ring, setAttr, setData, stage, toHex } from './dom.js';
 import { composite, restyleObj, selObj, selectObj } from './objects.js';
 import { dropSelection } from './selection.js';
 import { S, isClear } from './state.js';
@@ -60,11 +61,13 @@ function setColor(which, hex, key) {
 }
 
 // Pencil and eraser: square stamps along the Bresenham line between each pair of points, as one
-// path (whole-pixel rects in one opaque colour: the same pixels as stamping them one by one). In
-// Transparent they clear what is under them instead, exactly (whole pixels).
+// path (whole-pixel rects in one opaque colour: the same pixels as stamping them one by one; each run
+// of a line's row or column is one rect, Core.stampRects). In Transparent they clear what is under
+// them instead, exactly (whole pixels). Whole-pixel rects come out the same whatever else is drawn
+// with them, so the live stroke can be drawn a piece at a time (scene.js).
 // Piece i (an even index into pts) is the line from that point to the next; a lone point is piece 0.
-// r: only the pieces whose stamps reach r (a tile being repainted); idx: just these pieces (the live
-// stroke's pieces in a tile, scene.js), which are the same ones.
+// r: only the pieces whose stamps reach r (a tile being repainted); idx: just these pieces (new pieces
+// of the live stroke in a tile, scene.js).
 const meets = (b, r) => b.x < r.x + r.w && b.x + b.w > r.x && b.y < r.y + r.h && b.y + b.h > r.y;
 const stampEnd = (pts, i) => (i + 2 < pts.length ? i + 2 : i); // the lone point is a line to itself
 function stampBox(o, i) { // what piece i's stamps cover
@@ -73,12 +76,12 @@ function stampBox(o, i) { // what piece i's stamps cover
 }
 const stampPieces = (o) => (o.pts.length > 2 ? o.pts.length - 2 : 1); // pieces are i = 0, 2, ... below this
 function drawStamps(c, o, r, idx) {
-  const off = Math.floor(o.size / 2), s = o.size, pts = o.pts;
+  const pts = o.pts, rect = (x, y, w, h) => c.rect(x, y, w, h);
   c.save();
   if (isClear(o.color)) c.globalCompositeOperation = 'destination-out';
   c.fillStyle = isClear(o.color) ? '#000' : o.color;
   c.beginPath();
-  const piece = (i) => { const j = stampEnd(pts, i); for (const [x, y] of Core.line(pts[i], pts[i + 1], pts[j], pts[j + 1])) c.rect(x - off, y - off, s, s); };
+  const piece = (i) => { const j = stampEnd(pts, i); Core.stampRects(pts[i], pts[i + 1], pts[j], pts[j + 1], o.size, rect); };
   if (idx) for (const i of idx) piece(i);
   else for (let i = 0, n = stampPieces(o); i < n; i += 2) if (!r || meets(stampBox(o, i), r)) piece(i);
   c.fill();
@@ -129,22 +132,24 @@ function drawFramed(c, o, r) {
     c.fillStyle = o.color;
     c.textBaseline = 'alphabetic';
     o.lines.forEach((ln, i) => c.fillText(ln, 0, i * o.fs * 1.2 + o.base));
-  } else {
-    const bd = o.asset.banded;
-    if (bd && r) { // a tile: only the bands (in the fill's own rows, through m) that it overlaps
-      const m = o.m || [1, 0, 0, 1], det = m[0] * m[3] - m[1] * m[2], ys = [];
-      for (const [px, py] of [[r.x, r.y], [r.x + r.w, r.y], [r.x, r.y + r.h], [r.x + r.w, r.y + r.h]]) ys.push((-m[1] * (px - o.x) + m[0] * (py - o.y)) / det);
-      for (let k = Math.floor(Math.min(...ys) / 256); k * 256 < Math.max(...ys); k++) {
-        const b = bd.bands.get(k);
-        if (b) for (const [col, p] of b) { c.fillStyle = col || bd.color; c.fill(p); }
+  } else if (o.asset.cells) { // a fill from the worker: with r, only the cells the tile meets, in the fill's own px through m
+    let lb = null;
+    if (r) {
+      const det = m[0] * m[3] - m[1] * m[2], xs = [], ys = [];
+      for (const [px, py] of [[r.x, r.y], [r.x + r.w, r.y], [r.x, r.y + r.h], [r.x + r.w, r.y + r.h]]) {
+        const dx = px - o.x, dy = py - o.y;
+        xs.push((m[3] * dx - m[2] * dy) / det); ys.push((-m[1] * dx + m[0] * dy) / det);
       }
-    } else if (o.asset.paths) for (const [col, p] of o.asset.paths) { c.fillStyle = col; c.fill(p); }
-    else if (o.asset.maskCv) { // a fill that isn't opaque everywhere replaces its pixels: clear them first
+      lb = { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+    }
+    drawCells(c, o.asset, lb);
+  } else {
+    if (o.asset.maskCv) { // a fill that isn't opaque everywhere replaces its pixels: clear them first
       c.globalCompositeOperation = 'destination-out';
       c.drawImage(o.asset.maskCv, 0, 0);
       c.globalCompositeOperation = 'source-over';
     }
-    if (!o.asset.paths) c.drawImage(o.asset.cv, 0, 0);
+    c.drawImage(o.asset.cv, 0, 0);
   }
   c.restore();
 }
@@ -152,9 +157,7 @@ function drawFramed(c, o, r) {
 function pick(p, right) {
   const c = composite(); // what is seen: pixels + objects
   if (p.x < 0 || p.y < 0 || p.x >= c.width || p.y >= c.height) return;
-  const one = makeCanvas(1, 1), g = one.getContext('2d', { willReadFrequently: true });
-  g.drawImage(c, p.x, p.y, 1, 1, 0, 0, 1, 1);
-  const d = g.getImageData(0, 0, 1, 1).data;
+  const d = pixelAt(c, p.x, p.y);
   if (d[3] === 0) { flash('That pixel is transparent. No color picked.'); return; }
   setColor(right ? 'secondary' : 'primary', toHex(d[0], d[1], d[2]));
   setTool(S.prevTool);

@@ -180,22 +180,18 @@
   }
 
   // The paint bucket's fill: the region of (x, y) and its soft edge (fillEdge) in color, in place in
-  // u32. Returns its undo data, or null if no pixel changed: box, the box's pixels before (before,
-  // row-major box.w x box.h), the region as a bit mask over the box (bits) and the edge pixels'
-  // box indices (ek) and new values (ev). "After" is before with the masked pixels set to color and
-  // the edge ones to ev, so neither undo nor redo has to read the canvas back. Runs in a worker
+  // u32. Returns what it changed, or null if no pixel changed: box, the region as a bit mask over the
+  // box (bits) and the edge pixels' box indices (ek) and new values (ev). Runs in a worker
   // (fill-worker.js), or on the main thread if the worker can't start.
   function fillPlan(u32, w, h, x, y, color, tolerance) {
     if (x < 0 || y < 0 || x >= w || y >= h) return null;
     if (Math.round((tolerance || 0) * 255 / 100) === 0 && u32[y * w + x] === color) return null;
     const region = floodMask(u32, w, h, x, y, tolerance), mask = region.mask;
     const edge = fillEdge(u32, w, h, region, u32[y * w + x], color, tolerance), box = edge.box;
-    const before = new Uint32Array(box.w * box.h);
     const bits = new Uint8Array(Math.ceil(box.w * box.h / 8));
     let changed = false;
     for (let yy = 0, k = 0; yy < box.h; yy++) {
       const row = (box.y + yy) * w + box.x;
-      before.set(u32.subarray(row, row + box.w), yy * box.w);
       for (let i = row, e = i + box.w; i < e; i++, k++) {
         if (!mask[i]) continue;
         bits[k >> 3] |= 1 << (k & 7);
@@ -205,7 +201,81 @@
     const ek = new Uint32Array(edge.idx.length);
     edge.idx.forEach((i, k) => { u32[i] = edge.val[k]; ek[k] = ((i / w | 0) - box.y) * box.w + i % w - box.x; });
     if (!changed && !ek.length) return null;
-    return { box, before, bits, ek, ev: edge.val };
+    return { box, bits, ek, ev: edge.val };
+  }
+
+  // A fill's pixels (fillPlan's bits, ek and ev over a w x h box, region in color) cut into cells of
+  // the scene's C x C tiles: the box's own px (x, y) is document px (x + sx, y + sy) mod C, so a fill
+  // that hasn't moved meets one cell per tile, and a tile repaint draws only that cell. Each cell
+  // ({i, j, x, y, w, h}: its column, row and rect in the box) holds the region as rects (r: x, y, w, h
+  // in the box, one per run of a row, merged down while the next row has the same run) and the edge
+  // pixels (rk: x, y in the box; rv: their values). A cell past max pieces (noise-like masks: a path
+  // of thousands of rects is slow to fill) holds its pixels instead: px (the cell's values, 0 where
+  // the fill leaves the pixel alone) and, if any of them isn't opaque, mk (1 where it replaces one).
+  // Runs in the fill worker, so the page only turns a cell into paths when a tile first draws it.
+  function fillCells(bits, w, h, ek, ev, color, sx, sy, C, max) {
+    const cols = Math.floor((w - 1 + sx) / C) + 1, cells = new Map(); // key: j * cols + i
+    const cell = (x, y) => {
+      const i = Math.floor((x + sx) / C), j = Math.floor((y + sy) / C), key = j * cols + i;
+      let c = cells.get(key);
+      if (!c) cells.set(key, (c = { i, j, r: [], rk: [], rv: [] }));
+      return c;
+    };
+    const flush = (q) => cell(q.x, q.y).r.push(q.x, q.y, q.w, q.h);
+    let open = new Map(); // run start x -> {x, y, w, h} still growing downwards (starts are unique in a row)
+    for (let y = 0; y < h; y++) {
+      if (y > 0 && (y + sy) % C === 0) { for (const q of open.values()) flush(q); open.clear(); } // a new row of cells
+      const next = new Map(), row = y * w, end = row + w;
+      const piece = (x0, x1) => {
+        const q = open.get(x0);
+        if (q && q.w === x1 - x0) { q.h++; open.delete(x0); next.set(x0, q); } else next.set(x0, { x: x0, y, w: x1 - x0, h: 1 });
+      };
+      const run = (x0, x1) => { // split where it crosses into the next column of cells
+        for (let a = x0; a < x1;) { const b = Math.min(x1, (Math.floor((a + sx) / C) + 1) * C - sx); piece(a, b); a = b; }
+      };
+      let start = -1;
+      for (let k = row; k < end;) {
+        if ((k & 7) === 0 && k + 8 <= end) { // whole bytes: skip or extend 8 at a time
+          const b = bits[k >> 3];
+          if (b === 0) { if (start >= 0) { run(start - row, k - row); start = -1; } k += 8; continue; }
+          if (b === 255) { if (start < 0) start = k; k += 8; continue; }
+        }
+        if (bits[k >> 3] & (1 << (k & 7))) { if (start < 0) start = k; } else if (start >= 0) { run(start - row, k - row); start = -1; }
+        k++;
+      }
+      if (start >= 0) run(start - row, end - row);
+      for (const q of open.values()) flush(q);
+      open = next;
+    }
+    for (const q of open.values()) flush(q);
+    for (let n = 0; n < ek.length; n++) { const x = ek[n] % w, y = (ek[n] / w) | 0, c = cell(x, y); c.rk.push(x, y); c.rv.push(ev[n]); }
+    const out = [];
+    for (const c of cells.values()) {
+      const x = Math.max(0, c.i * C - sx), y = Math.max(0, c.j * C - sy);
+      const cw = Math.min(w, (c.i + 1) * C - sx) - x, ch = Math.min(h, (c.j + 1) * C - sy) - y;
+      const o = { i: c.i, j: c.j, x, y, w: cw, h: ch };
+      if (c.r.length / 4 + c.rk.length / 2 <= max) {
+        Object.assign(o, { r: Int32Array.from(c.r), rk: Int32Array.from(c.rk), rv: Uint32Array.from(c.rv) });
+      } else {
+        const px = new Uint32Array(cw * ch);
+        let soft = (color >>> 24) !== 255;
+        for (let yy = 0; yy < ch; yy++) {
+          for (let xx = 0, k = (y + yy) * w + x; xx < cw; xx++, k++) if (bits[k >> 3] & (1 << (k & 7))) px[yy * cw + xx] = color;
+        }
+        for (let n = 0; n < c.rv.length; n++) { px[(c.rk[2 * n + 1] - y) * cw + c.rk[2 * n] - x] = c.rv[n]; if ((c.rv[n] >>> 24) !== 255) soft = true; }
+        o.px = px;
+        if (soft) {
+          const mk = new Uint8Array(cw * ch);
+          for (let yy = 0; yy < ch; yy++) {
+            for (let xx = 0, k = (y + yy) * w + x; xx < cw; xx++, k++) if (bits[k >> 3] & (1 << (k & 7))) mk[yy * cw + xx] = 1;
+          }
+          for (let n = 0; n < c.rv.length; n++) mk[(c.rk[2 * n + 1] - y) * cw + c.rk[2 * n] - x] = 1;
+          o.mk = mk;
+        }
+      }
+      out.push(o);
+    }
+    return out;
   }
 
   // A colour as the app stores it ('#rrggbb', or 'transparent') as an ImageData u32.
@@ -230,6 +300,27 @@
       if (e2 <= dx) { err += dx; y0 += sy; }
     }
     return pts;
+  }
+
+  // The pencil's square stamps (size s, from (x - floor(s / 2), y - floor(s / 2))) along line(x0, y0, x1,
+  // y1), as few rects: each run of the line along its main axis (the pixels of one row of a shallow
+  // line, one column of a steep one) is one rect, the union of its stamps. Calls rect(x, y, w, h).
+  function stampRects(x0, y0, x1, y1, s, rect) {
+    x0 |= 0; y0 |= 0; x1 |= 0; y1 |= 0;
+    const off = Math.floor(s / 2), dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0);
+    const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1, wide = dx >= -dy;
+    let err = dx + dy, ax = x0, ay = y0; // the run so far starts at (ax, ay)
+    const end = (x, y) => { // the run from (ax, ay) to (x, y): one row or one column
+      const lx = Math.min(ax, x), ly = Math.min(ay, y);
+      rect(lx - off, ly - off, Math.abs(x - ax) + s, Math.abs(y - ay) + s);
+    };
+    for (;;) {
+      if (x0 === x1 && y0 === y1) { end(x0, y0); return; }
+      const e2 = 2 * err, px = x0, py = y0;
+      if (e2 >= dy) { err += dy; x0 += sx; }
+      if (e2 <= dx) { err += dx; y0 += sy; }
+      if (wide ? y0 !== py : x0 !== px) { end(px, py); ax = x0; ay = y0; } // the line left the run's row (column)
+    }
   }
 
   function normRect(a, b) {
@@ -959,7 +1050,7 @@
     return [...seen.values()];
   }
 
-  const Core = { rgbaToU32, colorToU32, colorDistance, floodMask, fillEdge, floodFill, fillPlan, line, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History, zBetween, BASE_Z, zAboveBase, flattenRuns, dirtyTiles, diffObjs, applyPairs, crc32, pngChunks, readChunk, withChunk, packObj, unpackObj,
+  const Core = { rgbaToU32, colorToU32, colorDistance, floodMask, fillEdge, floodFill, fillPlan, fillCells, line, stampRects, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History, zBetween, BASE_Z, zAboveBase, flattenRuns, dirtyTiles, diffObjs, applyPairs, crc32, pngChunks, readChunk, withChunk, packObj, unpackObj,
     objBox, objFrame, insideShape, segsBox, drawnObj, hitsObject, hitObject, objHandles, handleAt, resizeObj, moveObj, transformObj, scaleObj };
   module.exports = Core;
 })();

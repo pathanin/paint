@@ -772,35 +772,51 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await P(() => window.__paint.selectObj(null)); await frame();
     ok(await page.locator('[data-cmd="toFront"]').isDisabled(), 'and disabled with nothing selected');
 
-    // ---- 31. a pasted image survives a GPU context loss of its canvas (its asset keeps a CPU copy) ----
+    // ---- 31. a pasted image survives a GPU context loss of its canvas (its asset keeps a CPU copy where one can happen) ----
     await P(() => { const p = window.__paint; p.newDoc(200, 150); p.S.pristine = false; const c = document.createElement('canvas'); c.width = 50; c.height = 40; const g = c.getContext('2d');
       g.fillStyle = '#3f48cc'; g.fillRect(0, 0, 50, 40); g.fillStyle = '#ffc90e'; g.fillRect(10, 10, 20, 15); p.pasteImage(c); p.selectAll(); p.setTool('move'); });
     await P(() => window.__paint.userObjs.find((x) => x.t === 'image').asset.ready); // its copy is read at idle, in strips
-    ok(await P(() => window.__paint.userObjs.find((x) => x.t === 'image').asset.bytes) === 50 * 40 * 4 * 2, 'an image asset is charged for its canvas and its CPU copy');
-    const seen31 = await chash();
-    await P(() => { const o = window.__paint.userObjs.find((x) => x.t === 'image'), cv = o.asset.cv; cv.getContext('2d').clearRect(0, 0, cv.width, cv.height); window.__paint.markAll(); });
-    await frame();
-    ok(await chash() !== seen31, 'a blanked asset canvas shows as blank once repainted (the loss is real)');
-    await P(() => window.__paint.userObjs.find((x) => x.t === 'image').asset.cv.dispatchEvent(new Event('contextrestored')));
-    await frame();
-    ok(await chash() === seen31, 'after its canvas comes back blank, the image object is refilled and repainted exactly');
+    // A browser that can't lose a 2D context (no contextlost event: WebKit) keeps no copy.
+    const loses = await P(() => 'oncontextlost' in HTMLCanvasElement.prototype);
+    ok(await P(() => window.__paint.userObjs.find((x) => x.t === 'image').asset.bytes) === 50 * 40 * 4 * (loses ? 2 : 1), `an image asset is charged for its canvas${loses ? ' and its CPU copy' : ' only'}`);
+    if (loses) {
+      const seen31 = await chash();
+      await P(() => { const o = window.__paint.userObjs.find((x) => x.t === 'image'), cv = o.asset.cv; cv.getContext('2d').clearRect(0, 0, cv.width, cv.height); window.__paint.markAll(); });
+      await frame();
+      ok(await chash() !== seen31, 'a blanked asset canvas shows as blank once repainted (the loss is real)');
+      await P(() => window.__paint.userObjs.find((x) => x.t === 'image').asset.cv.dispatchEvent(new Event('contextrestored')));
+      await frame();
+      ok(await chash() === seen31, 'after its canvas comes back blank, the image object is refilled and repainted exactly');
+    }
 
-    // ---- 32. a soft-edged fill over transparency survives a GPU context loss of its mask too ----
+    // ---- 32. a fill keeps nothing a GPU context loss could blank, but the small canvases of dense cells ----
     // A black disc drawn on a transparent picture: filling it recolours its anti-aliased rim, which
-    // stays partly transparent, so the fill object clears what it covers with a mask canvas first.
+    // stays partly transparent, so the fill clears those pixels first. It is all paths (assets.js).
     await P(() => { const p = window.__paint; p.newDoc(200, 150); p.S.pristine = false; p.setZoom(2); const v = document.querySelector('#viewport'); v.scrollLeft = v.scrollTop = 0;
       const g = p.base.getContext('2d'); g.clearRect(0, 0, 200, 150); g.fillStyle = '#000000'; g.beginPath(); g.ellipse(100, 75, 50, 40, 0, 0, Math.PI * 2); g.fill(); p.markAll(); });
     await P(() => { const p = window.__paint; p.setTool('fill'); p.S.tolerance = 0; p.S.primary = '#ed1c24'; });
     await page.mouse.click(...await at(100, 75)); await P(() => window.__paint.filling); await frame();
-    ok(await P(() => { const o = window.__paint.userObjs.find((x) => x.t === 'fill'); return !!(o && o.asset.maskCv); }), 'the fill over transparency has a mask (the case under test)');
-    await P(() => window.__paint.userObjs.find((x) => x.t === 'fill').asset.ready);
+    const soft32 = await P(() => { const a = window.__paint.userObjs.find((x) => x.t === 'fill').asset; return { cells: a.cells.length, paths: a.cells.every((c) => !c.px), clears: a.clears }; });
+    ok(soft32.cells === 1 && soft32.paths && soft32.clears, 'the fill over transparency is paths in one cell, clearing its soft rim first: ' + JSON.stringify(soft32));
     const seen32 = await chash();
-    await P(() => { const m = window.__paint.userObjs.find((x) => x.t === 'fill').asset.maskCv; m.getContext('2d').clearRect(0, 0, m.width, m.height); window.__paint.markAll(); });
+    await P(() => window.__paint.markAll()); await frame(); // what a lost #image does: the scene repainted from scratch
+    ok(await chash() === seen32, 'repainted from scratch, it gives the same pixels (nothing of it was on the GPU)');
+    // Noise: a fill of the white in it is one rect per run of each row, too many for a path, so its cell is
+    // drawn from a canvas of its pixels. A context loss blanks that canvas; it comes back from the pixels.
+    await P(() => { const p = window.__paint; p.newDoc(200, 150); p.S.pristine = false;
+      const g = p.base.getContext('2d'), im = g.getImageData(0, 0, 200, 150), d = new Uint32Array(im.data.buffer);
+      let s = 9; for (let i = 0; i < d.length; i++) { s = (s * 1103515245 + 12345) >>> 0; d[i] = (s >>> 16) % 10 < 7 || i < 200 ? 0xffffffff : 0xff000000; } // a white top row joins it up
+      g.putImageData(im, 0, 0); p.markAll(); p.S.primary = '#22b14c'; });
+    await page.mouse.click(...await at(3, 0)); await P(() => window.__paint.filling); await frame();
+    const dense = await P(() => { const a = window.__paint.userObjs.find((x) => x.t === 'fill').asset; return a.cells.map((c) => !!c.px).join(); });
+    ok(dense === 'true', 'the noise fill is one dense cell, drawn from its pixels: ' + dense);
+    const seen32b = await chash();
+    await P(() => { const c = window.__paint.userObjs.find((x) => x.t === 'fill').asset.cells[0]; window.__lost = c.cv; c.cv.getContext('2d').clearRect(0, 0, c.w, c.h); window.__paint.markAll(); });
     await frame();
-    ok(await chash() !== seen32, 'a blanked mask shows: the rim no longer replaces what was under it');
-    await P(() => { const a = window.__paint.userObjs.find((x) => x.t === 'fill').asset; a.cv.getContext('2d').clearRect(0, 0, a.cv.width, a.cv.height); for (const c of [a.cv, a.maskCv]) c.dispatchEvent(new Event('contextrestored')); });
+    ok(await chash() !== seen32b, 'a blanked cell canvas shows (the loss is real)');
+    await P(() => window.__lost.dispatchEvent(new Event('contextrestored')));
     await frame();
-    ok(await chash() === seen32, 'after both canvases come back blank, the fill is refilled and repaints exactly');
+    ok(await chash() === seen32b, 'after its canvas comes back blank, the cell is rebuilt from its pixels and repaints exactly');
 
     // ---- 33. a long stroke, drawn live piece by piece: the cache equals the scene drawn fresh, during and after ----
     for (const tool of ['pencil', 'brush', 'eraser']) {

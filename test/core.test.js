@@ -203,8 +203,8 @@ test('fillEdge clamps its box to the image', () => {
   assert.deepEqual(e.box, { x: 1, y: 0, w: 3, h: 2 });
 });
 
-// fillPlan: the whole fill (region, soft edge, undo data) in one call, so it can run in a worker.
-test('fillPlan fills like floodMask + fillEdge and returns the undo data for its box', () => {
+// fillPlan: the whole fill (region, soft edge) in one call, so it can run in a worker.
+test('fillPlan fills like floodMask + fillEdge and returns what it changed in its box', () => {
   const W = Core.rgbaToU32(255, 255, 255, 255), K = Core.rgbaToU32(0, 0, 0, 255), R = Core.rgbaToU32(255, 0, 0, 255);
   const g40 = Core.rgbaToU32(102, 102, 102, 255);
   const rows = ['......', '.##g..', '.#..#.', '..g#..', '......', '######'];
@@ -214,14 +214,14 @@ test('fillPlan fills like floodMask + fillEdge and returns the undo data for its
   const p = Core.fillPlan(b.u32, b.w, b.h, 0, 0, R, 10);
   assert.deepEqual([...b.u32], [...a.u32]); // the same pixels as the two-step fill
   assert.deepEqual(p.box, e.box);
+  assert.equal(p.before, undefined); // nothing to keep: undo removes the fill object
   const { x, y, w, h } = p.box;
-  assert.equal(p.before.length, w * h);
-  // before: the box's original pixels; bits/ek/ev rebuild the box's filled pixels from them (redo)
-  const after = p.before.slice();
+  // bits/ek/ev rebuild the box's filled pixels from the original ones
+  const after = new Uint32Array(w * h);
   for (let yy = 0; yy < h; yy++) {
     for (let xx = 0; xx < w; xx++) {
       const k = yy * w + xx;
-      assert.equal(p.before[k], orig[(y + yy) * b.w + x + xx]);
+      after[k] = orig[(y + yy) * b.w + x + xx];
       if (p.bits[k >> 3] & (1 << (k & 7))) after[k] = R;
     }
   }
@@ -247,6 +247,93 @@ test('fillPlan with colour 0 clears the region to transparent', () => {
   assert.ok(p);
   assert.deepEqual([...g.u32], [0, 0, K, 0, 0, K, K, K, K]);
   assert.equal(Core.fillPlan(g.u32, g.w, g.h, 0, 0, 0, 0), null); // already transparent
+});
+
+// fillCells: a plan cut into the scene's tiles. Paint each cell as the page does (rects in the colour,
+// then the edge pixels, or the pixels of a dense cell) and every pixel the plan changes is set once,
+// in its own cell, and nothing else.
+function paintCells(cells, w, h, color) {
+  const out = new Uint32Array(w * h), n = new Uint8Array(w * h);
+  const set = (x, y, v, c) => {
+    assert.ok(x >= c.x && y >= c.y && x < c.x + c.w && y < c.y + c.h, `(${x}, ${y}) inside its cell`);
+    out[y * w + x] = v; n[y * w + x]++;
+  };
+  for (const c of cells) {
+    if (c.px) {
+      for (let yy = 0; yy < c.h; yy++) for (let xx = 0; xx < c.w; xx++) {
+        const k = yy * c.w + xx;
+        if (c.mk ? c.mk[k] : c.px[k]) set(c.x + xx, c.y + yy, c.px[k], c);
+      }
+      continue;
+    }
+    for (let i = 0; i < c.r.length; i += 4) for (let yy = 0; yy < c.r[i + 3]; yy++) for (let xx = 0; xx < c.r[i + 2]; xx++) set(c.r[i] + xx, c.r[i + 1] + yy, color, c);
+    for (let i = 0; i < c.rv.length; i++) set(c.rk[2 * i], c.rk[2 * i + 1], c.rv[i], c);
+  }
+  return { out, n };
+}
+function planPixels(p, color) {
+  const { w, h } = p.box, out = new Uint32Array(w * h), on = new Uint8Array(w * h);
+  for (let k = 0; k < w * h; k++) if (p.bits[k >> 3] & (1 << (k & 7))) { out[k] = color; on[k] = 1; }
+  p.ek.forEach((k, j) => { out[k] = p.ev[j]; on[k] = 1; });
+  return { out, on };
+}
+test('fillCells covers every changed pixel once, in the cell of its tile, merged into few rects', () => {
+  const W = Core.rgbaToU32(255, 255, 255, 255), K = Core.rgbaToU32(0, 0, 0, 255), R = Core.rgbaToU32(255, 0, 0, 255);
+  const g40 = Core.rgbaToU32(102, 102, 102, 255);
+  const rows = ['..........', '.##g......', '.#..#.....', '..g#......', '..........', '##########'];
+  for (const [sx, sy] of [[0, 0], [3, 1], [7, 5]]) {
+    const g = grid(rows, { '.': W, '#': K, g: g40 });
+    const p = Core.fillPlan(g.u32, g.w, g.h, 0, 0, R, 10), { w, h } = p.box, C = 4;
+    const cells = Core.fillCells(p.bits, w, h, p.ek, p.ev, R, sx, sy, C, 1000);
+    const got = paintCells(cells, w, h, R), want = planPixels(p, R);
+    for (let k = 0; k < w * h; k++) {
+      assert.equal(got.n[k], want.on[k], `pixel ${k} set ${got.n[k]} times (offset ${sx}, ${sy})`);
+      if (want.on[k]) assert.equal(got.out[k], want.out[k]);
+    }
+    for (const c of cells) { // each cell is the tile it says, cut to the box
+      assert.equal(c.x, Math.max(0, c.i * C - sx)); assert.equal(c.y, Math.max(0, c.j * C - sy));
+      assert.ok(c.w > 0 && c.w <= C && c.h > 0 && c.h <= C);
+    }
+  }
+  // one big region: a rect per cell, not one per row
+  const bits = new Uint8Array(Math.ceil(100 * 60 / 8)).fill(255);
+  const cells = Core.fillCells(bits, 100, 60, new Uint32Array(0), new Uint32Array(0), R, 10, 20, 32, 1000);
+  assert.equal(cells.length, 4 * 3);
+  assert.ok(cells.every((c) => c.r.length === 4 && c.r[2] === c.w && c.r[3] === c.h), 'whole cells are one rect each');
+});
+
+test('fillCells keeps a dense cell as pixels, with a mask when it clears or replaces soft pixels', () => {
+  const R = Core.rgbaToU32(255, 0, 0, 255), half = Core.rgbaToU32(10, 20, 30, 128);
+  const w = 16, h = 16, bits = new Uint8Array(w * h / 8);
+  for (let k = 0; k < w * h; k++) if ((k + (k >> 4)) % 2) bits[k >> 3] |= 1 << (k & 7); // a checkerboard: one rect per pixel
+  const ek = Uint32Array.of(0), ev = Uint32Array.of(half); // pixel 0 is not in the checkerboard's set
+  for (const color of [R, 0]) {
+    const cells = Core.fillCells(bits, w, h, ek, ev, color, 0, 0, 8, 20);
+    assert.ok(cells.every((c) => c.px && !!c.mk === (color === 0 || (c.i === 0 && c.j === 0))), 'dense cells hold pixels; ones that clear or hold a soft pixel, a mask');
+    const got = paintCells(cells, w, h, color);
+    const want = planPixels({ box: { w, h }, bits, ek, ev }, color);
+    for (let k = 0; k < w * h; k++) { assert.equal(got.n[k], want.on[k]); if (want.on[k]) assert.equal(got.out[k], want.out[k]); }
+  }
+  const solid = Core.fillCells(bits, w, h, new Uint32Array(0), new Uint32Array(0), R, 0, 0, 8, 20);
+  assert.ok(solid.every((c) => c.px && !c.mk), 'an opaque dense cell needs no mask: its pixels replace what is under them');
+});
+
+test('stampRects covers exactly the stamps along the line, in fewer rects', () => {
+  let s = 7;
+  const rnd = (n) => { s = (s * 1103515245 + 12345) >>> 0; return s % n; };
+  let stamps = 0, rects = 0;
+  for (let t = 0; t < 400; t++) {
+    const x0 = rnd(40), y0 = rnd(40), x1 = t % 5 ? rnd(40) : x0, y1 = t % 7 ? rnd(40) : y0, size = 1 + rnd(6);
+    const W = 60, want = new Uint8Array(W * W), got = new Uint8Array(W * W), off = Math.floor(size / 2);
+    const paint = (g, x, y, w, h) => { for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) g[(yy + 8) * W + xx + 8] = 1; };
+    for (const [x, y] of Core.line(x0, y0, x1, y1)) { paint(want, x - off, y - off, size, size); stamps++; }
+    Core.stampRects(x0, y0, x1, y1, size, (x, y, w, h) => { paint(got, x, y, w, h); rects++; });
+    assert.deepEqual(got, want, `line ${x0},${y0} -> ${x1},${y1} size ${size}`);
+  }
+  assert.ok(rects < stamps * 0.7, `${rects} rects for ${stamps} stamps`);
+  const one = [];
+  Core.stampRects(3, 4, 13, 4, 2, (...r) => one.push(r));
+  assert.deepEqual(one, [[2, 3, 12, 2]], 'a straight line is one rect');
 });
 
 test('colorToU32: hex colours are opaque, transparent is 0', () => {
