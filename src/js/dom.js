@@ -10,6 +10,15 @@ function makeCanvas(w, h) {
   c.width = w; c.height = h;
   return c;
 }
+// The pixel at (x, y) of canvas src (#image), as RGBA bytes. It is copied into a new 1 px canvas and
+// read there: getImageData on #image itself held the next frame for ~250 ms at 10000², and copying
+// into a CPU canvas (willReadFrequently, or one Chrome moved to the CPU after a few reads, so the
+// canvas isn't reused) reads the whole source back (~95 ms).
+function pixelAt(src, x, y) {
+  const g = makeCanvas(1, 1).getContext('2d');
+  g.drawImage(src, x, y, 1, 1, 0, 0, 1, 1);
+  return g.getImageData(0, 0, 1, 1).data;
+}
 function cloneCanvas(src) {
   const c = makeCanvas(src.width, src.height);
   c.getContext('2d').drawImage(src, 0, 0);
@@ -36,4 +45,4 @@ const keyLabel = (k) => (MAC ? (k === 'Alt' ? '⌥' : k.replace(/Alt\+/g, '⌥')
   : k === '⌘' ? 'Ctrl' : k === '⇧' ? 'Shift' : k === '⌫' ? 'Backspace'
   : k.replace(/⌘/g, 'Ctrl+').replace(/⇧([- ])/g, 'Shift$1').replace(/⇧/g, 'Shift+').replace(/\+\+$/, '+Plus').replace(/\+−$/, '+Minus'));
 
-export { $, antsEl, clamp, cloneCanvas, hexToU32, keyLabel, MAC, makeCanvas, ov, ring, setAttr, setData, setProp, setText, stage, textBox, toHex, vp };
+export { $, antsEl, clamp, cloneCanvas, hexToU32, keyLabel, MAC, makeCanvas, ov, pixelAt, ring, setAttr, setData, setProp, setText, stage, textBox, toHex, vp };

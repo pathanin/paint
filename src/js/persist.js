@@ -10,7 +10,10 @@ import { encodeBlob } from './libs.js';
 // then JSON (the objects, with each bitmap as an index into the blobs), then the blobs: the base and
 // each asset as a nested PNG. It also records a hash of the file's own IDAT bytes: an app that
 // re-encodes the picture (any edit elsewhere) leaves a chunk that no longer matches, so it's ignored.
-// Strokes are packed compactly (Core.packObj: pencil points as deltas, brush segments flat).
+// Strokes are packed compactly (Core.packObj: pencil points as deltas, brush segments flat). A fill
+// that clears or replaces pixels that aren't opaque (Transparent, a soft edge over transparency) also
+// carries its mask (mask: the blob of a PNG opaque wherever it replaces a pixel): its pixels alone
+// can't tell a pixel it clears from one it leaves alone.
 const CHUNK = 'paNt';
 const idatHash = (u8) => {
   let h = 2166136261;
@@ -25,13 +28,14 @@ const toPng = (cv) => encodeBlob(cv, 'image/png').then((b) => b.arrayBuffer()).t
 // The picture's PNG bytes (pngBytes, a promise: the scene's own PNGs encode meanwhile) with the scene
 // of objs and base spliced in.
 async function withScene(pngBytes, objs, nextId) {
-  const blobs = [await toPng(base)], at = new Map();
+  const blobs = [await toPng(base)], at = new Map(), masks = new Map();
   for (const o of objs) {
     if (!o.asset || at.has(o.asset)) continue;
     at.set(o.asset, blobs.length);
     blobs.push(await toPng(o.asset.cv));
+    if (o.t === 'fill' && o.asset.clears) { masks.set(o.asset, blobs.length); blobs.push(await toPng(o.asset.maskCv)); }
   }
-  const png = await pngBytes, list = objs.map((o) => Core.packObj(o.asset ? { ...o, asset: at.get(o.asset) } : o));
+  const png = await pngBytes, list = objs.map((o) => Core.packObj(o.asset ? { ...o, asset: at.get(o.asset), ...(masks.has(o.asset) && { mask: masks.get(o.asset) }) } : o));
   const head = new TextEncoder().encode(JSON.stringify({ v: 1, w: base.width, h: base.height, idat: idatHash(png), nextId, objs: list, blobs: blobs.map((b) => b.length) }));
   const data = new Uint8Array(4 + head.length + blobs.reduce((n, b) => n + b.length, 0));
   new DataView(data.buffer).setUint32(0, head.length);
@@ -58,32 +62,35 @@ async function readScene(u8) {
       bmp.close();
       cvs.push(cv);
     }
-    const assets = cvs.map((cv, k) => (k ? makeAsset(cv) : null));
-    const fillOf = new Set(head.objs.filter((o) => o.t === 'fill').map((o) => o.asset));
-    for (const k of fillOf) assets[k] = fillAsset(cvs[k]);
-    return { base: cvs[0], objs: head.objs.map((p) => { const o = Core.unpackObj(p); return o.asset != null ? { ...o, asset: assets[o.asset] } : o; }), nextId: head.nextId };
+    const fills = new Map(head.objs.filter((o) => o.t === 'fill').map((o) => [o.asset, o.mask])); // its pixels -> its mask, if any
+    const masks = new Set([...fills.values()].filter((k) => k != null));
+    const assets = cvs.map((cv, k) => (!k || masks.has(k) ? null : fills.has(k) ? fillAsset(cv, cvs[fills.get(k)]) : makeAsset(cv)));
+    return { base: cvs[0], objs: head.objs.map((p) => { const { mask, ...o } = Core.unpackObj(p); return o.asset != null ? { ...o, asset: assets[o.asset] } : o; }), nextId: head.nextId };
   } catch {
     return null;
   }
 }
-// A fill's asset from its bitmap: its pixels are where alpha > 0 (the hit-test bits), and it needs
-// a clearing mask if any of them isn't opaque (see fill.js).
-function fillAsset(cv) {
+// A fill's asset from its bitmap and its mask (null: where alpha > 0, as a file without one says):
+// the pixels it replaces are the hit-test bits, and it needs the mask to clear them first if any of
+// them isn't opaque (see assets.js).
+function fillAsset(cv, mask) {
   const w = cv.width, h = cv.height, d = new Uint32Array(cv.getContext('2d').getImageData(0, 0, w, h).data.buffer);
+  const m = mask && new Uint32Array(mask.getContext('2d').getImageData(0, 0, w, h).data.buffer);
   const bits = new Uint8Array((w * h + 7) >> 3);
   let soft = false;
   for (let k = 0; k < d.length; k++) {
-    const a = d[k] >>> 24;
-    if (a) { bits[k >> 3] |= 1 << (k & 7); if (a !== 255) soft = true; }
+    if (!(m ? m[k] >>> 24 : d[k] >>> 24)) continue;
+    bits[k >> 3] |= 1 << (k & 7);
+    if (d[k] >>> 24 !== 255) soft = true;
   }
   let maskCv = null;
   if (soft) {
-    const im = new ImageData(w, h), m = new Uint32Array(im.data.buffer);
-    for (let k = 0; k < d.length; k++) if (d[k] >>> 24) m[k] = 0xff000000;
+    const im = new ImageData(w, h), mm = new Uint32Array(im.data.buffer);
+    for (let k = 0; k < d.length; k++) if (bits[k >> 3] & (1 << (k & 7))) mm[k] = 0xff000000;
     maskCv = makeCanvas(w, h);
     maskCv.getContext('2d').putImageData(im, 0, 0);
   }
-  return makeAsset(cv, { bits, maskCv });
+  return makeAsset(cv, { bits, maskCv, clears: soft });
 }
 
 export { readScene, withScene };

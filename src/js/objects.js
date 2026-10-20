@@ -24,12 +24,21 @@ let objs = [], objSel = null, objVer = 0, sceneVer = 0, nextObjId = 1;
 let multi = [], multiSet = new Set();
 function setMulti(ids) { multi = ids; multiSet = new Set(ids); }
 // The box around a selected group, as a rectangle shape (its handles resize the group), or null.
+// render() and the hover test ask every frame; it is worked out again only when the selection is
+// (a new selList()), since a frame walks every point of a stroke.
+let groupMemo = { list: null, box: null };
 function groupBox() {
   if (multi.length < 2) return null;
-  const fs = selList().map((o) => Core.objFrame(o));
-  const x0 = Math.floor(Math.min(...fs.map((f) => f.x))), y0 = Math.floor(Math.min(...fs.map((f) => f.y)));
-  const x1 = Math.ceil(Math.max(...fs.map((f) => f.x + f.w))), y1 = Math.ceil(Math.max(...fs.map((f) => f.y + f.h)));
-  return { t: 'rect', id: -1, a: { x: x0, y: y0 }, b: { x: x1, y: y1 }, size: 2, mode: 'outline' };
+  const list = selList();
+  if (groupMemo.list === list) return groupMemo.box;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const o of list) {
+    const f = Core.objFrame(o);
+    x0 = Math.min(x0, f.x); y0 = Math.min(y0, f.y); x1 = Math.max(x1, f.x + f.w); y1 = Math.max(y1, f.y + f.h);
+  }
+  const box = { t: 'rect', id: -1, a: { x: Math.floor(x0), y: Math.floor(y0) }, b: { x: Math.ceil(x1), y: Math.ceil(y1) }, size: 2, mode: 'outline' };
+  groupMemo = { list, box };
+  return box;
 }
 // The selected objects, bottom to top. render() asks several times a frame, so the last answer is kept
 // until the list or the selection changes.

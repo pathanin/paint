@@ -77,18 +77,32 @@ function hitAt(p, tol) {
 // draws only its pieces however long the stroke gets: the same pieces, in the same order, that
 // drawObj picks for that tile once the stroke is an object (tools.js stampBox / segBox), so its
 // pixels don't change when it joins.
+// A pencil or eraser stroke is whole-pixel rects in one colour, which come out the same however
+// they are batched, so it isn't repainted whole each frame: each tile it is in gets a canvas of its
+// own (liveCv), composed once, and each new piece is drawn onto it and copied in (paintNew()). A
+// brush is one anti-aliased path per tile (never inked twice where it overlaps itself), so its
+// tiles are composed again, whole, as it grows.
 let live = null, liveAt = null, liveN = 0, quiet = false; // liveAt: tile key -> pieces; liveN: pieces filed
+const liveCv = new Map(), spare = []; // tile key -> {c, g, n: pieces drawn on it}, least recently used first; spare: canvases to reuse
+let liveNew = new Map(); // tile key -> {t, box}: tiles with new stamp pieces, box: what they cover in it
+const LIVE_MAX = 64; // tile canvases a stroke keeps (64 MB); past that the oldest is composed again when it is next reached
 const meets = (b, r) => b.x < r.x + r.w && b.x + b.w > r.x && b.y < r.y + r.h && b.y + b.h > r.y;
 function setLive(o) { live = o; liveAt = new Map(); liveN = 0; growLive(); }
 function growLive() {
-  const o = live;
+  const o = live, stamps = !o.segs;
   const file = (piece, b) => {
-    markDirty(b);
+    if (!stamps) markDirty(b);
     for (const t of Core.dirtyTiles([b], img.width, img.height, TILE)) {
       if (!meets(b, t)) continue;
       let k = liveAt.get(t.key);
       if (!k) liveAt.set(t.key, (k = []));
-      if (k[k.length - 1] !== piece) k.push(piece);
+      k.push(piece); // a stamp piece can come twice: a lone point, then the line it becomes
+      if (!stamps) continue;
+      const x = Math.max(b.x, t.x), y = Math.max(b.y, t.y), r = { x, y, w: Math.min(b.x + b.w, t.x + t.w) - x, h: Math.min(b.y + b.h, t.y + t.h) - y };
+      const d = liveNew.get(t.key);
+      if (!d) liveNew.set(t.key, { t, box: r });
+      else { const q = d.box, x1 = Math.max(q.x + q.w, r.x + r.w), y1 = Math.max(q.y + q.h, r.y + r.h); q.x = Math.min(q.x, r.x); q.y = Math.min(q.y, r.y); q.w = x1 - q.x; q.h = y1 - q.y; }
+      if (!queued) { queued = true; queueMicrotask(() => paint(false)); }
     }
   };
   if (o.segs) for (; liveN < o.segs.length; liveN++) file(o.segs[liveN], segBox(o, o.segs[liveN]));
@@ -99,8 +113,46 @@ function growLive() {
   }
 }
 // The live stroke is about to join the scene on top, as the next object added: its pixels are on
-// screen already, so that add marks nothing.
-function endLive() { quiet = !!live; live = null; liveAt = null; }
+// screen already, so that add marks nothing. Its tile canvases are kept for the next stroke.
+function endLive() {
+  quiet = !!live; live = null; liveAt = null;
+  for (const v of liveCv.values()) spare.push(v);
+  liveCv.clear();
+  spare.splice(16).forEach((v) => { v.c.width = 0; }); // free the rest now
+}
+// The canvas tile t of the live stamp stroke is drawn on (made, or the least recently used one reused).
+function liveCanvas(t) {
+  let v = liveCv.get(t.key);
+  if (v) { liveCv.delete(t.key); liveCv.set(t.key, v); return v; }
+  if (liveCv.size >= LIVE_MAX) { const [k, old] = liveCv.entries().next().value; liveCv.delete(k); spare.push(old); }
+  v = spare.pop();
+  if (!v) {
+    const c = makeCanvas(TILE, TILE);
+    v = { c, g: c.getContext('2d'), n: 0 };
+    c.addEventListener('contextrestored', () => { for (const [k, x] of liveCv) if (x === v) liveCv.delete(k); markAll(); }); // came back blank
+  }
+  liveCv.set(t.key, v);
+  return v;
+}
+// The new pieces of the live stamp stroke in the tiles that have its canvas (all of them, unless a
+// whole repaint of the tile is happening anyway): drawn on that canvas, then the part they cover
+// copied in.
+function paintNew(skip) {
+  const fresh = [];
+  for (const [k, d] of liveNew) {
+    if (skip.has(k)) continue;
+    const v = liveCv.get(k);
+    if (!v) { later.delete(k); fresh.push(d.t); continue; } // first reached: composed whole, onto its own canvas
+    const pieces = liveAt.get(k), t = d.t, b = d.box;
+    v.g.setTransform(1, 0, 0, 1, -t.x, -t.y);
+    drawPieces(v.g, live, pieces.slice(v.n));
+    v.n = pieces.length;
+    ctx.clearRect(b.x, b.y, b.w, b.h);
+    ctx.drawImage(v.c, b.x - t.x, b.y - t.y, b.w, b.h, b.x, b.y, b.w, b.h);
+  }
+  liveNew = new Map();
+  return fresh;
+}
 
 let dirty = [], queued = false, redrawCount = 0;
 function markDirty(r) {
@@ -130,8 +182,8 @@ function paint(all) {
     const rs = dirty;
     dirty = [];
     const tiles = Core.dirtyTiles(rs, img.width, img.height, TILE);
-    if (!all && tiles.length > BIG && fence) { held.push(...rs); return; } // repainted when it passes
-    if (!all && tiles.length > BIG) {
+    if (!all && tiles.length > BIG && fence) held.push(...rs); // repainted when it passes
+    else if (!all && tiles.length > BIG) {
       const v = visibleRect();
       for (const t of tiles) {
         if (v && t.x < v.x + v.w && t.x + t.w > v.x && t.y < v.y + v.h && t.y + t.h > v.y) { later.delete(t.key); now.push(t); }
@@ -140,6 +192,7 @@ function paint(all) {
     } else for (const t of tiles) { later.delete(t.key); now.push(t); }
   }
   if (all) { now.push(...later.values()); later.clear(); }
+  if (liveNew.size) now.push(...paintNew(new Set(now.map((t) => t.key))));
   redrawCount += now.length;
   drawTiles(ctx, now);
   if (now.length > BIG) fenceAfter();
@@ -232,8 +285,10 @@ function compose(s, t) {
 function drawTiles(g, tiles) {
   for (let i = 0; i < tiles.length; i += POOL) {
     const run = tiles.slice(i, i + POOL);
-    run.forEach((t, j) => compose(pool[j], t));
-    run.forEach((t, j) => { g.clearRect(t.x, t.y, t.w, t.h); g.drawImage(pool[j].c, 0, 0, t.w, t.h, t.x, t.y, t.w, t.h); });
+    // a tile the live stamp stroke is in is composed onto its own canvas, which then holds all of it
+    const on = run.map((t, j) => (g === ctx && live && !live.segs && liveAt.has(t.key) ? liveCanvas(t) : pool[j]));
+    run.forEach((t, j) => { compose(on[j], t); if (on[j] !== pool[j]) on[j].n = liveAt.get(t.key).length; });
+    run.forEach((t, j) => { g.clearRect(t.x, t.y, t.w, t.h); g.drawImage(on[j].c, 0, 0, t.w, t.h, t.x, t.y, t.w, t.h); });
   }
 }
 // The whole scene drawn into a new canvas the same way, tile by tile: what the cache must equal after
@@ -244,4 +299,4 @@ function freshRender() {
   return c;
 }
 
-export { boxOf, endLive, freshRender, growLive, setLive, flushRedraw, hitAt, markAll, markDirty, objsIn, redrawCount, sceneSwap };
+export { boxOf, endLive, freshRender, growLive, setLive, flushRedraw, hitAt, markAll, markDirty, objsIn, redrawCount, sceneSwap, TILE };

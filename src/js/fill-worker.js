@@ -1,13 +1,14 @@
 // The paint bucket's fill, off the main thread (fill.js): the page's pixels arrive as a snapshot
 // (an ImageBitmap, read back here, so the 400 MB readback at 10000² doesn't hold up the page) or, from
-// an older page, as a transferred buffer; they are filled in place by Core.fillPlan and go back with
-// the undo data.
+// an older page, as a transferred buffer; they are filled by Core.fillPlan, and the result goes back
+// cut into the scene's tiles (Core.fillCells: a few rects per tile for a plain region), so the page
+// has nothing left to build. Only what changed goes back: a page that asks for cells gets no pixels.
 import Core from './core.js';
 
 const STRIP_PX = 1 << 21; // 2 MP (8 MB) per readback
 
 self.onmessage = (e) => {
-  let { buf, bmp, w, h, x, y, color, tolerance } = e.data;
+  let { buf, bmp, w, h, x, y, color, tolerance, cell, max } = e.data;
   try {
     if (bmp) { // read back in strips: one 400 MB readback holds the GPU process for ~100 ms, and no frame
       // can be shown meanwhile; between strips it can. Each strip is cut out on the GPU first (a GPU canvas:
@@ -24,9 +25,18 @@ self.onmessage = (e) => {
       buf = out.buffer;
     }
     const plan = Core.fillPlan(new Uint32Array(buf), w, h, x, y, color, tolerance);
-    const transfer = [buf];
-    if (plan) transfer.push(plan.before.buffer, plan.bits.buffer, plan.ek.buffer, plan.ev.buffer);
-    self.postMessage({ buf, plan }, transfer);
+    if (!cell) { // a page from before cells: it builds the object from the pixels and the plan
+      const transfer = [buf];
+      if (plan) transfer.push(plan.bits.buffer, plan.ek.buffer, plan.ev.buffer);
+      self.postMessage({ buf, plan }, transfer);
+      return;
+    }
+    if (!plan) { self.postMessage({ plan: null }); return; }
+    const { box, bits } = plan;
+    const cells = Core.fillCells(bits, box.w, box.h, plan.ek, plan.ev, color, box.x % cell, box.y % cell, cell, max);
+    const transfer = [bits.buffer];
+    for (const c of cells) for (const a of [c.r, c.rk, c.rv, c.px, c.mk]) if (a) transfer.push(a.buffer);
+    self.postMessage({ plan: { box, bits, cells } }, transfer);
   } catch (err) {
     self.postMessage({ error: String(err && err.message || err) });
   }
