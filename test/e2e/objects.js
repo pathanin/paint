@@ -890,6 +890,102 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await page.mouse.up({ button: 'middle' });
     ok(await hover(200, 150) === 'default', 'after the middle-button pan: the arrow');
 
+    // ---- 35. snapping: a move or resize lines up with other objects and the canvas; ⌘ held suspends it ----
+    // At 200% the reach is 8 screen px = 4 image px. Canvas 400 × 320: its lines are x 0, 200, 400 and y 0, 160, 320.
+    await P(() => { const p = window.__paint; p.newDoc(400, 320); p.setZoom(2); const v = document.querySelector('#viewport'); v.scrollLeft = v.scrollTop = 0; });
+    await frame();
+    const mod = await P(() => (/Mac|iPhone|iPad/.test(navigator.platform) ? 'Meta' : 'Control'));
+    const guides = () => P(() => (window.__paint.drag && window.__paint.drag.guides) || []);
+    const shownGuides = async () => { await frame(); return page.locator('#guides div:not([hidden]):not(.m)').count(); };
+    const shownMarks = async () => { await frame(); return page.locator('#guides .m:not([hidden])').count(); };
+    const byId = async (id) => (await objs()).find((x) => x.id === id);
+    await page.keyboard.press('KeyR');
+    await drag([[40, 40], [100, 100]]); // A: x 40..100, y 40..100
+    const A = await objSel();
+    await drag([[220, 200], [280, 240]]); // B: x 220..280, y 200..240
+    const B = await objSel();
+    await page.keyboard.press('KeyV');
+    let g35 = null, n35 = 0, m35 = 0;
+    const d35 = await depth();
+    await drag([[235, 200], [117, 200]], async () => { g35 = await guides(); n35 = await shownGuides(); m35 = await shownMarks(); }); // left edge 102 → A's right, 100
+    o = await byId(B);
+    ok(o.a.x === 100 && o.b.x === 160 && o.a.y === 200, 'a move 2 px from another object\'s edge snaps onto it: ' + JSON.stringify([o.a, o.b]));
+    ok(JSON.stringify(g35) === JSON.stringify([{ x: 100, lo: 40, hi: 240, at: [40, 100, 200, 240] }]) && n35 === 1, 'one guide while it lines up, through the corners on it: ' + JSON.stringify(g35) + ' ' + n35);
+    ok(m35 === 4, 'a × on each of those four corners: ' + m35);
+    ok(await shownGuides() === 0 && await shownMarks() === 0, 'the guide and its marks go on release');
+    ok(await depth() === d35 + 1, 'a snapped move is one undo step');
+    await page.keyboard.press('Meta+KeyZ');
+    ok((await byId(B)).a.x === 220, 'undo puts it back');
+    await page.keyboard.press('Meta+Shift+KeyZ');
+    ok((await byId(B)).a.x === 100, 'redo snaps it again');
+    // ⌘ (Ctrl elsewhere) held: no snapping; pressed or released mid-drag, it takes effect without a move.
+    {
+      await page.keyboard.down(mod);
+      const [x0, y0] = await at(115, 200); await page.mouse.move(x0, y0); await page.mouse.down();
+      const [x1, y1] = await at(117, 200); await page.mouse.move(x1, y1, { steps: 4 });
+      await frame();
+      const free = (await byId(B)).a.x, gFree = await guides();
+      await page.keyboard.up(mod); await frame();
+      const snapped = (await byId(B)).a.x, gSnap = await guides();
+      await page.keyboard.down(mod); await frame();
+      const freeAgain = (await byId(B)).a.x;
+      await page.mouse.up(); await page.keyboard.up(mod); await frame();
+      ok(free === 102 && gFree.length === 0, `${mod} held: the move is exact, no guide: ` + free);
+      ok(snapped === 100 && gSnap.length === 1, `${mod} released mid-drag: it snaps at once: ` + snapped);
+      ok(freeAgain === 102 && (await byId(B)).a.x === 102, `${mod} pressed again: free again, and it stays where it was dropped`);
+    }
+    // Shift locks the axis; the free one still snaps (centre 198 → the canvas centre, 200).
+    await page.keyboard.down('Shift');
+    await drag([[117, 200], [183, 203]], async () => { g35 = await guides(); });
+    await page.keyboard.up('Shift');
+    o = await byId(B);
+    ok(o.a.x === 170 && o.a.y === 200, 'Shift: along x only, centre snapped to the canvas centre: ' + JSON.stringify(o.a));
+    ok(JSON.stringify(g35) === JSON.stringify([{ x: 200, lo: 160, hi: 220, at: [160, 220] }]), 'a centre guide runs from the canvas centre to its centre: ' + JSON.stringify(g35));
+    // A resize handle snaps the edge it drags (bottom 318 → the canvas bottom, 320).
+    await drag([[200, 240], [201, 318]], async () => { g35 = await guides(); });
+    o = await byId(B);
+    ok(o.a.x === 170 && o.b.x === 230 && o.b.y === 320, 'the bottom handle snaps to the canvas edge: ' + JSON.stringify([o.a, o.b]));
+    ok(JSON.stringify(g35) === JSON.stringify([{ y: 320, lo: 0, hi: 400, at: [0, 170, 230, 400] }]), 'a guide along the canvas edge, through the dragged side\'s corners: ' + JSON.stringify(g35));
+    // ⌥-drag: the copy keeps in line with its original when dragged about straight down.
+    const count35 = (await objs()).length;
+    await page.keyboard.down('Alt');
+    await drag([[40, 55], [42, 175]]);
+    await page.keyboard.up('Alt');
+    const all35 = await objs(), sel35 = await objSel(), dup35 = all35.find((x) => x.id === sel35);
+    ok(all35.length === count35 + 1 && dup35.id !== A && dup35.a.x === 40 && dup35.a.y === 160 && (await byId(A)).a.y === 40,
+      'a copy dragged 2 px off its original snaps back in line (and its top to the canvas middle): ' + JSON.stringify(dup35 && dup35.a));
+    // Esc mid-drag: the guides go with the drag.
+    await drag([[40, 175], [42, 200]], async () => {
+      ok((await guides()).length > 0 && await shownGuides() > 0, 'guides while lined up');
+      await page.keyboard.press('Escape');
+      ok(await shownGuides() === 0 && await shownMarks() === 0, 'Esc mid-drag hides the guides and marks');
+    });
+    ok((await byId(dup35.id)).a.y === 160, 'Esc put the copy back');
+    // A group snaps by the box around it: A and the copy, bottom 218 → 320 (B's bottom and the canvas edge).
+    await drag([[20, 20], [120, 230]]); // box-select A and the copy (not B, from x 170)
+    ok(JSON.stringify((await P(() => window.__paint.selList().map((x) => x.id))).sort()) === JSON.stringify([A, dup35.id].sort()), 'A and the copy selected');
+    await drag([[40, 55], [40, 153]], async () => { g35 = await guides(); });
+    ok((await byId(A)).a.y === 140 && (await byId(dup35.id)).a.y === 260, 'the group moved until its box\'s bottom met 320');
+    ok(JSON.stringify(g35) === JSON.stringify([{ y: 320, lo: 0, hi: 400, at: [0, 40, 100, 170, 230, 400] }]), 'one guide for the two lines at 320: ' + JSON.stringify(g35));
+    // The group box's side handle snaps too (right 167 → B's left, 170); with Shift (keep proportions) a resize doesn't snap.
+    await drag([[100, 230], [167, 230]], async () => { g35 = await guides(); });
+    ok((await byId(A)).b.x === 170 && g35.length === 1 && g35[0].x === 170, 'the group box\'s right side snaps to B\'s left: ' + JSON.stringify(await byId(A)));
+    await page.keyboard.press('Meta+KeyZ');
+    await page.keyboard.down('Shift');
+    await drag([[100, 230], [167, 230]], async () => { g35 = await guides(); });
+    await page.keyboard.up('Shift');
+    ok((await byId(A)).b.x === 167 && g35.length === 0, 'Shift: kept proportions, no snapping: ' + JSON.stringify(await byId(A)));
+    await page.keyboard.press('Meta+KeyZ');
+    ok((await byId(A)).b.x === 100 && (await byId(A)).a.y === 140, 'both undone');
+    // A line's end snaps its point: (350, 60) → (398, 138) → x 400 (the canvas edge), y 140 (A's top).
+    await page.keyboard.press('KeyL');
+    await drag([[300, 20], [350, 60]]);
+    const L35 = await objSel();
+    await drag([[350, 60], [398, 138]], async () => { g35 = await guides(); });
+    o = await byId(L35);
+    ok(o.a.x === 300 && o.a.y === 20 && o.b.x === 400 && o.b.y === 140, 'a line end snaps on both axes: ' + JSON.stringify([o.a, o.b]));
+    ok(g35.length === 2 && g35[0].x === 400 && g35[1].y === 140, 'a guide on each: ' + JSON.stringify(g35));
+
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));
   } catch (e) {
     fails++; console.log('FAIL: threw', e);

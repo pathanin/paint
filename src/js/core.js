@@ -874,6 +874,97 @@
     return { ...o, a: f(o.a), b: f(o.b), size };
   }
 
+  // Snapping (smart guides, as in Figma, tldraw and Excalidraw): while objects are moved or resized,
+  // the corners and centre of their frame (objFrame: the box the selection shows) snap to the lines
+  // through those of other objects and the canvas: x to their left, centre and right, y to their top,
+  // middle and bottom. Each axis on its own, to the nearest line within tol (image px); objects move
+  // by whole px, so the result is then rounded.
+  // snapLines(frames): the lines to snap to, {x, y}, each sorted by v. A vertical line {v, at} is at
+  // x = v and passes the frame's points at y in at (an edge: two corners; the centre line: the centre);
+  // a horizontal one the other way round.
+  function snapLines(frames) {
+    const x = [], y = [];
+    for (const f of frames) {
+      const r = f.x + f.w, b = f.y + f.h, cx = f.x + f.w / 2, cy = f.y + f.h / 2;
+      x.push({ v: f.x, at: [f.y, b] }, { v: cx, at: [cy] }, { v: r, at: [f.y, b] });
+      y.push({ v: f.y, at: [f.x, r] }, { v: cy, at: [cx] }, { v: b, at: [f.x, r] });
+    }
+    const byV = (p, q) => p.v - q.v;
+    return { x: x.sort(byV), y: y.sort(byV) };
+  }
+  const framePts = (f) => [{ x: f.x, y: f.y }, { x: f.x + f.w, y: f.y }, { x: f.x + f.w, y: f.y + f.h }, { x: f.x, y: f.y + f.h }, { x: f.x + f.w / 2, y: f.y + f.h / 2 }];
+  // Index of the first line at or past v.
+  function lineAt(lines, v) {
+    let lo = 0, hi = lines.length;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (lines[m].v < v) lo = m + 1; else hi = m; }
+    return lo;
+  }
+  // How far (line minus value) the nearest line within tol is from one of vals; 0 if none is.
+  function snapBy(lines, vals, tol) {
+    let by = 0, bd = Infinity;
+    for (const v of vals) {
+      const i = lineAt(lines, v);
+      for (const l of [lines[i - 1], lines[i]]) {
+        const d = l ? Math.abs(l.v - v) : Infinity;
+        if (d <= tol && d < bd) { by = l.v - v; bd = d; }
+      }
+    }
+    return by;
+  }
+  // The guides once snapped, for the points that snap on x (xp) and on y (yp): on each axis, the lines
+  // nearest to one of those points if within half a px (a move is whole px, so an odd-width outline,
+  // drawn on .5, can only get that close to an even one's edge). One guide per position, through every
+  // point on it, its own and the lines': {x, lo, hi, at} is a vertical one from y = lo to hi, marked at
+  // each y in at; {y, lo, hi, at} a horizontal one.
+  function snapGuides(t, xp, yp) {
+    const E = 1e-6;
+    function axis(lines, pts, k, j) {
+      const near = (v) => { const r = []; for (let i = lineAt(lines, v - 0.5 - E); i < lines.length && lines[i].v <= v + 0.5 + E; i++) r.push(lines[i]); return r; };
+      let bd = Infinity;
+      for (const p of pts) for (const l of near(p[k])) bd = Math.min(bd, Math.abs(l.v - p[k]));
+      const on = new Map(); // position -> the points on it
+      for (const p of pts) {
+        for (const l of near(p[k])) {
+          if (Math.abs(l.v - p[k]) > bd + E) continue;
+          if (!on.has(l.v)) on.set(l.v, new Set());
+          const s = on.get(l.v);
+          for (const a of l.at) s.add(a);
+          s.add(p[j]);
+        }
+      }
+      return [...on].sort((p, q) => p[0] - q[0]).map(([v, s]) => {
+        const at = [...s].sort((p, q) => p - q);
+        return { [k]: v, lo: at[0], hi: at[at.length - 1], at };
+      });
+    }
+    return axis(t.x, xp, 'x', 'y').concat(axis(t.y, yp, 'y', 'x'));
+  }
+  // Frame f moved by (dx, dy), snapped to lines t (snapLines): {dx, dy} in whole px, and the guides.
+  // lock: 'x' or 'y', an axis Shift holds still; it is left as it is.
+  function snapMove(t, f, dx, dy, tol, lock) {
+    const pts = framePts(f);
+    if (lock !== 'x') dx = Math.round(dx + snapBy(t.x, pts.map((p) => p.x + dx), tol));
+    if (lock !== 'y') dy = Math.round(dy + snapBy(t.y, pts.map((p) => p.y + dy), tol));
+    const moved = framePts({ x: f.x + dx, y: f.y + dy, w: f.w, h: f.h });
+    return { dx, dy, guides: snapGuides(t, lock === 'x' ? [] : moved, lock === 'y' ? [] : moved) };
+  }
+  // Handle h of shape o dragged by (dx, dy), snapped as a move is, by the points it drags: a corner,
+  // the two ends of a side (on its own axis), or a line's end. {dx, dy, guides}.
+  function snapResize(t, o, h, dx, dy, tol) {
+    const g = drawnObj(o), r = normRect(g.a, g.b);
+    function pts(dx, dy) { // [the points that snap on x, those on y]
+      if (h === 'a' || h === 'b') { const p = { x: g[h].x + dx, y: g[h].y + dy }; return [[p], [p]]; }
+      const x = h.includes('w') ? r.x + dx : h.includes('e') ? r.x + r.w + dx : null;
+      const y = h.includes('n') ? r.y + dy : h.includes('s') ? r.y + r.h + dy : null;
+      if (x != null && y != null) return [[{ x, y }], [{ x, y }]];
+      return x != null ? [[{ x, y: r.y }, { x, y: r.y + r.h }], []] : [[], [{ x: r.x, y }, { x: r.x + r.w, y }]];
+    }
+    const [xp, yp] = pts(dx, dy);
+    dx = Math.round(dx + snapBy(t.x, xp.map((p) => p.x), tol));
+    dy = Math.round(dy + snapBy(t.y, yp.map((p) => p.y), tol));
+    return { dx, dy, guides: snapGuides(t, ...pts(dx, dy)) };
+  }
+
   // Fractional z-keys (as Figma and tldraw order siblings): strings that sort in stacking order, so
   // an object can go between two others without renumbering the rest. zBetween(a, b) is a key
   // strictly between a and b (null: no bound on that side). The scheme is David Greenspan's
@@ -1098,6 +1189,7 @@
   }
 
   const Core = { rgbaToU32, colorToU32, colorDistance, floodMask, fillEdge, floodFill, fillPlan, fillCells, line, stampRects, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History, zBetween, BASE_Z, zAboveBase, flattenRuns, dirtyTiles, diffObjs, applyPairs, crc32, pngChunks, readChunk, withChunk, packObj, unpackObj,
-    objBox, objFrame, insideShape, segsBox, drawnObj, hitsObject, hitObject, objHandles, handleAt, resizeObj, moveObj, transformObj, scaleObj };
+    objBox, objFrame, insideShape, segsBox, drawnObj, hitsObject, hitObject, objHandles, handleAt, resizeObj, moveObj, transformObj, scaleObj,
+    snapLines, snapGuides, snapMove, snapResize };
   module.exports = Core;
 })();

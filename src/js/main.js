@@ -48,6 +48,7 @@ import { fitZoom, setZoom, updateChrome } from './view.js';
 
 // ---------- boot ----------
 document.querySelectorAll('[data-hint]').forEach((el) => { if (el.dataset.hint) el.setAttribute('aria-description', keyLabel(el.dataset.hint)); });
+document.querySelectorAll('.opts .hint').forEach((el) => { el.textContent = keyLabel(el.textContent); }); // the options bar's per-tool hints
 // Expose shortcuts to assistive tech (aria-keyshortcuts uses Control/Meta/Shift names).
 document.querySelectorAll('[data-kbd]').forEach((el) => {
   const k = el.dataset.kbd;

@@ -9,7 +9,7 @@ In Chrome you can install it as an app (install icon in the address bar). It the
 ## Features
 
 - Pencil, brush (smoothed), eraser, fill, colour picker, text
-- Every mark (strokes, shapes, text, fills, pastes) stays an editable object until you flatten it (⌘E); PNG saves keep them
+- Every mark (strokes, shapes, text, fills, pastes) stays an editable object until you flatten it (⌘E); PNG saves keep them. Moving or resizing one snaps it to the others and to the canvas
 - Select, crop, resize, canvas size, rotate, flip
 - Open, paste or drop images, including TIFF; ⌘S saves back to the file you opened
 - Transparency: PNGs open and save with it. The checkered Transparent swatch erases: with color 2 set to it, the eraser, Delete, moving a selection and a bigger canvas leave transparent pixels, and pencil, brush and fill drawing with it clear
@@ -45,6 +45,7 @@ Press `?` in the app for the full list. ⌘ is Ctrl and ⌥ is Alt on Windows/Li
 | ⌘⇧X | Crop to selection |
 | ⌘D, ⌘] ⌘[, ⌘E | Objects (every stroke, shape, text, fill and paste stays movable; new ones go on top; PNG saves keep them): duplicate, bring forward / send backward (⌘⇧] ⌘⇧[: to front / back; also buttons in the Move tool's bar), flatten into pixels (with the Move tool and a selection: just those, into image objects). The Fill tool inside a closed shape sets that shape's fill |
 | ⌥+drag (Move tool) | Duplicate an object by dragging a copy off it |
+| ⌘ while dragging an object | Moving or resizing an object snaps its edges and centre to other objects' and the canvas's (magenta guides show what lines up); hold ⌘ to place it freely |
 | ⌥+drag (Eraser) | Delete every object the drag crosses (⌥ alone outlines the one under the pointer) |
 | Tab / Shift+Tab (Move tool, canvas focused) | Select the next / previous object in drawing order; past the last one, focus moves on |
 | Shift+R | Resize image (resample) |

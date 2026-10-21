@@ -110,7 +110,7 @@
       <button data-cmd="backward" data-tip="Send backward" data-kbd="⌘[" aria-label="Send backward">Backward</button>
       <button data-cmd="toBack" data-tip="Send to back" data-kbd="⌘⇧[" aria-label="Send to back">Back</button>
     </span>
-    <span class="hint" data-for="move">Click an object · drag empty canvas to box-select · Space-drag pans</span>
+    <span class="hint" data-for="move">Click an object · drag empty canvas to box-select · ⌘ held: no snapping · Space-drag pans</span>
     <span class="hint" data-for="select">Drag to select · drag inside to move</span>
     <span class="hint" data-for="eraser">Paints with color 2 · clears if it’s Transparent</span>
     <span class="hint" data-for="fill">Click: color 1 · right-click: color 2</span>
@@ -130,7 +130,7 @@
 
 <div id="main">
   <nav id="rail" class="chrome" role="toolbar" aria-label="Tools" aria-orientation="vertical">
-    <button data-tool="move" data-tip="Move" data-kbd="V" data-hint="Moves any object · drag empty canvas to box-select, Shift-click to add · Alt+drag copies" aria-label="Move"><svg><use href="#i-move"/></svg></button>
+    <button data-tool="move" data-tip="Move" data-kbd="V" data-hint="Moves any object, snapping to the others · drag empty canvas to box-select, Shift-click to add · Alt+drag copies" aria-label="Move"><svg><use href="#i-move"/></svg></button>
     <button data-tool="select" data-tip="Select" data-kbd="S" aria-label="Select"><svg><use href="#i-select"/></svg></button>
     <hr>
     <button data-tool="pencil" data-tip="Pencil" data-kbd="P" aria-label="Pencil"><svg><use href="#i-pencil"/></svg></button>
@@ -153,6 +153,7 @@
       <canvas id="overlay" width="1" height="1" aria-hidden="true"></canvas>
       <div id="ring" hidden></div>
       <div id="objhover" hidden></div>
+      <div id="guides" aria-hidden="true"></div>
       <div id="objsel" hidden></div>
       <textarea id="textInput" hidden spellcheck="false" rows="1" aria-label="Text"></textarea>
       <div id="resizeGhost" hidden></div>

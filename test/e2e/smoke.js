@@ -1000,6 +1000,8 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     await wpage.keyboard.press('Escape'); await wpage.waitForTimeout(150);
     await wpage.hover('[data-cmd="fit"]'); await wpage.waitForTimeout(700);
     ok(!/[⌘⇧]/.test(await wpage.locator('#tip').textContent()), 'no Mac glyphs in tooltip on Windows');
+    const whints = await wpage.evaluate(() => [...document.querySelectorAll('.opts .hint')].map((h) => h.textContent).join(' | '));
+    ok(!/[⌘⇧⌫⌥]/.test(whints) && /Ctrl held: no snapping/.test(whints) && /Ctrl\+E flattens/.test(whints), 'options bar hints in Windows key names: ' + whints);
     await wpage.close();
   } finally { await browser.close(); }
   console.log(`${passes} passed, ${fails} failed`);

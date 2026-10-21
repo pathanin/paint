@@ -75,14 +75,18 @@ let ovKey = '', ovBox = null;
 // pvAt: the image-px rect #preview covers, and k = its backing px per image px. k is 1 when the
 // view is zoomed in (image px, CSS-scaled like #image), and screen resolution when zoomed out.
 let pvAt = null;
-function placePreview() {
-  const z = S.zoom, k = Math.min(1, z * devicePixelRatio);
-  const v = vp.getBoundingClientRect(), r = stage.getBoundingClientRect();
+// The part of the image in view, in whole image px.
+function visible() {
+  const z = S.zoom, v = vp.getBoundingClientRect(), r = stage.getBoundingClientRect();
   const L = v.left + vp.clientLeft - r.left, T = v.top + vp.clientTop - r.top;
-  const vis = { // visible image px
+  return {
     x0: clamp(Math.floor(L / z), 0, img.width), y0: clamp(Math.floor(T / z), 0, img.height),
     x1: clamp(Math.ceil((L + vp.clientWidth) / z), 0, img.width), y1: clamp(Math.ceil((T + vp.clientHeight) / z), 0, img.height),
   };
+}
+function placePreview() {
+  const z = S.zoom, k = Math.min(1, z * devicePixelRatio);
+  const vis = visible();
   const a = pvAt;
   if (a && a.z === z && a.k === k && a.W === img.width && a.H === img.height &&
       vis.x0 >= a.x && vis.y0 >= a.y && vis.x1 <= a.x + a.w && vis.y1 <= a.y + a.h) return;
@@ -155,6 +159,7 @@ function render() {
   ]);
   placeAnts(mq || sel);
   placeObjSel(groupBox() || selObj());
+  placeGuides(drag && drag.guides);
   if (shape || (sel && sel.float) || (tail && tail.length) || multi.length) placePreview();
   if (key !== ovKey) {
     ovKey = key;
@@ -246,6 +251,34 @@ function placeObjHover(o) {
   Object.assign(objHoverEl.style, { left: x + 'px', top: y + 'px', width: px(r.x + r.w) - x + 'px', height: px(r.y + r.h) - y + 'px', transform: '' });
 }
 
+// Snap guides of a move or resize (pointer.js, Core.snapGuides): 1 CSS px lines through the corners and
+// centres that line up, each marked with a small ×, in device px like the ants. Pooled divs.
+const guidesEl = $('#guides');
+let guidesKey = '';
+function placeGuides(gs) {
+  const z = S.zoom, d = devicePixelRatio, mid = (v) => Math.round((v * z - 0.5) * d) / d; // the 1 px centred on v
+  const items = [], marks = new Set(); // [class, left, top, width, height]
+  for (const g of gs || []) {
+    const v = g.x != null, c = mid(v ? g.x : g.y), lo = mid(g.lo), len = mid(g.hi) - lo + 1;
+    items.push(v ? ['v', c, lo, 1, len] : ['h', lo, c, len, 1]);
+    for (const a of g.at) {
+      const m = v ? [c - 3, mid(a) - 3] : [mid(a) - 3, c - 3], k = m.join();
+      if (!marks.has(k)) { marks.add(k); items.push(['m', ...m, 7, 7]); }
+    }
+  }
+  const key = items.join(' ');
+  if (key === guidesKey) return;
+  guidesKey = key;
+  while (guidesEl.children.length < items.length) guidesEl.appendChild(document.createElement('div'));
+  [...guidesEl.children].forEach((el, i) => {
+    const it = items[i];
+    el.hidden = !it;
+    if (!it) return;
+    el.className = it[0];
+    Object.assign(el.style, { left: it[1] + 'px', top: it[2] + 'px', width: it[3] + 'px', height: it[4] + 'px' });
+  });
+}
+
 let cursor = null;  // integer image px under the pointer, for the status bar
 let hoverPt = null; // the same point unrounded (null when the pointer is off the canvas); render() places the ring there
 const setCursor = (c) => { cursor = c; };
@@ -292,4 +325,4 @@ function updateChrome() {
   setProp(EL.redo, 'disabled', !hist.canRedo());
 }
 
-export { fitZoom, imgPt, kickFrame, layout, requestRender, setCursor, setHover, setZoom, updateChrome, updateStatus, zoomStep };
+export { fitZoom, imgPt, kickFrame, layout, requestRender, setCursor, setHover, setZoom, updateChrome, updateStatus, visible, zoomStep };

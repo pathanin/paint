@@ -27,6 +27,14 @@ function entryOf(o) {
   if (!e) { const b = boxOf(o); e = { minX: b.x, minY: b.y, maxX: b.x + b.w, maxY: b.y + b.h, o }; entries.set(o, e); }
   return e;
 }
+// The box the selection shows (Core.objFrame), what a drag snaps to: a stroke's is its box, kept above.
+const frames = new WeakMap();
+function frameOf(o) {
+  if (o.pts || o.segs) return boxOf(o);
+  let f = frames.get(o);
+  if (!f) { f = Core.objFrame(o); frames.set(o, f); }
+  return f;
+}
 const tree = new RBush();
 const byZ = (p, q) => (p.z < q.z ? -1 : p.z > q.z ? 1 : 0);
 
@@ -299,4 +307,4 @@ function freshRender() {
   return c;
 }
 
-export { boxOf, endLive, freshRender, growLive, setLive, flushRedraw, hitAt, markAll, markDirty, objsIn, redrawCount, sceneSwap, TILE };
+export { boxOf, endLive, frameOf, freshRender, growLive, setLive, flushRedraw, hitAt, markAll, markDirty, objsIn, redrawCount, sceneSwap, TILE };

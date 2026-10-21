@@ -95,7 +95,7 @@ Everything is a node, including brush strokes (vector paths) and pasted bitmaps 
 9. **Text as an object:** not done. `commitText()` would create a TEXT object (string, font, size, colour, position) instead of baking, and clicking it with the text tool would reopen the box. The baseline maths (`textBaseline()`) carries over unchanged.
 10. **Pasted images as objects:** not done. This would reuse `sel.float`'s canvas as an IMAGE object, so a paste could be moved and scaled later, which is the most Figma-like win for screenshots.
 11. **Persistence chunk:** dropped (decided: objects are gone on reopen).
-12. **Rotation, groups, multi-select, snapping, layers list:** not done. Multi-select (⇧-click, marquee over objects) is the next most useful step after text.
+12. **Rotation, groups, layers list:** not done. Multi-select (⇧-click, a box drag with the Move tool) came with total objects, and snapping to other objects and the canvas, with guides, on 2026-10-21 (task.md, "Shapes (objects)").
 13. **`task.md`:** "selection resize handles" is listed as out of scope for polish. Objects reopen it as feature work.
 
 14. **Keyboard access to objects:** done. With the Move tool and the canvas focused (`#viewport` is a Tab stop), Tab / ⇧Tab select the next / previous shape in drawing order, and a screen reader hears its kind, size, position and index. Past either end the shape is deselected and the key moves focus on as usual, so focus is never trapped.
