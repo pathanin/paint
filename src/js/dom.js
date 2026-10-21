@@ -43,6 +43,6 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const MAC = /Mac|iPhone|iPad/.test(navigator.platform);
 const keyLabel = (k) => (MAC ? (k === 'Alt' ? '⌥' : k.replace(/Alt\+/g, '⌥'))
   : k === '⌘' ? 'Ctrl' : k === '⇧' ? 'Shift' : k === '⌫' ? 'Backspace'
-  : k.replace(/⌘/g, 'Ctrl+').replace(/⇧([- ])/g, 'Shift$1').replace(/⇧/g, 'Shift+').replace(/\+\+$/, '+Plus').replace(/\+−$/, '+Minus'));
+  : k.replace(/⌘([- ])/g, 'Ctrl$1').replace(/⌘/g, 'Ctrl+').replace(/⇧([- ])/g, 'Shift$1').replace(/⇧/g, 'Shift+').replace(/\+\+$/, '+Plus').replace(/\+−$/, '+Minus'));
 
 export { $, antsEl, clamp, cloneCanvas, hexToU32, keyLabel, MAC, makeCanvas, ov, pixelAt, ring, setAttr, setData, setProp, setText, stage, textBox, toHex, vp };

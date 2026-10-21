@@ -28,6 +28,7 @@ All of this is done and merged to `master`:
 - Superseded big canvases (the old base after a rotate) wait for GC rather than being freed at once: the history and objects may still refer to them, so it wasn't changed.
 - iPad: per-canvas cap 8192² (67 MP); `canvasFits()` now refuses bigger documents with a message instead of a blank picture. iOS Safari never shows a `beforeunload` prompt.
 - WebKit flake: smoke's "mid-stroke: ink reaches the pointer" failed once in about five WebKit runs (a 50 ms wait).
+- `history.js` on the M4's Chrome (2026-10-21): "undo of paste that grows", "redo of pencil after crop" and "second undo of paste that grows" aren't pixel-exact, on `master` too (CI's Linux Chrome passes). Not looked into.
 - Safari draws range sliders natively: it ignores `accent-color` there, so Size/Smoothing are grey, not blue.
 - A real Windows machine (labels were checked only with a `navigator.platform` override).
 - A VoiceOver pass over dialogs, toasts and the canvas label.
@@ -122,6 +123,11 @@ All of this is done and merged to `master`:
 - Hover outlines the shape a click would pick. ⌥-drag copies, placed just above the original.
 - With the Move tool, Tab / ⇧Tab cycle shapes and release focus at the ends (no focus trap).
 - Crop, resize, canvas size, rotate and flip carry shapes along in one undo step; crop drops shapes wholly outside.
+- Snapping (2026-10-21, after Figma's smart guides, tldraw and Excalidraw): on by default. A move or resize lines up the left / centre / right and top / middle / bottom of what it drags (its frame, the box the selection shows; a group's union) with those of the objects in view and of the canvas, each axis on its own, to the nearest within 8 screen px. Magenta 1 px guides run through the corners and centres that line up, each marked with a × (as in tldraw and Excalidraw; a centre guide runs centre to centre, not across both boxes, and the × keeps a guide readable where it lies along a black outline). Only the closest match shows, and only within half a pixel (moves are whole px, so an odd-width outline on .5 can only get that close to an even one's edge).
+  - ⌘ (Ctrl elsewhere) held suspends it, also pressed or released mid-drag. Ctrl on a Mac would be a right-click; Figma's own key has changed over the years (S on Windows now).
+  - A resize snaps only the edges its handle drags (a line end: its point). Shift keeps its meaning: a move stays on one axis and snaps the other; a resize that keeps the aspect or a line's 45° doesn't snap.
+  - A ⌥-drag copy may snap to its original (so a copy dragged straight down stays in line). Arrow nudges never snap. Nothing snaps before the 3 px threshold.
+  - Not done: equal-spacing (gap) snaps, snapping a new shape while it's drawn, a switch to turn it off for good.
 
 ## Measured gotchas (Chrome, M4, 10000² canvas)
 

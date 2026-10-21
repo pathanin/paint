@@ -11,7 +11,7 @@ const HELP = [
   ['Drawing', [['Draw with color 1 / color 2', '~Left / right click'], ['Swap colors', 'X'], ['Smaller / bigger size', '[', ']'],
     ['Square, circle, 45° line', '⇧', '~drag'], ['Pick color 2 from a swatch', '~right-click / ⇧-click'],
     ['Apply text', 'Enter'], ['New line in text', '⇧Enter'], ['Cancel text', 'Esc']]],
-  ['Objects', [['Next / previous object (Move tool)', 'Tab', '⇧Tab'], ['Duplicate', '⌘D'], ['Duplicate by dragging', 'Alt', '~drag'], ['Add to / take from the selection', '⇧', '~click'], ['Move straight, keep proportions', '⇧', '~drag'],
+  ['Objects', [['Next / previous object (Move tool)', 'Tab', '⇧Tab'], ['Duplicate', '⌘D'], ['Duplicate by dragging', 'Alt', '~drag'], ['Add to / take from the selection', '⇧', '~click'], ['Move straight, keep proportions', '⇧', '~drag'], ['Move or resize without snapping', '⌘', '~drag'],
     ['Forward / backward, to front / back', '⌘]', '⌘[', '⌘⇧]', '⌘⇧['], ['Flatten (with Move: just the selection)', '⌘E'], ['Delete what the Eraser crosses', 'Alt', '~drag'], ['Delete', 'Delete', '⌫'], ['Nudge (⇧ = 10px)', '←', '↑', '→', '↓']]],
   ['Image', [['Resize image', '⇧R'], ['Canvas size', '⇧C'], ['Canvas: keep aspect', '⇧', '~drag corner'], ['Cancel canvas drag', 'Esc']]],
   ['File', [['New', 'Alt+N'], ['Open', '⌘O'], ['Save', '⌘S'], ['Save as', '⌘⇧S']]],

@@ -251,23 +251,31 @@ function placeObjHover(o) {
   Object.assign(objHoverEl.style, { left: x + 'px', top: y + 'px', width: px(r.x + r.w) - x + 'px', height: px(r.y + r.h) - y + 'px', transform: '' });
 }
 
-// Snap guides of a move or resize (pointer.js, Core.snapGuides): 1 CSS px lines centred on the edge or
-// centre that lines up, across the boxes on it, in device px like the ants. Pooled: a drag shows a few.
+// Snap guides of a move or resize (pointer.js, Core.snapGuides): 1 CSS px lines through the corners and
+// centres that line up, each marked with a small ×, in device px like the ants. Pooled divs.
 const guidesEl = $('#guides');
 let guidesKey = '';
 function placeGuides(gs) {
-  const z = S.zoom, d = devicePixelRatio, px = (v) => Math.round(v * z * d) / d, mid = (v) => Math.round((v * z - 0.5) * d) / d;
-  const key = gs && gs.length ? gs.map((g) => (g.x != null ? ['x', mid(g.x)] : ['y', mid(g.y)]).concat(px(g.lo), px(g.hi)).join()).join(' ') : '';
+  const z = S.zoom, d = devicePixelRatio, mid = (v) => Math.round((v * z - 0.5) * d) / d; // the 1 px centred on v
+  const items = [], marks = new Set(); // [class, left, top, width, height]
+  for (const g of gs || []) {
+    const v = g.x != null, c = mid(v ? g.x : g.y), lo = mid(g.lo), len = mid(g.hi) - lo + 1;
+    items.push(v ? ['v', c, lo, 1, len] : ['h', lo, c, len, 1]);
+    for (const a of g.at) {
+      const m = v ? [c - 3, mid(a) - 3] : [mid(a) - 3, c - 3], k = m.join();
+      if (!marks.has(k)) { marks.add(k); items.push(['m', ...m, 7, 7]); }
+    }
+  }
+  const key = items.join(' ');
   if (key === guidesKey) return;
   guidesKey = key;
-  const n = key ? gs.length : 0;
-  while (guidesEl.children.length < n) guidesEl.appendChild(document.createElement('div'));
+  while (guidesEl.children.length < items.length) guidesEl.appendChild(document.createElement('div'));
   [...guidesEl.children].forEach((el, i) => {
-    el.hidden = i >= n;
-    if (i >= n) return;
-    const g = gs[i], v = g.x != null, lo = px(g.lo), len = Math.max(1, px(g.hi) - lo) + 'px';
-    el.className = v ? 'v' : 'h';
-    Object.assign(el.style, v ? { left: mid(g.x) + 'px', top: lo + 'px', width: '', height: len } : { left: lo + 'px', top: mid(g.y) + 'px', width: len, height: '' });
+    const it = items[i];
+    el.hidden = !it;
+    if (!it) return;
+    el.className = it[0];
+    Object.assign(el.style, { left: it[1] + 'px', top: it[2] + 'px', width: it[3] + 'px', height: it[4] + 'px' });
   });
 }
 
