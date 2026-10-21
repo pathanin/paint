@@ -20,6 +20,8 @@ All of this is done and merged to `master`:
 
 ## Open
 
+**Code review (2026-10-21):** findings in `docs/code-review-2026-10-21.md`; 1–3 fixed on `fix/save-resize-flatten` (not pushed yet). Next steps in `docs/handoff-2026-10-22.md`.
+
 **Not verified:**
 - Firefox (no runs at all yet).
 - Real Safari. Every suite except pwa runs in Playwright's WebKit (`BROWSER=webkit`, 2026-10-18), which is close to Safari 27 but not Safari. Still to try by hand: trackpad pinch (only synthetic gesture events are tested), real clipboard copy/paste, the first-download prompt, Add to Dock, and feel at 10000² (a functional pass at 10000² and 16384×6100 in WebKit was fine: no blank canvases, no canvas-memory warnings). WebKit dropped its total canvas memory cap in June 2023 (bug 195325): running out now gets the tab killed and reloaded, losing unsaved work, so an 8 GB Mac at 100 MP is the tightest case. Safari 16.x may still have the old cap (RAM/4); a failed `getContext` there would throw in doc ops without a toast.
