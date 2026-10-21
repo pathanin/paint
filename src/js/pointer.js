@@ -100,7 +100,7 @@ function objDragUpdate(d) {
   if (lock === 'y') dy = 0; else if (lock === 'x') dx = 0;
   d.guides = null;
   if (!d.free && !(d.shift && d.t === 'objsize')) {
-    if (!d.snap) { d.snap = snapTargets(d); d.frame = dragFrame(d); }
+    if (!d.snap) { d.snap = snapTargets(d); if (d.t === 'objmove') d.frame = dragFrame(d); }
     const s = d.t === 'objmove' ? Core.snapMove(d.snap, d.frame, dx, dy, snapTol(), lock) : Core.snapResize(d.snap, d.box || d.o, d.h, dx, dy, snapTol());
     dx = s.dx; dy = s.dy; d.guides = s.guides;
   }
