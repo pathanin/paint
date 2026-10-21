@@ -1,6 +1,7 @@
 import { pasteImage } from './clipboard.js';
 import { $ } from './dom.js';
-import { cantOpen, confirmDiscard, decodeFile, isDirty, loadFile, tooBigToOpen } from './fileio.js';
+import { cantOpen, confirmDiscard, decodeFile, docMark, isDirty, loadFile, tooBigToOpen } from './fileio.js';
+import { docLanded, requestDoc } from './doc.js';
 import { isTyping } from './keyboard.js';
 import { errText, flash } from './toast.js';
 import { updateStatus } from './view.js';
@@ -49,15 +50,20 @@ window.addEventListener('drop', async (e) => {
   const hp = item.getAsFileSystemHandle ? item.getAsFileSystemHandle() : null;
   const file = item.getAsFile();
   if (!file || (file.type && !file.type.startsWith('image/'))) { flash('Not an image: ' + (file ? file.name : 'file'), true); return; }
+  // Its place among Opens and New is taken now, as it arrives: an Open or New asked for while it
+  // decodes comes after it (loadFile).
+  const turn = requestDoc();
   // Decode before asking to discard, so a file that isn't an image never prompts.
   let bmp;
   try { bmp = await decodeFile(file); }
-  catch (err) { flash(cantOpen(file, err), true); return; }
+  catch (err) { if (docLanded <= turn) flash(cantOpen(file, err), true); return; }
+  if (docLanded > turn) { bmp.close(); return; } // a later Open, drop or New landed meanwhile: no prompt for this one
   if (tooBigToOpen(file, bmp)) return; // before asking to discard: nothing would replace it
   if (!confirmDiscard()) { bmp.close(); return; }
+  const seen = docMark(); // what that discard covered
   let handle = null;
   try { handle = hp ? await hp : null; } catch { handle = null; }
-  loadFile(file, handle && handle.kind === 'file' ? handle : null, bmp);
+  loadFile(file, handle && handle.kind === 'file' ? handle : null, bmp, turn, seen);
 });
 $('#fileInput').addEventListener('change', (e) => {
   const f = e.target.files[0];

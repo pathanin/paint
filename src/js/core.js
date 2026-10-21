@@ -1040,16 +1040,26 @@
     let z = BASE_Z;
     return list.map((o) => { z = zBetween(z, null); return { ...o, z }; });
   }
+  // Does drawing o clear what is under it (destination-out) rather than paint over it? A pencil, eraser
+  // or brush stroke, or a lift's or Delete's patch (a fill-mode rect), in Transparent; and a fill that
+  // replaces pixels (asset.clears: in Transparent, or with a soft edge that isn't opaque). An image only
+  // paints over what is under it, so none of these can become part of one (flattenRuns).
+  function clearsUnder(o) {
+    if (o.t === 'fill') return !!(o.asset && o.asset.clears);
+    return o.color === 'transparent' && (STROKES.has(o.t) || (o.t === 'rect' && o.mode === 'fill'));
+  }
   // ⌘E on selected objects: each becomes part of one image at the z of its run's top. An unselected
   // object between two selected ones that overlaps what is selected below it would end up under
-  // pixels it covered, so it ends the run there. objs: the list, bottom to top; ids: a Set of the
-  // selected ids. Returns runs of selected objects (each bottom to top), bottom run first.
+  // pixels it covered, so it ends the run there. A selected object that clears what is under it
+  // (clearsUnder) stays an object and counts as unselected here: drawn into the image it would clear
+  // nothing, and an image above it would escape its clearing. objs: the list, bottom to top; ids: a
+  // Set of the selected ids. Returns runs of selected objects (each bottom to top), bottom run first.
   function flattenRuns(objs, ids) {
     const runs = [];
     let run = null, box = null;
     for (const o of objs) {
       const b = objBox(o);
-      if (ids.has(o.id)) {
+      if (ids.has(o.id) && !clearsUnder(o)) {
         if (!run) { run = []; box = { ...b }; runs.push(run); }
         else {
           const x1 = Math.max(box.x + box.w, b.x + b.w), y1 = Math.max(box.y + box.h, b.y + b.h);
@@ -1188,7 +1198,7 @@
     return [...seen.values()];
   }
 
-  const Core = { rgbaToU32, colorToU32, colorDistance, floodMask, fillEdge, floodFill, fillPlan, fillCells, line, stampRects, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History, zBetween, BASE_Z, zAboveBase, flattenRuns, dirtyTiles, diffObjs, applyPairs, crc32, pngChunks, readChunk, withChunk, packObj, unpackObj,
+  const Core = { rgbaToU32, colorToU32, colorDistance, floodMask, fillEdge, floodFill, fillPlan, fillCells, line, stampRects, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History, zBetween, BASE_Z, zAboveBase, clearsUnder, flattenRuns, dirtyTiles, diffObjs, applyPairs, crc32, pngChunks, readChunk, withChunk, packObj, unpackObj,
     objBox, objFrame, insideShape, segsBox, drawnObj, hitsObject, hitObject, objHandles, handleAt, resizeObj, moveObj, transformObj, scaleObj,
     snapLines, snapGuides, snapMove, snapResize };
   module.exports = Core;

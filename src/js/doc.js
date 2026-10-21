@@ -118,14 +118,24 @@ function redo() {
   if (e) applyHist(e);
 }
 
+// Requests to replace the document, numbered in the order they were made (requestDoc): New, and each
+// Open (once it has its file; a drop as it arrives). docLanded is the latest one that has replaced it
+// (landDoc). An Open still loading when a later request lands is dropped (fileio.js loadFile), so the
+// one asked for last wins; a later one that never lands (a file that won't decode, a discard declined)
+// leaves it be.
+let docRequest = 0, docLanded = 0;
+const requestDoc = () => ++docRequest;
+const landDoc = (turn) => { docLanded = Math.max(docLanded, turn); };
+
 function newDoc(w, h) {
+  landDoc(requestDoc());
   commitText();
   setDoc(null, w, h);
   hist.clear();
   resetObjs();
-  Object.assign(S, { fileHandle: null, fileName: 'untitled.png', pristine: true, trimWarned: false });
+  Object.assign(S, { fileHandle: null, fileName: 'untitled.png', pristine: true, trimWarned: false, docId: S.docId + 1 });
   fitZoom(true);
   updateChrome();
 }
 
-export { base, bctx, ctx, docOp, turnDoc, hist, img, newDoc, pushDocHist, pushHist, redo, setDoc, undo };
+export { base, bctx, ctx, docLanded, docOp, turnDoc, hist, img, landDoc, newDoc, pushDocHist, pushHist, redo, requestDoc, setDoc, undo };

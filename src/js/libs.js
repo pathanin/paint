@@ -40,10 +40,12 @@ function workerCall(w, msg, transfer) {
 // is taken now (createImageBitmap, a GPU copy), so later edits can't leak in; kickFrame() keeps it from
 // holding the next frame. It is transferred: posting a copy would read it back here first. One worker
 // per call, so its full-size CPU canvas is freed after. A small src is encoded here with toBlob(), and
-// so is src itself if the worker can't start or fails (the canvases passed here are never drawn on
-// again, except #image, whose later edits a save keeps unsaved anyway).
+// so is src itself if the worker can't start or fails: the snapshot went to the worker, so that encodes
+// src as it is by then. Later edits of the same document are fine there (a save keeps them unsaved), but
+// New and Open reuse #image and the base canvas: still(), when given, says whether src still holds the
+// document it had, and if not the fallback rejects (name 'SourceChanged') instead of encoding another.
 const SMALL_PX = 1 << 21; // up to here (one strip) the readback costs a few ms: not worth a worker
-function encodeBlob(src, type = 'image/png', quality) {
+function encodeBlob(src, type = 'image/png', quality, still) {
   const builtin = () => new Promise((res, rej) => src.toBlob((b) => (b ? res(b) : rej(new Error('encode failed'))), type, quality));
   if (src.width * src.height <= SMALL_PX) { used.encode = 'builtin'; return builtin(); }
   const snap = createImageBitmap(src);
@@ -56,6 +58,7 @@ function encodeBlob(src, type = 'image/png', quality) {
       return blob;
     } catch {
       used.encode = 'builtin';
+      if (still && !still()) throw Object.assign(new Error('the image was replaced while it was encoded'), { name: 'SourceChanged' });
       return builtin();
     } finally {
       worker.terminate();

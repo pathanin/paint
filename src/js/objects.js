@@ -7,7 +7,7 @@ import { drawObj } from './tools.js';
 import { flushRedraw, sceneSwap } from './scene.js';
 import { commitSelection } from './selection.js';
 import { commitText } from './text.js';
-import { announce } from './toast.js';
+import { announce, flash } from './toast.js';
 import { requestRender } from './view.js';
 
 // ---------- objects ----------
@@ -244,22 +244,27 @@ function fillShape(o, c) {
 // ⌘E with objects selected: just those become pixels, as image objects. Selected objects next to each
 // other in the stack become one image, at the top one's place; an unselected object between them that
 // covers part of one below would end up under it, so it splits them into two images (Core.flattenRuns):
-// what is seen doesn't change. One undo step; the new images are selected.
+// what is seen doesn't change. One that clears or replaces what is under it (Core.clearsUnder: a mark in
+// Transparent, or a fill whose soft edge replaces see-through pixels) can't be part of an image, which
+// only paints over, so it stays an object, splitting the images the same way. One undo step; the new images and
+// the objects kept are selected. With only such objects selected, nothing happens (and the whole scene
+// isn't flattened instead).
 function flattenSelected() {
   const list = selList();
   if (!list.length) return false;
-  const swap = new Map(); // the top of each run -> its image (the rest of the run goes)
+  const swap = new Map(), flat = new Set(); // the top of each run -> its image; every object in a run (they go)
   for (const run of Core.flattenRuns(objs, new Set(list.map((o) => o.id)))) {
     const bs = run.map((o) => Core.objBox(o)), x = Math.min(...bs.map((b) => b.x)), y = Math.min(...bs.map((b) => b.y));
     const c = makeCanvas(Math.max(...bs.map((b) => b.x + b.w)) - x, Math.max(...bs.map((b) => b.y + b.h)) - y), g = c.getContext('2d');
     g.translate(-x, -y);
-    for (const o of run) drawObj(g, o);
+    for (const o of run) { drawObj(g, o); flat.add(o); }
     const top = run[run.length - 1];
     swap.set(top, { t: 'image', x, y, w: c.width, h: c.height, asset: makeAsset(c), id: nextObjId++, z: top.z });
   }
-  const gone = new Set(list);
-  setObjs(objs.filter((o) => !gone.has(o) || swap.has(o)).map((o) => swap.get(o) || o));
-  selectMany([...swap.values()].map((o) => o.id));
+  setObjs(objs.filter((o) => !flat.has(o) || swap.has(o)).map((o) => swap.get(o) || o));
+  const kept = list.filter((o) => !flat.has(o));
+  selectMany([...swap.values(), ...kept].map((o) => o.id));
+  if (kept.length) flash(`${kept.length === 1 ? 'A mark that clears or replaces pixels stays an object' : kept.length + ' marks that clear or replace pixels stay objects'}: an image only paints over`);
   return true;
 }
 // Bake every object into the pixels (⌘E) as one undo step: the base becomes a copy of the cache, so it

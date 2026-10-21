@@ -1164,6 +1164,39 @@ test('flattenRuns: an unselected object between selected ones ends the run only 
   assert.deepEqual(ids(Core.flattenRuns([base, A, C, D, B], new Set([1, 3, 2]))), [[1, 3], [2]]);
 });
 
+test('clearsUnder: the objects that clear what is under them (Transparent strokes and patches, fills that replace pixels)', () => {
+  const T = 'transparent';
+  for (const t of ['pencil', 'eraser']) {
+    assert.ok(Core.clearsUnder({ t, pts: [0, 0], color: T, size: 1 }), t + ' in Transparent');
+    assert.ok(!Core.clearsUnder({ t, pts: [0, 0], color: '#000000', size: 1 }), t + ' in a colour');
+  }
+  assert.ok(Core.clearsUnder({ t: 'brush', segs: [], color: T, size: 4 }));
+  assert.ok(!Core.clearsUnder({ t: 'brush', segs: [], color: '#ff0000', size: 4 }));
+  const rect = (mode, color, alt) => ({ t: 'rect', a: { x: 0, y: 0 }, b: { x: 9, y: 9 }, color, alt, size: 2, mode });
+  assert.ok(Core.clearsUnder(rect('fill', T, T)), "a lift's or Delete's patch in Transparent");
+  assert.ok(!Core.clearsUnder(rect('fill', '#ffffff', '#ffffff')), 'a patch in a colour');
+  assert.ok(!Core.clearsUnder(rect('both', '#000000', T)), 'a shape fill in Transparent is no fill, not a clear');
+  assert.ok(Core.clearsUnder({ t: 'fill', x: 0, y: 0, w: 4, h: 4, asset: { clears: true } }));
+  assert.ok(!Core.clearsUnder({ t: 'fill', x: 0, y: 0, w: 4, h: 4, asset: { clears: false } }));
+  assert.ok(!Core.clearsUnder({ t: 'image', x: 0, y: 0, w: 4, h: 4, asset: {} }), 'an image only paints over');
+  assert.ok(!Core.clearsUnder({ t: 'text', x: 0, y: 0, lines: ['a'], fs: 10, w: 5, color: '#000000' }));
+});
+
+test('flattenRuns: a selected object that clears what is under it stays out of the runs, and splits one only where it overlaps it', () => {
+  const r = (id, x, y, w, h, more) => ({ id, t: 'rect', a: { x, y }, b: { x: x + w, y: y + h }, size: 2, mode: 'fill', color: '#ff0000', ...more });
+  const base = { id: 0, t: 'base', locked: true, x: 0, y: 0, w: 500, h: 500 };
+  const A = r(1, 10, 10, 50, 50), C = r(3, 200, 10, 50, 50);
+  const hole = r(2, 40, 40, 50, 50, { color: 'transparent' }), farHole = r(2, 300, 300, 20, 20, { color: 'transparent' });
+  const ids = (runs) => runs.map((run) => run.map((o) => o.id));
+  const all = new Set([1, 2, 3]);
+  // It clears part of A: A under it and C over it are flattened apart, and it is in neither image.
+  assert.deepEqual(ids(Core.flattenRuns([base, A, hole, C], all)), [[1], [3]]);
+  // Elsewhere: A and C are one image, still without it.
+  assert.deepEqual(ids(Core.flattenRuns([base, A, farHole, C], all)), [[1, 3]]);
+  // Only clearing objects selected: nothing to flatten.
+  assert.deepEqual(ids(Core.flattenRuns([base, A, hole, C], new Set([2]))), []);
+});
+
 test('History.forgetSave: not clean until the next save', () => {
   const h = new Core.History({ maxCount: 10, maxBytes: 1e9 });
   h.push({ bytes: 1 });
