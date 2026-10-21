@@ -22,6 +22,7 @@
   --well-ring: rgba(0, 0, 0, .38);
   --accent-fill: #2563eb; /* filled buttons: white text stays above 4.5:1 in both themes */
   --danger: #d92d20;
+  --snap: #f0148c; /* snap guides: magenta, apart from the blue selection, over any picture in either theme */
   --seg-on: #ffffff;
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1); /* UI enter/exit */
 }
@@ -258,6 +259,12 @@ button.labeled { padding: 0 9px 0 7px; }
 #objhover.line { box-shadow: none; background: var(--accent); transform-origin: 0 50%; }
 #objhover[hidden] { display: none; }
 #objsel[hidden], #objsel .handle[hidden] { display: none; }
+/* Snap guides while a move or resize lines up (placeGuides): under the selection's handles. */
+#guides { position: absolute; left: 0; top: 0; z-index: 1; pointer-events: none; }
+#guides div { position: absolute; background: var(--snap); }
+#guides .v { width: 1px; }
+#guides .h { height: 1px; }
+#guides div[hidden] { display: none; }
 #objsel .handle {
   position: absolute; left: -4px; top: -4px; width: 8px; height: 8px; box-sizing: border-box;
   background: #fff; border: 1px solid var(--accent);

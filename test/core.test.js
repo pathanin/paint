@@ -1018,6 +1018,65 @@ test('resizeObj with keep: corners and edges keep the aspect ratio, line ends sn
   assert.deepEqual(Core.resizeObj(obj('line', { x: 0, y: 0 }, { x: 10, y: 0 }), 'a', 2, 1, true).a, { x: 2, y: 0 });
 });
 
+test('snapLines: each frame\'s edges and centre as lines on both axes, sorted, with the frame\'s extent', () => {
+  const t = Core.snapLines([{ x: 100, y: 0, w: 50, h: 40 }, { x: 0, y: 10, w: 20, h: 20 }]);
+  assert.deepEqual(t.x.map((l) => l.v), [0, 10, 20, 100, 125, 150]);
+  assert.deepEqual(t.y.map((l) => l.v), [0, 10, 20, 20, 30, 40]);
+  assert.deepEqual(t.x[3], { v: 100, lo: 0, hi: 40 }); // a vertical line spans its frame's height
+  assert.deepEqual(t.y[1], { v: 10, lo: 0, hi: 20 });
+});
+
+test('snapMove: each axis moves by whole px, onto the nearest line within tol; guides show what lines up', () => {
+  const t = Core.snapLines([{ x: 100, y: 0, w: 50, h: 50 }]);
+  const f = { x: 0, y: 200, w: 20, h: 20 };
+  let s = Core.snapMove(t, f, 77.4, 0.3, 8);
+  assert.deepEqual([s.dx, s.dy], [80, 0]); // right edge 97 → 100; nothing near on y
+  assert.deepEqual(s.guides, [{ x: 100, lo: 0, hi: 220 }]); // spans both frames
+  s = Core.snapMove(t, f, 70.6, 0, 8);
+  assert.deepEqual([s.dx, s.dy, s.guides], [71, 0, []]); // 10 px off: no snap, just rounded
+  s = Core.snapMove(t, f, 117, 0, 8); // centre 127 → 125 (2 px) beats left 117 → 125 (8 px)
+  assert.deepEqual([s.dx, s.guides], [115, [{ x: 125, lo: 0, hi: 220 }]]);
+  s = Core.snapMove(t, f, 77, -153, 8, 'x'); // locked x: as it is; y top 47 → 50
+  assert.deepEqual([s.dx, s.dy, s.guides], [77, -150, [{ y: 50, lo: 77, hi: 150 }]]); // a horizontal guide spans x
+  const same = Core.snapMove(t, { x: 0, y: 200, w: 50, h: 50 }, 98, 0, 8); // same width: all three line up
+  assert.deepEqual(same.guides.map((g) => g.x), [100, 125, 150]);
+  // An odd-width outline's frame sits on .5: a whole-px move gets within half a pixel, and that shows.
+  const odd = Core.snapLines([{ x: 100.5, y: 0.5, w: 30, h: 30 }]);
+  s = Core.snapMove(odd, f, 77, 0, 8);
+  assert.ok(Math.abs(f.x + f.w + s.dx - 100.5) === 0.5, 'within half a px of the odd edge: ' + s.dx);
+  assert.deepEqual(s.guides.map((g) => g.x), [100.5]);
+});
+
+test('snapGuides: only the closest lines show, one guide per position, spanning every frame on it', () => {
+  const t = Core.snapLines([{ x: 10, y: 0, w: 10, h: 10 }, { x: 10, y: 50, w: 30, h: 10 }, { x: 10.5, y: 90, w: 5, h: 5 }]);
+  const g = Core.snapGuides(t, [10], [], { x: 10, y: 20, w: 5, h: 5 });
+  assert.deepEqual(g, [{ x: 10, lo: 0, hi: 60 }]); // both frames at 10 (not the one 0.5 off), and the moved one
+  assert.deepEqual(Core.snapGuides(t, [10.25], [], { x: 10.25, y: 20, w: 5, h: 5 }), // a tie shows both
+    [{ x: 10, lo: 0, hi: 60 }, { x: 10.5, lo: 20, hi: 95 }]);
+  assert.deepEqual(Core.snapGuides(t, [11.5], [], { x: 11.5, y: 20, w: 5, h: 5 }), []); // over half a px off: none
+});
+
+test('snapResize: the edges a handle drags snap (corners both axes, an edge one), and a line end its point', () => {
+  const t = Core.snapLines([{ x: 60, y: 100, w: 10, h: 10 }]);
+  const o = obj('rect', { x: 0, y: 0 }, { x: 40, y: 40 });
+  let s = Core.snapResize(t, o, 'e', 17, 3, 8);
+  assert.deepEqual([s.dx, s.dy], [20, 3]); // right 57 → 60
+  assert.deepEqual(s.guides, [{ x: 60, lo: 0, hi: 110 }]);
+  s = Core.snapResize(t, o, 'se', 17, 57, 8); // corner: 57 → 60 and 97 → 100
+  assert.deepEqual([s.dx, s.dy], [20, 60]);
+  s = Core.snapResize(t, o, 'w', 57, 0, 8); // the west edge, dragged past the east one: 57 → 60
+  assert.equal(s.dx, 60);
+  s = Core.snapResize(t, o, 'n', 0, 103, 8); // the top edge: 103 → 105 (the target's middle)
+  assert.deepEqual([s.dx, s.dy], [0, 105]);
+  const l = obj('line', { x: 0, y: 0 }, { x: 30, y: 30 });
+  s = Core.snapResize(t, l, 'b', 34, 68, 8); // the end (30, 30) → (64, 98): x 65 (centre), y 100 (top)
+  assert.deepEqual([s.dx, s.dy], [35, 70]);
+  assert.deepEqual(s.guides.map((g) => [g.x, g.y]), [[65, undefined], [undefined, 100]]);
+  const odd = obj('rect', { x: 0, y: 0 }, { x: 40, y: 40 }, { size: 1 }); // drawn on .5: right edge 40.5
+  s = Core.snapResize(t, odd, 'e', 17, 0, 8);
+  assert.ok(Math.abs(40.5 + s.dx - 60) === 0.5 && s.guides.length === 1, 'half a px from 60: ' + s.dx);
+});
+
 test('transformObj rotates and flips a shape with the image, on the pixel grid its stroke width uses', () => {
   // 100 × 50 image. Odd widths draw on pixel centres (px x maps to W-1-x), even ones on pixel edges (W-x).
   const odd = obj('rect', { x: 10, y: 5 }, { x: 30, y: 15 }, { size: 1 });

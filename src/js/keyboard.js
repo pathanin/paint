@@ -2,7 +2,7 @@ import Core from './core.js';
 import { copySel } from './clipboard.js';
 import { openNewDialog, openResize } from './dialogs.js';
 import { redo, undo } from './doc.js';
-import { $, ring, stage, textBox } from './dom.js';
+import { $, MAC, ring, stage, textBox } from './dom.js';
 import { openFile, save } from './fileio.js';
 import { openHelp } from './help.js';
 import { hasObjs, cycleObj, deleteObj, duplicateObj, flattenObjs, multi, nudgeObj, objSel, objs, reorderObj, restyleObj, selList, selObj, selectObj } from './objects.js';
@@ -19,6 +19,7 @@ import { fitZoom, requestRender, setZoom, zoomStep } from './view.js';
 
 // ---------- keyboard ----------
 const TYPING_INPUTS = new Set(['text', 'number', 'search', 'email', 'url', 'password']);
+const SNAP_KEY = MAC ? 'Meta' : 'Control'; // held during a move or resize: no snapping (pointer.js)
 function isTyping(t) {
   if (!t || !t.tagName) return false;
   return t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable ||
@@ -76,6 +77,7 @@ window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') cancelDrag();
     else if (e.key === 'Shift' && SHAPES.has(drag.t)) { drag.shift = true; requestRender(); }
     else if (e.key === 'Shift' && (drag.t === 'objmove' || drag.t === 'objsize')) { drag.shift = true; objDragUpdate(drag); requestRender(); }
+    else if (e.key === SNAP_KEY && (drag.t === 'objmove' || drag.t === 'objsize')) { drag.free = true; objDragUpdate(drag); requestRender(); } // held: no snapping
     if (e.code !== 'Space') e.preventDefault();
     return;
   }
@@ -139,6 +141,7 @@ window.addEventListener('keyup', (e) => {
   if (e.key === 'Alt') { S.altKey = false; requestRender(); }
   if (e.key === 'Shift' && drag && SHAPES.has(drag.t)) { drag.shift = false; requestRender(); }
   if (e.key === 'Shift' && drag && (drag.t === 'objmove' || drag.t === 'objsize')) { drag.shift = false; objDragUpdate(drag); requestRender(); }
+  if (e.key === SNAP_KEY && drag && (drag.t === 'objmove' || drag.t === 'objsize')) { drag.free = false; objDragUpdate(drag); requestRender(); }
   if (e.code === 'Space') { S.panKey = false; if (!drag || drag.t !== 'pan') stage.classList.remove('panning'); }
 });
 

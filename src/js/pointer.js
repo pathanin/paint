@@ -1,16 +1,16 @@
 import Core from './core.js';
 import { img } from './doc.js';
-import { $, clamp, ov, ring, setProp, stage, textBox, vp } from './dom.js';
+import { $, MAC, clamp, ov, ring, setProp, stage, textBox, vp } from './dom.js';
 import { doFill } from './fill.js';
 import { endCanvasDrag } from './handles.js';
 import { addObj, commitObjDrag, fillShape, groupBox, multi, newObjId, objSel, objs, restoreSel, selectMany, selObj, selectObj, showObjs, zAbove } from './objects.js';
-import { endLive, flushRedraw, growLive, hitAt, objsIn, setLive } from './scene.js';
+import { endLive, flushRedraw, frameOf, growLive, hitAt, objsIn, setLive } from './scene.js';
 import { dropSelection, inside, liftSelection, unlift } from './selection.js';
 import { S, SHAPES, drag, isClear, sel, setDrag, setSel } from './state.js';
 import { commitText, startText } from './text.js';
 import { flash } from './toast.js';
 import { pick, shapeObj } from './tools.js';
-import { imgPt, requestRender, setCursor, setHover, setZoom, updateChrome, updateStatus } from './view.js';
+import { imgPt, requestRender, setCursor, setHover, setZoom, updateChrome, updateStatus, visible } from './view.js';
 
 // ---------- pointer ----------
 // Object editing under the pointer, for the move tool (any object; elsewhere it pans) and the shape
@@ -68,15 +68,46 @@ function objPointerDown(p, e) {
   setDrag({ t: hit.h ? 'objsize' : 'objmove', h: hit.h, o: dup || hit.o, src: hit.o, dup: !!dup, p, q: p, sx: e.clientX, sy: e.clientY, moved: false, shift: e.shiftKey, before: objs, selWas: selNow() });
   return true;
 }
+// Snapping (Core.snapMove, snapResize): a move or resize lines up the edges and centres of what it
+// drags with those of the objects in view and of the canvas, within 8 screen px, and shows guides
+// where they line up. ⌘ (Ctrl elsewhere) held suspends it. The lines are worked out once per drag,
+// on its first real move (a duplicate being dragged may snap to its original).
+const snapTol = () => 8 / S.zoom;
+const snapOff = (e) => (MAC ? e.metaKey : e.ctrlKey);
+function snapTargets(d) {
+  const v = visible(), moving = d.group || new Set([d.o.id]), fs = [{ x: 0, y: 0, w: img.width, h: img.height }];
+  for (const o of objsIn({ x: v.x0, y: v.y0, w: v.x1 - v.x0, h: v.y1 - v.y0 })) if (!moving.has(o.id)) fs.push(frameOf(o));
+  return Core.snapLines(fs);
+}
+// The frame a move drags: one object's, or the box around a group's.
+function dragFrame(d) {
+  if (!d.group || d.group.size < 2) return frameOf(d.o);
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const o of d.before) {
+    if (!d.group.has(o.id)) continue;
+    const f = frameOf(o);
+    x0 = Math.min(x0, f.x); y0 = Math.min(y0, f.y); x1 = Math.max(x1, f.x + f.w); y1 = Math.max(y1, f.y + f.h);
+  }
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
 // Apply an object drag: the live list (one undo step on release). Shift locks a move to its main
-// axis, keeps a box's aspect ratio and snaps a line end to 45° (Core.resizeObj).
+// axis (the other still snaps), keeps a box's aspect ratio and snaps a line end to 45° (Core.resizeObj;
+// a resize then doesn't snap to objects).
 function objDragUpdate(d) {
   if (!d.moved) return;
-  let dx = Math.round(d.q.x - d.p.x), dy = Math.round(d.q.y - d.p.y);
-  if (d.shift && d.t === 'objmove') { if (Math.abs(dx) >= Math.abs(dy)) dy = 0; else dx = 0; }
+  let dx = d.q.x - d.p.x, dy = d.q.y - d.p.y;
+  const lock = d.shift && d.t === 'objmove' ? (Math.abs(Math.round(dx)) >= Math.abs(Math.round(dy)) ? 'y' : 'x') : null;
+  if (lock === 'y') dy = 0; else if (lock === 'x') dx = 0;
+  d.guides = null;
+  if (!d.free && !(d.shift && d.t === 'objsize')) {
+    if (!d.snap) { d.snap = snapTargets(d); d.frame = dragFrame(d); }
+    const s = d.t === 'objmove' ? Core.snapMove(d.snap, d.frame, dx, dy, snapTol(), lock) : Core.snapResize(d.snap, d.box || d.o, d.h, dx, dy, snapTol());
+    dx = s.dx; dy = s.dy; d.guides = s.guides;
+  }
+  dx = Math.round(dx); dy = Math.round(dy);
   if (d.box) { // scale the group from its box's old place and size to the dragged one
     const a = Core.normRect(d.box.a, d.box.b), b = Core.normRect(...(({ a: p, b: q }) => [p, q])(Core.resizeObj(d.box, d.h, dx, dy, d.shift)));
-    if (b.w < 1 || b.h < 1 || !a.w || !a.h) return;
+    if (b.w < 1 || b.h < 1 || !a.w || !a.h) { d.guides = null; return; }
     const sx = b.w / a.w, sy = b.h / a.h;
     showObjs(d.before.map((x) => (d.group.has(x.id) ? Core.moveObj(Core.scaleObj(Core.moveObj(x, -a.x, -a.y), sx, sy), b.x, b.y) : x)));
     return;
@@ -212,7 +243,7 @@ ov.addEventListener('pointermove', (e) => {
   } else if (d.t === 'select') {
     d.end = { x: clamp(Math.round(p.x), 0, img.width), y: clamp(Math.round(p.y), 0, img.height) };
   } else if (d.t === 'objmove' || d.t === 'objsize') {
-    d.q = p; d.shift = e.shiftKey;
+    d.q = p; d.shift = e.shiftKey; d.free = snapOff(e);
     d.moved = d.moved || Math.hypot(e.clientX - d.sx, e.clientY - d.sy) >= 3;
     objDragUpdate(d);
   } else if (d.t === 'move') {
