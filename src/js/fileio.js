@@ -8,7 +8,7 @@ import { commitSelection } from './selection.js';
 import { S, sel, sizeProblem } from './state.js';
 import { cancelText, commitText, textAt } from './text.js';
 import { errText, flash } from './toast.js';
-import { fitZoom, updateChrome } from './view.js';
+import { fitZoom, kickFrame, updateChrome } from './view.js';
 
 // ---------- file I/O ----------
 const IMAGE_TYPES = [{ description: 'Images', accept: { 'image/*': ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.tif', '.tiff'] } }];
@@ -22,6 +22,13 @@ const confirmDiscard = () => !isDirty() || confirm(`Discard unsaved changes to $
 
 async function openFile() {
   if (!confirmDiscard()) return;
+  // The picker needs the click's user activation, which runs out ~5 s after it, and confirm() doesn't
+  // pause that clock: after a slow answer, offer the picker from a fresh click instead of failing.
+  const ua = navigator.userActivation;
+  if (ua && !ua.isActive) { flash('Discard confirmed. Choose the file to open', false, { label: 'Open…', run: pickFile }); return; }
+  await pickFile();
+}
+async function pickFile() {
   if (!window.showOpenFilePicker) { $('#fileInput').click(); return; }
   try {
     const [h] = await window.showOpenFilePicker({ types: IMAGE_TYPES });
@@ -130,15 +137,18 @@ const UPNG_MAX_PIXELS = 3840 * 2160, UPNG_BUDGET_MS = 750;
 const upngMs = (pixels, nativeRatio) => pixels / 1e6 * (nativeRatio < 0.25 ? 100 : 300);
 async function encodePng(still) {
   const tryUpng = img.width * img.height <= UPNG_MAX_PIXELS;
-  // Read the pixels in the same tick as encode() snapshots them, so both encoders see one image.
+  // Snapshot the pixels in the same tick as encode() does, so both encoders see one image. The worker
+  // reads the snapshot back: a getImageData on #image here would read it all on the main thread.
   const src = composite(); // with any objects drawn over the pixels
-  const w = src.width, h = src.height, raw = tryUpng && src.getContext('2d').getImageData(0, 0, w, h).data.buffer;
+  const w = src.width, h = src.height, rawBytes = w * h * 4, snap = tryUpng && createImageBitmap(src);
+  if (snap) kickFrame();
   const native = await encode('image/png', src, still);
   used.png = 'builtin';
-  if (!tryUpng || upngMs(w * h, native.size / raw.byteLength) > UPNG_BUDGET_MS) return native;
-  const rawBytes = raw.byteLength, worker = startWorker('png-worker'); // one per save: frees UPNG's memory after
+  const bmp = snap && await snap.catch(() => null);
+  if (!bmp || upngMs(w * h, native.size / rawBytes) > UPNG_BUDGET_MS) { if (bmp) bmp.close(); return native; }
+  const worker = startWorker('png-worker'); // one per save: frees UPNG's memory after
   try {
-    const { png } = await workerCall(worker, { raw, w, h }, [raw]);
+    const { png } = await workerCall(worker, { bmp, w, h }, [bmp]);
     if (png.byteLength >= native.size || png.byteLength > rawBytes * 0.9) return native;
     used.png = 'upng';
     return new Blob([png], { type: 'image/png' });

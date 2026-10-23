@@ -582,6 +582,10 @@ test('stepSize: [ and ] are inverse around the 10 px boundary', () => {
   assert.equal(Core.stepSize(11, -1), 10); // not 9: don't skip 10
   assert.equal(Core.stepSize(10, -1), 9);
   assert.equal(Core.stepSize(2, -1), 1);
+  // An odd size above 10 (from the slider) joins the even grid both ways.
+  assert.equal(Core.stepSize(11, 1), 12);
+  assert.equal(Core.stepSize(13, 1), 14);
+  assert.equal(Core.stepSize(13, -1), 12);
   for (let s = 1; s < 60; s++) {
     const up = Core.stepSize(s, 1);
     if (s >= 10 && s % 2 === 0 || s < 10) assert.equal(Core.stepSize(up, -1), s, `down(up(${s}))`);
@@ -1306,6 +1310,13 @@ test('PNG chunks: crc32, read, and a private chunk spliced in before IEND (repla
   assert.deepEqual(Core.pngChunks(a).map((c) => c.type), ['IHDR', 'IDAT', 'paNt', 'IEND']);
   assert.deepEqual([...Core.readChunk(a, 'paNt')], [9, 8, 7, 6]);
   assert.ok(Core.pngChunks(a).every((c) => c.crcOk));
+  // CRCs are checked per chunk, lazily: a bad IDAT CRC doesn't hide paNt, a bad paNt CRC does.
+  const badIdat = a.slice(), idat = Core.pngChunks(a)[1], pnt = Core.pngChunks(a)[2];
+  badIdat[idat.start + 8 + idat.len] ^= 1;
+  assert.deepEqual(Core.pngChunks(badIdat).map((c) => c.crcOk), [true, false, true, true]);
+  assert.deepEqual([...Core.readChunk(badIdat, 'paNt')], [9, 8, 7, 6]);
+  const badPnt = a.slice(); badPnt[pnt.start + 8 + pnt.len] ^= 1;
+  assert.equal(Core.readChunk(badPnt, 'paNt'), null);
   const b = Core.withChunk(a, 'paNt', new Uint8Array([1]));
   assert.deepEqual(Core.pngChunks(b).map((c) => c.type), ['IHDR', 'IDAT', 'paNt', 'IEND']);
   assert.deepEqual([...Core.readChunk(b, 'paNt')], [1]);
@@ -1323,4 +1334,31 @@ test('packObj / unpackObj: strokes stored compactly for the saved chunk, and res
   assert.deepEqual(Core.unpackObj(JSON.parse(JSON.stringify(bp))), br);
   const r = { t: 'rect', id: 5, z: 'a3', a: { x: 1, y: 2 }, b: { x: 3, y: 4 }, size: 2 };
   assert.deepEqual(Core.unpackObj(Core.packObj(r)), r);
+});
+
+test('unionBox: the box around boxes, without spreading them into Math.max', () => {
+  assert.deepEqual(Core.unionBox([{ x: 5, y: 10, w: 10, h: 5 }, { x: -2, y: 12, w: 3, h: 20 }]), { x: -2, y: 10, w: 17, h: 22 });
+  const many = Array.from({ length: 200000 }, (_, i) => ({ x: i, y: 0, w: 1, h: 1 })); // past JavaScriptCore's argument limit
+  assert.deepEqual(Core.unionBox(many), { x: 0, y: 0, w: 200000, h: 1 });
+});
+
+test('validObj: an object read from a file has what its kind draws with', () => {
+  const ok = [
+    { t: 'rect', id: 1, z: 'a1', a: { x: 1, y: 2 }, b: { x: 3, y: 4 }, size: 2, color: '#000' },
+    { t: 'pencil', id: 2, pts: [1, 2, 3, 4], size: 1, color: '#000' },
+    { t: 'brush', id: 3, segs: [{ a: { x: 0, y: 0 }, c: null, b: { x: 1, y: 1 } }], size: 4, color: '#000' },
+    { t: 'text', id: 4, x: 0, y: 0, lines: ['hi'], font: 'Arial', fs: 12, base: 10, w: 20, color: '#000' },
+    { t: 'image', id: 5, x: 0, y: 0, w: 10, h: 10, asset: 1 },
+  ];
+  for (const o of ok) assert.ok(Core.validObj(o, 2), o.t);
+  const bad = [
+    { ...ok[0], t: 'blob' }, // unknown kind
+    { ...ok[0], a: undefined }, // missing point
+    { ...ok[0], id: undefined }, // missing id (nextObjId would be NaN)
+    { ...ok[1], pts: [1, 2, 3] }, // odd point list
+    { ...ok[4], asset: 2 }, // no such bitmap
+    { ...ok[4], asset: 0 }, // the base's bitmap
+    { ...ok[3], lines: 'hi' },
+  ];
+  for (const o of bad) assert.ok(!Core.validObj(o, 2), JSON.stringify(o));
 });

@@ -459,7 +459,24 @@ function hugeTiff() {
       await s;
       return { written: !!written, toast: document.querySelector('#toast').textContent, name: p.S.fileName, handle: p.S.fileHandle };
     });
+    // Copying the whole image encodes the live #image the same way: an edit made while the failing
+    // worker loads must not reach the clipboard through the fallback.
+    const copy = await bp.evaluate(async () => {
+      const p = window.__paint;
+      p.newDoc(2000, 1500); p.S.pristine = false;
+      let clip = null;
+      Object.defineProperty(navigator.clipboard, 'write', { configurable: true, value: async (items) => { clip = await items[0].getType('image/png'); } }); // WebKit ignores a plain assignment
+      const s = p.copySel(false);
+      await new Promise((res) => setTimeout(res, 150));
+      const c = document.createElement('canvas'); c.width = c.height = 20; c.getContext('2d').fillRect(0, 0, 20, 20);
+      p.pasteImage(c); p.setTool('pencil'); // committed: an image object, a change of the scene
+      const edited = p.userObjs.length;
+      await s;
+      return { clip: !!clip, edited, toast: document.querySelector('#toast').textContent };
+    });
     await bctx.unroute('**/blob-worker.js', slowWorker);
+    ok(!copy.clip && copy.edited === 1 && /^Copy failed: the image changed while it was copied/.test(copy.toast),
+      'an edit while a copy waits on a failing blob worker: the clipboard doesn\'t get the edited picture: ' + JSON.stringify(copy));
     ok(!stale.written && /^Save cancelled/.test(stale.toast) && stale.name === 'untitled.png' && stale.handle === null,
       'New while a save waits on a failing blob worker: nothing is written into the old file: ' + JSON.stringify(stale));
     ok(berrs.length === 0, 'blocked: no page errors: ' + berrs.join(' | '));

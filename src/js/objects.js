@@ -137,7 +137,7 @@ function mapObjs(map, w, h) {
 }
 function resetObjs() { install([baseRec()]); objSel = null; setMulti([]); }
 // Objects read back from a saved file (persist.js): the list as it was, ids from where it left off.
-function loadObjs(list, nextId) { install([baseRec()].concat(Core.zAboveBase(list))); objSel = null; setMulti([]); nextObjId = Math.max(nextId || 1, ...list.map((o) => o.id + 1)); }
+function loadObjs(list, nextId) { install([baseRec()].concat(Core.zAboveBase(list))); objSel = null; setMulti([]); nextObjId = list.reduce((m, o) => Math.max(m, o.id + 1), nextId || 1); }
 const objIdNext = () => nextObjId;
 const userObjs = () => objs.filter((o) => !isBase(o));
 // Undo/redo of an obj entry (a diff), or of a flatten's region entry or a whole-image op's doc entry
@@ -201,9 +201,14 @@ function nudgeObj(dx, dy) {
   setObjs(objs.map((x) => (set.has(x) ? Core.moveObj(x, dx, dy) : x)), 'nudge:' + list.map((o) => o.id).join());
 }
 // key: coalesce a stream of the same restyle (see setObjs).
+// The properties each kind draws with: a pick of anything else would only add an undo step that changes nothing.
+const STYLED = { line: ['color', 'alt', 'size', 'mode'], rect: ['color', 'alt', 'size', 'mode'], ellipse: ['color', 'alt', 'size', 'mode'],
+  pencil: ['color', 'size'], eraser: ['color', 'size'], brush: ['color', 'size'], text: ['color'] };
 function restyleObj(props, key) {
   const o = selObj();
-  if (!o || Object.keys(props).every((k) => o[k] === props[k])) return;
+  if (!o) return;
+  props = Object.fromEntries(Object.entries(props).filter(([k]) => (STYLED[o.t] || []).includes(k)));
+  if (Object.keys(props).every((k) => o[k] === props[k])) return;
   setObjs(withObj({ ...o, ...props }), key && key + ':' + o.id);
 }
 function duplicateObj() {
@@ -244,7 +249,8 @@ function fillShape(o, c) {
 // ⌘E with objects selected: just those become pixels, as image objects. Selected objects next to each
 // other in the stack become one image, at the top one's place; an unselected object between them that
 // covers part of one below would end up under it, so it splits them into two images (Core.flattenRuns):
-// what is seen doesn't change. One that clears or replaces what is under it (Core.clearsUnder: a mark in
+// what is seen doesn't change, apart from anti-aliasing shifts of a few levels on unselected paths
+// nearby (Chrome anti-aliases a tile's paths by batch; Delete does the same). One that clears or replaces what is under it (Core.clearsUnder: a mark in
 // Transparent, or a fill whose soft edge replaces see-through pixels) can't be part of an image, which
 // only paints over, so it stays an object, splitting the images the same way. One undo step; the new images and
 // the objects kept are selected. With only such objects selected, nothing happens (and the whole scene
@@ -252,17 +258,18 @@ function fillShape(o, c) {
 function flattenSelected() {
   const list = selList();
   if (!list.length) return false;
-  const swap = new Map(), flat = new Set(); // the top of each run -> its image; every object in a run (they go)
+  const swap = new Map(), flat = new Set(), done = new Set(); // the top of each run -> its image; every object in a run (they go); lone images
   for (const run of Core.flattenRuns(objs, new Set(list.map((o) => o.id)))) {
-    const bs = run.map((o) => Core.objBox(o)), x = Math.min(...bs.map((b) => b.x)), y = Math.min(...bs.map((b) => b.y));
-    const c = makeCanvas(Math.max(...bs.map((b) => b.x + b.w)) - x, Math.max(...bs.map((b) => b.y + b.h)) - y), g = c.getContext('2d');
+    if (run.length === 1 && run[0].t === 'image') { done.add(run[0]); continue; } // already one image: a second ⌘E adds no step
+    const { x, y, w, h } = Core.unionBox(run.map((o) => Core.objBox(o)));
+    const c = makeCanvas(w, h), g = c.getContext('2d');
     g.translate(-x, -y);
     for (const o of run) { drawObj(g, o); flat.add(o); }
     const top = run[run.length - 1];
     swap.set(top, { t: 'image', x, y, w: c.width, h: c.height, asset: makeAsset(c), id: nextObjId++, z: top.z });
   }
-  setObjs(objs.filter((o) => !flat.has(o) || swap.has(o)).map((o) => swap.get(o) || o));
-  const kept = list.filter((o) => !flat.has(o));
+  if (swap.size) setObjs(objs.filter((o) => !flat.has(o) || swap.has(o)).map((o) => swap.get(o) || o));
+  const kept = list.filter((o) => !flat.has(o) && !done.has(o));
   selectMany([...swap.values(), ...kept].map((o) => o.id));
   if (kept.length) flash(`${kept.length === 1 ? 'A mark that clears or replaces pixels stays an object' : kept.length + ' marks that clear or replace pixels stay objects'}: an image only paints over`);
   return true;

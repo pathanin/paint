@@ -1136,6 +1136,27 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       ok(serrs.length === 0, 'save during New: no page errors: ' + serrs.join(' | '));
       await sp.close();
     }
+    // Open after a slow "Discard unsaved changes?": the click's user activation has run out (confirm()
+    // doesn't pause it), so the picker would throw. A toast offers it from a fresh click instead.
+    {
+      const op = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+      await op.goto(url); await op.waitForTimeout(300);
+      await op.evaluate(() => {
+        window.__picks = 0;
+        window.showOpenFilePicker = async () => { window.__picks++; throw new DOMException('cancelled', 'AbortError'); };
+        window.confirm = () => true;
+        Object.defineProperty(navigator, 'userActivation', { value: { isActive: false, hasBeenActive: true }, configurable: true });
+        const p = window.__paint; p.S.pristine = false;
+        const c = document.createElement('canvas'); c.width = c.height = 10; p.pasteImage(c); p.setTool('pencil'); // an edit: Open asks first
+      });
+      await op.click('[data-cmd="open"]');
+      const t1 = await op.locator('#toast').textContent(), n1 = await op.evaluate(() => window.__picks);
+      ok(n1 === 0 && /Choose the file to open/.test(t1) && await op.locator('#toast .toast-act').isVisible(), 'Open after a slow discard prompt offers the picker from a fresh click: ' + t1);
+      await op.click('#toast .toast-act');
+      await op.waitForTimeout(100);
+      ok(await op.evaluate(() => window.__picks) === 1, 'and that click opens the picker without asking again');
+      await op.close();
+    }
   } finally { await browser.close(); }
   console.log(`${passes} passed, ${fails} failed`);
   process.exit(fails ? 1 : 0);

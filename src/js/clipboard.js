@@ -1,7 +1,7 @@
 import Core from './core.js';
 import { base, docOp, img, setDoc } from './doc.js';
 import { $, clamp, cloneCanvas, makeCanvas, vp } from './dom.js';
-import { composite, deleteObj, objs, selList, selectObj } from './objects.js';
+import { composite, deleteObj, objs, sceneVer, selList, selectObj } from './objects.js';
 import { deleteSelection, dropSelection } from './selection.js';
 import { S, isClear, sel, setSel, sizeProblem } from './state.js';
 import { commitText } from './text.js';
@@ -14,8 +14,8 @@ import { fitZoom, requestRender, updateChrome } from './view.js';
 function selectionCanvas() {
   const list = sel ? [] : selList();
   if (list.length) { // the selected objects, alone, in their order, over their union box
-    const bs = list.map((o) => Core.objBox(o)), x = Math.min(...bs.map((b) => b.x)), y = Math.min(...bs.map((b) => b.y));
-    const c = makeCanvas(Math.max(...bs.map((b) => b.x + b.w)) - x, Math.max(...bs.map((b) => b.y + b.h)) - y), g = c.getContext('2d');
+    const { x, y, w, h } = Core.unionBox(list.map((o) => Core.objBox(o)));
+    const c = makeCanvas(w, h), g = c.getContext('2d');
     g.translate(-x, -y);
     for (const o of list) drawObj(g, o);
     return c;
@@ -29,15 +29,21 @@ function selectionCanvas() {
 async function copySel(cut) {
   commitText();
   const c = selectionCanvas();
-  const blob = encodeBlob(c, 'image/png');
+  // The whole image is the live #image: the encoder's fallback must not copy a picture changed since.
+  const v0 = sceneVer, b0 = base, d0 = S.docId;
+  const blob = encodeBlob(c, 'image/png', undefined, c === img ? () => sceneVer === v0 && base === b0 && S.docId === d0 : undefined);
   const some = !!sel || selList().length > 0;
   const didCut = cut && some; // with nothing selected, ⌘X copies the whole image and keeps it
-  if (didCut && !deleteObj()) deleteSelection();
+  const sel0 = sel, ids0 = selList().map((o) => o.id).join();
   try {
-    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-    flash(didCut ? 'Cut' : some ? 'Copied' : 'Copied the whole image');
-  } catch (err) {
-    flash('Copy failed: ' + errText(err, 'the browser blocked clipboard access'), true);
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); // started in the gesture
+    // Cut deletes only once the copy is safe, and only what was copied: not a selection made since.
+    const same = sel === sel0 && selList().map((o) => o.id).join() === ids0;
+    if (didCut && same && !deleteObj()) deleteSelection();
+    flash(didCut ? (same ? 'Cut' : 'Copied: the selection changed, so nothing was cut') : some ? 'Copied' : 'Copied the whole image');
+  } catch (e) {
+    const err = (await blob.then(() => null, (x) => x)) || e; // WebKit's ClipboardItem reports a failed encode as AbortError
+    flash('Copy failed: ' + (err && err.name === 'SourceChanged' ? 'the image changed while it was copied. Copy again' : errText(err, 'the browser blocked clipboard access')), true);
   }
 }
 function pasteImage(bmp) {

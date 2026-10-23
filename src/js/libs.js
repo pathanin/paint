@@ -50,6 +50,12 @@ function encodeBlob(src, type = 'image/png', quality, still) {
   if (src.width * src.height <= SMALL_PX) { used.encode = 'builtin'; return builtin(); }
   const snap = createImageBitmap(src);
   kickFrame();
+  // The fallback encodes src as it is now: refuse if it has changed since (still).
+  const fallback = () => {
+    used.encode = 'builtin';
+    if (still && !still()) throw Object.assign(new Error('the image was replaced while it was encoded'), { name: 'SourceChanged' });
+    return builtin();
+  };
   return snap.then(async (bmp) => {
     const worker = startWorker('blob-worker');
     try {
@@ -57,13 +63,11 @@ function encodeBlob(src, type = 'image/png', quality, still) {
       used.encode = 'worker';
       return blob;
     } catch {
-      used.encode = 'builtin';
-      if (still && !still()) throw Object.assign(new Error('the image was replaced while it was encoded'), { name: 'SourceChanged' });
-      return builtin();
+      return fallback();
     } finally {
       worker.terminate();
     }
-  });
+  }, fallback); // the snapshot failed (memory pressure on a huge canvas): toBlob may still manage
 }
 
 export { encodeBlob, loadPica, loadUTIF, startWorker, used, workerCall };

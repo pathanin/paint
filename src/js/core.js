@@ -418,7 +418,9 @@
 
   // Brush size for [ (dir -1) and ] (dir +1): steps of 1 below 10 px, 2 from there; the two are inverses.
   function stepSize(s, dir) {
-    return dir > 0 ? s + (s >= 10 ? 2 : 1) : s - (s > 11 ? 2 : 1);
+    // Above 10 the grid is even: an odd size (a slider can set 11) steps to its even neighbours.
+    if (dir > 0) return s < 10 ? s + 1 : s + 2 - (s % 2);
+    return s <= 10 ? s - 1 : s - 2 + (s % 2);
   }
 
   // Split rect (grown outward to whole pixels, clipped to the W x H image) into its pieces on a
@@ -651,6 +653,12 @@
     if (o.t === 'text') return { x: -o.fs / 2, y: -o.fs / 2, w: o.w + o.fs, h: o.lines.length * o.fs * 1.2 + o.fs };
     return { x: 0, y: 0, w: o.w, h: o.h };
   }
+  // The box around boxes [{x, y, w, h}]. A loop, not Math.max(...): JavaScriptCore throws past 65,536 arguments.
+  function unionBox(bs) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const b of bs) { x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y); x1 = Math.max(x1, b.x + b.w); y1 = Math.max(y1, b.y + b.h); }
+    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+  }
   // Integer bounding box of r = {x, y, w, h} (relative to o.x, o.y) after o.m.
   function mappedBox(o, r) {
     const m = o.m || [1, 0, 0, 1];
@@ -681,6 +689,10 @@
   // The outline the selection shows: a shape's drawn box, else the content's box.
   function objFrame(o) {
     if (SHAPE_KINDS.has(o.t)) { const g = drawnObj(o); return normRect(g.a, g.b); }
+    if (o.t === 'brush') { // the ink: objBox's extra px for anti-aliasing would put the outline and snap lines 1 px out
+      const b = segsBox(o.segs, o.size / 2), x = Math.floor(b.x), y = Math.floor(b.y);
+      return { x, y, w: Math.ceil(b.x + b.w) - x, h: Math.ceil(b.y + b.h) - y };
+    }
     if (STROKES.has(o.t)) return objBox(o);
     return mappedBox(o, o.t === 'text' ? { x: 0, y: 0, w: o.w, h: o.lines.length * o.fs * 1.2 } : frameSize(o));
   }
@@ -1123,7 +1135,8 @@
     for (let i = 8; i + 12 <= u8.length;) {
       const len = dv.getUint32(i), type = String.fromCharCode(u8[i + 4], u8[i + 5], u8[i + 6], u8[i + 7]);
       if (i + 12 + len > u8.length) break;
-      out.push({ type, start: i, len, crcOk: crc32(u8.subarray(i + 4, i + 8 + len)) === dv.getUint32(i + 8 + len) });
+      const at = i; // crcOk is computed on first read: readChunk needs one chunk's, withChunk none
+      out.push({ type, start: at, len, get crcOk() { return crc32(u8.subarray(at + 4, at + 8 + len)) === dv.getUint32(at + 8 + len); } });
       i += 12 + len;
       if (type === 'IEND') break;
     }
@@ -1184,6 +1197,20 @@
     return o;
   }
 
+  // Whether an unpacked object from a file (asset still an index into its n bitmaps) has what its kind
+  // draws with. A crafted or damaged paNt chunk would otherwise throw in the tile repaint.
+  function validObj(o, n) {
+    const num = (v) => typeof v === 'number' && Number.isFinite(v), pt = (p) => !!p && num(p.x) && num(p.y);
+    if (!o || !Number.isInteger(o.id) || (o.z != null && typeof o.z !== 'string')) return false;
+    if (SHAPE_KINDS.has(o.t)) return pt(o.a) && pt(o.b) && num(o.size) && typeof o.color === 'string';
+    if (o.t === 'pencil' || o.t === 'eraser') return Array.isArray(o.pts) && o.pts.length >= 2 && o.pts.length % 2 === 0 && o.pts.every(num) && num(o.size);
+    if (o.t === 'brush') return Array.isArray(o.segs) && o.segs.length > 0 && o.segs.every((g) => pt(g.a) && pt(g.b) && (g.c === null || pt(g.c))) && num(o.size);
+    if (!num(o.x) || !num(o.y) || (o.m != null && !(Array.isArray(o.m) && o.m.length === 4 && o.m.every(num)))) return false;
+    if (o.t === 'text') return Array.isArray(o.lines) && o.lines.every((l) => typeof l === 'string') && num(o.fs) && num(o.w) && num(o.base) && typeof o.font === 'string';
+    if (o.t === 'image' || o.t === 'fill') return Number.isInteger(o.asset) && o.asset > 0 && o.asset < n && num(o.w) && num(o.h);
+    return false;
+  }
+
   // The tiles redraw() repaints for dirty rects: every T x T grid tile of the W x H image that a rect
   // (grown to whole pixels) touches, once each, as {key, x, y, w, h} (edge tiles are clipped).
   function dirtyTiles(rects, W, H, T) {
@@ -1200,6 +1227,6 @@
 
   const Core = { rgbaToU32, colorToU32, colorDistance, floodMask, fillEdge, floodFill, fillPlan, fillCells, line, stampRects, normRect, clampRect, constrainShape, fitDims, anchorOffset, dragResize, sizeError, saveName, stepSize, tileParts, groupRects, rotateDims, Stroke, History, zBetween, BASE_Z, zAboveBase, clearsUnder, flattenRuns, dirtyTiles, diffObjs, applyPairs, crc32, pngChunks, readChunk, withChunk, packObj, unpackObj,
     objBox, objFrame, insideShape, segsBox, drawnObj, hitsObject, hitObject, objHandles, handleAt, resizeObj, moveObj, transformObj, scaleObj,
-    snapLines, snapGuides, snapMove, snapResize };
+    snapLines, snapGuides, snapMove, snapResize, unionBox, validObj };
   module.exports = Core;
 })();

@@ -1,12 +1,21 @@
 # Code review, 2026-10-21
 
-## Status (2026-10-22)
+## Status (2026-10-24)
 
-- **Fixed:** findings 1, 2 and 3, on branch `fix/save-resize-flatten` (commit `c56df80`). Each fix has a regression test.
-- **Also fixed there:** what three review rounds of that fix found:
-  - an Open still loading could land on a newer document;
-  - the blob worker's fallback could still write a replaced document into the old file.
-- **Still open:** findings 4–12, and the `history.js` item below. Next steps are in [handoff-2026-10-22.md](handoff-2026-10-22.md).
+- **All findings are fixed** on branch `fix/save-resize-flatten`:
+  - 1–3 in `c56df80`, with what three review rounds of that fix found (an Open still loading could land on a newer document; the blob worker's fallback could write a replaced document into the old file). A fourth round was interrupted before it reported.
+  - 4–12 in the next commit (2026-10-24), each with a check that fails without it where a test can see it:
+    - 4: the claim is corrected (`objects.js`, `task.md`, `docs/total-objects.md`).
+    - 5: after a slow discard prompt, Open offers the picker from a toast button.
+    - 6: `pngChunks` computes each CRC only when it's read.
+    - 7: a restyle sets only what the kind draws with.
+    - 8: Cut deletes after the clipboard write succeeds, and only what it copied.
+    - 9: box-select and pan release toolbar focus.
+    - 10: `[` / `]` step an odd size above 10 onto the even grid.
+    - 11: `png-worker.js` reads a transferred snapshot back; the page no longer calls `getImageData` on `#image`.
+    - 12: `paintLater` returns early when there's nothing to paint; `encodeBlob` falls back to `toBlob` when the snapshot fails; `readScene` validates each object (`Core.validObj`), and a bad scene opens as pixels; `Core.unionBox` replaces `Math.max(...)` over object lists; a brush's frame is its ink.
+  - Two issues the review rounds turned up are fixed too: copying the whole image passes `still` to `encodeBlob`, and ⌘E on a lone image adds no step.
+  - The `history.js` open item is fixed: see its section below.
 - The line numbers below refer to the reviewed checkout (`99fddc2`), not to later code.
 
 ## Scope
@@ -245,7 +254,7 @@ All three checks compare against the state recorded right after "pencil after cr
 1. **Chrome moving `#image` off the GPU after the test's own readbacks.** Hashing a copy instead of `#image` still fails the same 3 checks.
 2. **A live stroke leaving the cache different from a fresh render.** Pencil, eraser and brush over an ellipse showed a 0 px difference (cache vs `freshRender()`, before and after a full repaint), over both an opaque and a semi-transparent noise base, in Chrome and WebKit.
 
-So the cause is still open. A next step: store the pixel arrays instead of hashes and diff the recorded "pencil after crop" state against the undone one.
+**Cause (found 2026-10-24):** right after "pencil after crop", the cache differed from `freshRender()` by up to 4 levels in 5 channels, off the stroke. The tile's objects under it (scaled images, text) were composed before the live stroke's rects, in other batches, and Chrome for Mac anti-aliases them differently than when one compose draws them with the stroke. Forcing a flush before the stroke in `compose()` made the two match, which confirmed it. **Fix:** when a pencil or eraser stroke joins, its tiles that hold other objects are composed again (`rejoin` in `scene.js`). `history.js` now passes 86 of 86 here.
 
 ## Test baseline (this checkout, local Chrome)
 

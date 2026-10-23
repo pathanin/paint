@@ -53,6 +53,7 @@ async function readScene(u8) {
     const n = new DataView(data.buffer, data.byteOffset).getUint32(0);
     const head = JSON.parse(new TextDecoder().decode(data.subarray(4, 4 + n)));
     if (head.v !== 1 || head.idat !== idatHash(u8)) return null;
+    if (!Array.isArray(head.blobs) || !Array.isArray(head.objs)) return null;
     let i = 4 + n;
     const cvs = [];
     for (const len of head.blobs) {
@@ -63,10 +64,12 @@ async function readScene(u8) {
       bmp.close();
       cvs.push(cv);
     }
+    const list = head.objs.map((p) => Core.unpackObj(p));
+    if (!list.every((o) => Core.validObj(o, cvs.length)) || new Set(list.map((o) => o.id)).size !== list.length) return null; // opens as its pixels
     const fills = new Map(head.objs.filter((o) => o.t === 'fill').map((o) => [o.asset, o.mask])); // its pixels -> its mask, if any
     const masks = new Set([...fills.values()].filter((k) => k != null));
     const assets = cvs.map((cv, k) => (!k || masks.has(k) ? null : fills.has(k) ? fillAsset(cv, cvs[fills.get(k)]) : makeAsset(cv)));
-    return { base: cvs[0], objs: head.objs.map((p) => { const { mask, ...o } = Core.unpackObj(p); return o.asset != null ? { ...o, asset: assets[o.asset] } : o; }), nextId: head.nextId };
+    return { base: cvs[0], objs: list.map(({ mask, ...o }) => (o.asset != null ? { ...o, asset: assets[o.asset] } : o)), nextId: Number.isInteger(head.nextId) ? head.nextId : 1 };
   } catch {
     return null;
   }
