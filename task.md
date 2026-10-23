@@ -20,7 +20,16 @@ All of this is done and merged to `master`:
 
 ## Open
 
-**Code review (2026-10-21):** findings in `docs/code-review-2026-10-21.md`; 1–3 fixed on `fix/save-resize-flatten` (not pushed yet). Next steps in `docs/handoff-2026-10-22.md`.
+**Code review (2026-10-21):** findings in `docs/code-review-2026-10-21.md`, all fixed on `fix/save-resize-flatten` (2026-10-24, in a PR). Defaults the agent picked that are the user's call:
+- ⌘E on a selection keeps marks that clear as objects. The toast reads "N marks that clear or replace pixels stay objects: an image only paints over".
+- An Open that a later Open, drop or New supersedes is dropped with no message.
+- An edit made while an Open loads, or while its "Open…" toast waits, brings a second "Discard unsaved changes?".
+- A save cancelled by New or Open says "Save cancelled: a different image is open now".
+- Open after a slow discard prompt (the click's activation has run out) shows "Discard confirmed. Choose the file to open" with an "Open…" button, instead of failing.
+- Cut whose selection changed while the clipboard write ran copies but deletes nothing: "Copied: the selection changed, so nothing was cut".
+- A whole-image copy changed while the blob worker failed: "Copy failed: the image changed while it was copied. Copy again".
+- ⌘E on a selection that is one image already does nothing, with no message.
+- A colour pick with an image or fill selected changes nothing; colour 2 with a line, stroke or text selected changes nothing (only what the kind draws with is restyled).
 
 **Not verified:**
 - Firefox (no runs at all yet).
@@ -31,7 +40,7 @@ All of this is done and merged to `master`:
 - Superseded big canvases (the old base after a rotate) wait for GC rather than being freed at once: the history and objects may still refer to them, so it wasn't changed.
 - iPad: per-canvas cap 8192² (67 MP); `canvasFits()` now refuses bigger documents with a message instead of a blank picture. iOS Safari never shows a `beforeunload` prompt.
 - WebKit flake: smoke's "mid-stroke: ink reaches the pointer" failed once in about five WebKit runs (a 50 ms wait).
-- ~~`history.js` on the M4's Chrome (2026-10-21): 3 checks not pixel-exact.~~ Fixed 2026-10-24: a live pencil stroke over tiles with other objects (here, scaled images and text) left their anti-aliased edges up to 4 levels off a fresh compose, since Chrome for Mac rasterises them differently when the stroke's rects come in a later batch. Those tiles are composed again when the stroke joins (`rejoin`, `scene.js`).
+- ~~`history.js` on the M4's Chrome (2026-10-21): 3 checks not pixel-exact.~~ Fixed 2026-10-24: a live pencil stroke over tiles with other objects (here, scaled images and text) left their anti-aliased edges up to 4 levels off a fresh compose, since Chrome for Mac rasterises them differently when the stroke's rects come in a later batch. Those tiles are composed again when the stroke joins (`rejoin`, `scene.js`). Cost on the M4 at 4000×3000 (bench `pencil over 5k`, and a 60-stroke run): ~9 ms more main-thread time on release (`inpMain` 1.2 → 10.2 ms, no 200 ms interactions), and the GPU process settles ~50 MB higher (a cache that levels off, not a leak; the bench's `after edits` row shows +120 MB).
 - Safari draws range sliders natively: it ignores `accent-color` there, so Size/Smoothing are grey, not blue.
 - A real Windows machine (labels were checked only with a `navigator.platform` override).
 - A VoiceOver pass over dialogs, toasts and the canvas label.

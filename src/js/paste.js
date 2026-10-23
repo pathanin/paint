@@ -1,6 +1,6 @@
 import { pasteImage } from './clipboard.js';
 import { $ } from './dom.js';
-import { cantOpen, confirmDiscard, decodeFile, docMark, isDirty, loadFile, tooBigToOpen } from './fileio.js';
+import { cantOpen, confirmDiscard, decodeFile, docMark, isDirty, loadFile, takeInputSeen, tooBigToOpen } from './fileio.js';
 import { docLanded, requestDoc } from './doc.js';
 import { isTyping } from './keyboard.js';
 import { errText, flash } from './toast.js';
@@ -67,7 +67,7 @@ window.addEventListener('drop', async (e) => {
 });
 $('#fileInput').addEventListener('change', (e) => {
   const f = e.target.files[0];
-  if (f) loadFile(f, null);
+  if (f) loadFile(f, null, undefined, undefined, takeInputSeen());
   e.target.value = '';
 });
 window.addEventListener('beforeunload', (e) => {

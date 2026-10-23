@@ -202,7 +202,7 @@ function nudgeObj(dx, dy) {
 }
 // key: coalesce a stream of the same restyle (see setObjs).
 // The properties each kind draws with: a pick of anything else would only add an undo step that changes nothing.
-const STYLED = { line: ['color', 'alt', 'size', 'mode'], rect: ['color', 'alt', 'size', 'mode'], ellipse: ['color', 'alt', 'size', 'mode'],
+const STYLED = { line: ['color', 'size'], rect: ['color', 'alt', 'size', 'mode'], ellipse: ['color', 'alt', 'size', 'mode'],
   pencil: ['color', 'size'], eraser: ['color', 'size'], brush: ['color', 'size'], text: ['color'] };
 function restyleObj(props, key) {
   const o = selObj();
@@ -250,9 +250,10 @@ function fillShape(o, c) {
 // other in the stack become one image, at the top one's place; an unselected object between them that
 // covers part of one below would end up under it, so it splits them into two images (Core.flattenRuns):
 // what is seen doesn't change, apart from anti-aliasing shifts of a few levels on unselected paths
-// nearby (Chrome anti-aliases a tile's paths by batch; Delete does the same). One that clears or replaces what is under it (Core.clearsUnder: a mark in
-// Transparent, or a fill whose soft edge replaces see-through pixels) can't be part of an image, which
-// only paints over, so it stays an object, splitting the images the same way. One undo step; the new images and
+// nearby (Chrome anti-aliases a tile's paths by batch; Delete does the same). One that clears or
+// replaces what is under it (Core.clearsUnder: a mark in Transparent, or a fill whose soft edge
+// replaces see-through pixels) can't be part of an image, which only paints over, so it stays an
+// object, splitting the images the same way. One undo step; the new images and
 // the objects kept are selected. With only such objects selected, nothing happens (and the whole scene
 // isn't flattened instead).
 function flattenSelected() {

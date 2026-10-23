@@ -1142,9 +1142,14 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       const op = await browser.newPage({ viewport: { width: 1280, height: 800 } });
       await op.goto(url); await op.waitForTimeout(300);
       await op.evaluate(() => {
-        window.__picks = 0;
-        window.showOpenFilePicker = async () => { window.__picks++; throw new DOMException('cancelled', 'AbortError'); };
-        window.confirm = () => true;
+        window.__picks = 0; window.__asks = 0;
+        window.showOpenFilePicker = async () => {
+          window.__picks++;
+          const c = document.createElement('canvas'); c.width = 7; c.height = 5;
+          const f = new File([await new Promise((r) => c.toBlob(r, 'image/png'))], 'picked.png', { type: 'image/png' });
+          return [{ kind: 'file', name: 'picked.png', getFile: async () => f }];
+        };
+        window.confirm = () => { window.__asks++; return true; };
         Object.defineProperty(navigator, 'userActivation', { value: { isActive: false, hasBeenActive: true }, configurable: true });
         const p = window.__paint; p.S.pristine = false;
         const c = document.createElement('canvas'); c.width = c.height = 10; p.pasteImage(c); p.setTool('pencil'); // an edit: Open asks first
@@ -1152,9 +1157,18 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
       await op.click('[data-cmd="open"]');
       const t1 = await op.locator('#toast').textContent(), n1 = await op.evaluate(() => window.__picks);
       ok(n1 === 0 && /Choose the file to open/.test(t1) && await op.locator('#toast .toast-act').isVisible(), 'Open after a slow discard prompt offers the picker from a fresh click: ' + t1);
+      const c1 = await op.evaluate(() => window.__asks);
       await op.click('#toast .toast-act');
-      await op.waitForTimeout(100);
-      ok(await op.evaluate(() => window.__picks) === 1, 'and that click opens the picker without asking again');
+      await op.waitForFunction(() => window.__paint.S.fileName === 'picked.png');
+      ok(await op.evaluate(() => window.__picks) === 1 && await op.evaluate(() => window.__asks) === c1, 'and that click opens the picker and the file, without asking again');
+      // an edit made while the toast waits wasn't part of the discard: it is asked about
+      await op.evaluate(() => { const p = window.__paint; p.S.pristine = false; const c = document.createElement('canvas'); c.width = c.height = 10; p.pasteImage(c); p.setTool('pencil'); });
+      await op.click('[data-cmd="open"]');
+      await op.evaluate(() => { const p = window.__paint, c = document.createElement('canvas'); c.width = c.height = 10; p.pasteImage(c); p.setTool('pencil'); }); // while the toast waits
+      const c2 = await op.evaluate(() => window.__asks);
+      await op.click('#toast .toast-act');
+      await op.waitForFunction(() => window.__paint.S.fileName === 'picked.png' && window.__paint.userObjs.length === 0);
+      ok(await op.evaluate(() => window.__asks) === c2 + 1, 'an edit made while the Open… toast waits is asked about again');
       await op.close();
     }
   } finally { await browser.close(); }

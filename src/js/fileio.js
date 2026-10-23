@@ -25,14 +25,17 @@ async function openFile() {
   // The picker needs the click's user activation, which runs out ~5 s after it, and confirm() doesn't
   // pause that clock: after a slow answer, offer the picker from a fresh click instead of failing.
   const ua = navigator.userActivation;
-  if (ua && !ua.isActive) { flash('Discard confirmed. Choose the file to open', false, { label: 'Open…', run: pickFile }); return; }
+  // seen: the document the discard was confirmed for, so an edit made while the toast waits is asked about.
+  if (ua && !ua.isActive) { const seen = docMark(); flash('Discard confirmed. Choose the file to open', false, { label: 'Open…', run: () => pickFile(seen) }); return; }
   await pickFile();
 }
-async function pickFile() {
-  if (!window.showOpenFilePicker) { $('#fileInput').click(); return; }
+let inputSeen; // the file input's change event (paste.js) takes it: takeInputSeen()
+const takeInputSeen = () => { const m = inputSeen; inputSeen = undefined; return m; };
+async function pickFile(seen) {
+  if (!window.showOpenFilePicker) { inputSeen = seen; $('#fileInput').click(); return; }
   try {
     const [h] = await window.showOpenFilePicker({ types: IMAGE_TYPES });
-    await loadFile(await h.getFile(), h); // its turn starts here: a picker that's cancelled asks for nothing
+    await loadFile(await h.getFile(), h, undefined, undefined, seen); // its turn starts here: a picker that's cancelled asks for nothing
   } catch (err) {
     if (err.name !== 'AbortError') flash("Can't open the file: " + errText(err, 'permission was denied'), true);
   }
@@ -140,11 +143,11 @@ async function encodePng(still) {
   // Snapshot the pixels in the same tick as encode() does, so both encoders see one image. The worker
   // reads the snapshot back: a getImageData on #image here would read it all on the main thread.
   const src = composite(); // with any objects drawn over the pixels
-  const w = src.width, h = src.height, rawBytes = w * h * 4, snap = tryUpng && createImageBitmap(src);
+  const w = src.width, h = src.height, rawBytes = w * h * 4, snap = tryUpng && createImageBitmap(src).catch(() => null); // no snapshot: the browser's PNG
   if (snap) kickFrame();
   const native = await encode('image/png', src, still);
   used.png = 'builtin';
-  const bmp = snap && await snap.catch(() => null);
+  const bmp = snap && await snap;
   if (!bmp || upngMs(w * h, native.size / rawBytes) > UPNG_BUDGET_MS) { if (bmp) bmp.close(); return native; }
   const worker = startWorker('png-worker'); // one per save: frees UPNG's memory after
   try {
@@ -240,4 +243,4 @@ async function saveNow(as) {
   }
 }
 
-export { cantOpen, confirmDiscard, decodeFile, docMark, encodeFor, isDirty, loadFile, openFile, save, saving, tooBigToOpen };
+export { cantOpen, confirmDiscard, takeInputSeen, decodeFile, docMark, encodeFor, isDirty, loadFile, openFile, save, saving, tooBigToOpen };
