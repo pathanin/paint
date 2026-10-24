@@ -582,6 +582,10 @@ test('stepSize: [ and ] are inverse around the 10 px boundary', () => {
   assert.equal(Core.stepSize(11, -1), 10); // not 9: don't skip 10
   assert.equal(Core.stepSize(10, -1), 9);
   assert.equal(Core.stepSize(2, -1), 1);
+  // An odd size above 10 (from the slider) joins the even grid both ways.
+  assert.equal(Core.stepSize(11, 1), 12);
+  assert.equal(Core.stepSize(13, 1), 14);
+  assert.equal(Core.stepSize(13, -1), 12);
   for (let s = 1; s < 60; s++) {
     const up = Core.stepSize(s, 1);
     if (s >= 10 && s % 2 === 0 || s < 10) assert.equal(Core.stepSize(up, -1), s, `down(up(${s}))`);
@@ -1164,6 +1168,39 @@ test('flattenRuns: an unselected object between selected ones ends the run only 
   assert.deepEqual(ids(Core.flattenRuns([base, A, C, D, B], new Set([1, 3, 2]))), [[1, 3], [2]]);
 });
 
+test('clearsUnder: the objects that clear what is under them (Transparent strokes and patches, fills that replace pixels)', () => {
+  const T = 'transparent';
+  for (const t of ['pencil', 'eraser']) {
+    assert.ok(Core.clearsUnder({ t, pts: [0, 0], color: T, size: 1 }), t + ' in Transparent');
+    assert.ok(!Core.clearsUnder({ t, pts: [0, 0], color: '#000000', size: 1 }), t + ' in a colour');
+  }
+  assert.ok(Core.clearsUnder({ t: 'brush', segs: [], color: T, size: 4 }));
+  assert.ok(!Core.clearsUnder({ t: 'brush', segs: [], color: '#ff0000', size: 4 }));
+  const rect = (mode, color, alt) => ({ t: 'rect', a: { x: 0, y: 0 }, b: { x: 9, y: 9 }, color, alt, size: 2, mode });
+  assert.ok(Core.clearsUnder(rect('fill', T, T)), "a lift's or Delete's patch in Transparent");
+  assert.ok(!Core.clearsUnder(rect('fill', '#ffffff', '#ffffff')), 'a patch in a colour');
+  assert.ok(!Core.clearsUnder(rect('both', '#000000', T)), 'a shape fill in Transparent is no fill, not a clear');
+  assert.ok(Core.clearsUnder({ t: 'fill', x: 0, y: 0, w: 4, h: 4, asset: { clears: true } }));
+  assert.ok(!Core.clearsUnder({ t: 'fill', x: 0, y: 0, w: 4, h: 4, asset: { clears: false } }));
+  assert.ok(!Core.clearsUnder({ t: 'image', x: 0, y: 0, w: 4, h: 4, asset: {} }), 'an image only paints over');
+  assert.ok(!Core.clearsUnder({ t: 'text', x: 0, y: 0, lines: ['a'], fs: 10, w: 5, color: '#000000' }));
+});
+
+test('flattenRuns: a selected object that clears what is under it stays out of the runs, and splits one only where it overlaps it', () => {
+  const r = (id, x, y, w, h, more) => ({ id, t: 'rect', a: { x, y }, b: { x: x + w, y: y + h }, size: 2, mode: 'fill', color: '#ff0000', ...more });
+  const base = { id: 0, t: 'base', locked: true, x: 0, y: 0, w: 500, h: 500 };
+  const A = r(1, 10, 10, 50, 50), C = r(3, 200, 10, 50, 50);
+  const hole = r(2, 40, 40, 50, 50, { color: 'transparent' }), farHole = r(2, 300, 300, 20, 20, { color: 'transparent' });
+  const ids = (runs) => runs.map((run) => run.map((o) => o.id));
+  const all = new Set([1, 2, 3]);
+  // It clears part of A: A under it and C over it are flattened apart, and it is in neither image.
+  assert.deepEqual(ids(Core.flattenRuns([base, A, hole, C], all)), [[1], [3]]);
+  // Elsewhere: A and C are one image, still without it.
+  assert.deepEqual(ids(Core.flattenRuns([base, A, farHole, C], all)), [[1, 3]]);
+  // Only clearing objects selected: nothing to flatten.
+  assert.deepEqual(ids(Core.flattenRuns([base, A, hole, C], new Set([2]))), []);
+});
+
 test('History.forgetSave: not clean until the next save', () => {
   const h = new Core.History({ maxCount: 10, maxBytes: 1e9 });
   h.push({ bytes: 1 });
@@ -1273,6 +1310,13 @@ test('PNG chunks: crc32, read, and a private chunk spliced in before IEND (repla
   assert.deepEqual(Core.pngChunks(a).map((c) => c.type), ['IHDR', 'IDAT', 'paNt', 'IEND']);
   assert.deepEqual([...Core.readChunk(a, 'paNt')], [9, 8, 7, 6]);
   assert.ok(Core.pngChunks(a).every((c) => c.crcOk));
+  // CRCs are checked per chunk, lazily: a bad IDAT CRC doesn't hide paNt, a bad paNt CRC does.
+  const badIdat = a.slice(), idat = Core.pngChunks(a)[1], pnt = Core.pngChunks(a)[2];
+  badIdat[idat.start + 8 + idat.len] ^= 1;
+  assert.deepEqual(Core.pngChunks(badIdat).map((c) => c.crcOk), [true, false, true, true]);
+  assert.deepEqual([...Core.readChunk(badIdat, 'paNt')], [9, 8, 7, 6]);
+  const badPnt = a.slice(); badPnt[pnt.start + 8 + pnt.len] ^= 1;
+  assert.equal(Core.readChunk(badPnt, 'paNt'), null);
   const b = Core.withChunk(a, 'paNt', new Uint8Array([1]));
   assert.deepEqual(Core.pngChunks(b).map((c) => c.type), ['IHDR', 'IDAT', 'paNt', 'IEND']);
   assert.deepEqual([...Core.readChunk(b, 'paNt')], [1]);
@@ -1290,4 +1334,31 @@ test('packObj / unpackObj: strokes stored compactly for the saved chunk, and res
   assert.deepEqual(Core.unpackObj(JSON.parse(JSON.stringify(bp))), br);
   const r = { t: 'rect', id: 5, z: 'a3', a: { x: 1, y: 2 }, b: { x: 3, y: 4 }, size: 2 };
   assert.deepEqual(Core.unpackObj(Core.packObj(r)), r);
+});
+
+test('unionBox: the box around boxes, without spreading them into Math.max', () => {
+  assert.deepEqual(Core.unionBox([{ x: 5, y: 10, w: 10, h: 5 }, { x: -2, y: 12, w: 3, h: 20 }]), { x: -2, y: 10, w: 17, h: 22 });
+  const many = Array.from({ length: 200000 }, (_, i) => ({ x: i, y: 0, w: 1, h: 1 })); // past JavaScriptCore's argument limit
+  assert.deepEqual(Core.unionBox(many), { x: 0, y: 0, w: 200000, h: 1 });
+});
+
+test('validObj: an object read from a file has what its kind draws with', () => {
+  const ok = [
+    { t: 'rect', id: 1, z: 'a1', a: { x: 1, y: 2 }, b: { x: 3, y: 4 }, size: 2, color: '#000' },
+    { t: 'pencil', id: 2, pts: [1, 2, 3, 4], size: 1, color: '#000' },
+    { t: 'brush', id: 3, segs: [{ a: { x: 0, y: 0 }, c: null, b: { x: 1, y: 1 } }], size: 4, color: '#000' },
+    { t: 'text', id: 4, x: 0, y: 0, lines: ['hi'], font: 'Arial', fs: 12, base: 10, w: 20, color: '#000' },
+    { t: 'image', id: 5, x: 0, y: 0, w: 10, h: 10, asset: 1 },
+  ];
+  for (const o of ok) assert.ok(Core.validObj(o, 2), o.t);
+  const bad = [
+    { ...ok[0], t: 'blob' }, // unknown kind
+    { ...ok[0], a: undefined }, // missing point
+    { ...ok[0], id: undefined }, // missing id (nextObjId would be NaN)
+    { ...ok[1], pts: [1, 2, 3] }, // odd point list
+    { ...ok[4], asset: 2 }, // no such bitmap
+    { ...ok[4], asset: 0 }, // the base's bitmap
+    { ...ok[3], lines: 'hi' },
+  ];
+  for (const o of bad) assert.ok(!Core.validObj(o, 2), JSON.stringify(o));
 });

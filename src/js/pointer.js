@@ -120,6 +120,10 @@ function objDragUpdate(d) {
   } else showObjs(d.before.map((x) => (x.id === o.id ? o : x)));
 }
 
+// mousedown is suppressed on the canvas, so drop focus from toolbar fields ourselves (else shortcuts stay dead).
+function releaseCanvasFocus() {
+  if (document.activeElement && document.activeElement !== textBox) document.activeElement.blur();
+}
 ov.addEventListener('pointerdown', (e) => {
   if (drag) return;
   if (e.button === 0 && !S.panKey && S.tool === 'move' && !objTarget(imgPt(e))) {
@@ -127,12 +131,14 @@ ov.addEventListener('pointerdown', (e) => {
     // click there deselects (decision 7b; Space or the middle button pans).
     const p = imgPt(e);
     ov.setPointerCapture(e.pointerId);
+    releaseCanvasFocus(); // so Delete and the arrows reach the objects it selects
     setDrag({ t: 'objbox', start: p, end: p, sx: e.clientX, sy: e.clientY, add: e.shiftKey });
     requestRender();
     return;
   }
   if (e.button === 1 || (e.button === 0 && S.panKey)) {
     e.preventDefault();
+    releaseCanvasFocus();
     ov.setPointerCapture(e.pointerId);
     setDrag({ t: 'pan', sx: e.clientX, sy: e.clientY, sl: vp.scrollLeft, st: vp.scrollTop });
     stage.classList.add('panning', 'dragging');
@@ -141,8 +147,7 @@ ov.addEventListener('pointerdown', (e) => {
   }
   if (e.button !== 0 && e.button !== 2) return;
   commitText();
-  // mousedown is suppressed on the canvas, so drop focus from toolbar fields ourselves (else shortcuts stay dead).
-  if (document.activeElement && document.activeElement !== textBox) document.activeElement.blur();
+  releaseCanvasFocus();
   ov.setPointerCapture(e.pointerId);
   const p = imgPt(e), ip = { x: Math.floor(p.x), y: Math.floor(p.y) };
   const right = e.button === 2;

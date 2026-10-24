@@ -10,6 +10,7 @@ const S = {
   font: 'system-ui, sans-serif', fontSize: 24,
   zoom: 1,
   fileHandle: null, fileName: 'untitled.png',
+  docId: 0, // New and Open take the next one: a save or resize that waits checks it still has the same document
   pristine: true, panKey: false,
   altKey: false, // ⌥ held: a Move-tool drag on a shape duplicates it (copy cursor)
 };

@@ -20,6 +20,17 @@ All of this is done and merged to `master`:
 
 ## Open
 
+**Code review (2026-10-21):** findings in `docs/code-review-2026-10-21.md`, all fixed on `fix/save-resize-flatten` (2026-10-24, in a PR). Defaults the agent picked that are the user's call:
+- ⌘E on a selection keeps marks that clear as objects. The toast reads "N marks that clear or replace pixels stay objects: an image only paints over".
+- An Open that a later Open, drop or New supersedes is dropped with no message.
+- An edit made while an Open loads, or while its "Open…" toast waits, brings a second "Discard unsaved changes?".
+- A save cancelled by New or Open says "Save cancelled: a different image is open now".
+- Open after a slow discard prompt (the click's activation has run out) shows "Discard confirmed. Choose the file to open" with an "Open…" button, instead of failing.
+- Cut whose selection changed while the clipboard write ran copies but deletes nothing: "Copied: the selection changed, so nothing was cut".
+- A whole-image copy changed while the blob worker failed: "Copy failed: the image changed while it was copied. Copy again".
+- ⌘E on a selection that is one image already does nothing, with no message.
+- A colour pick with an image or fill selected changes nothing; colour 2 with a line, stroke or text selected changes nothing (only what the kind draws with is restyled).
+
 **Not verified:**
 - Firefox (no runs at all yet).
 - Real Safari. Every suite except pwa runs in Playwright's WebKit (`BROWSER=webkit`, 2026-10-18), which is close to Safari 27 but not Safari. Still to try by hand: trackpad pinch (only synthetic gesture events are tested), real clipboard copy/paste, the first-download prompt, Add to Dock, and feel at 10000² (a functional pass at 10000² and 16384×6100 in WebKit was fine: no blank canvases, no canvas-memory warnings). WebKit dropped its total canvas memory cap in June 2023 (bug 195325): running out now gets the tab killed and reloaded, losing unsaved work, so an 8 GB Mac at 100 MP is the tightest case. Safari 16.x may still have the old cap (RAM/4); a failed `getContext` there would throw in doc ops without a toast.
@@ -29,7 +40,7 @@ All of this is done and merged to `master`:
 - Superseded big canvases (the old base after a rotate) wait for GC rather than being freed at once: the history and objects may still refer to them, so it wasn't changed.
 - iPad: per-canvas cap 8192² (67 MP); `canvasFits()` now refuses bigger documents with a message instead of a blank picture. iOS Safari never shows a `beforeunload` prompt.
 - WebKit flake: smoke's "mid-stroke: ink reaches the pointer" failed once in about five WebKit runs (a 50 ms wait).
-- `history.js` on the M4's Chrome (2026-10-21): "undo of paste that grows", "redo of pencil after crop" and "second undo of paste that grows" aren't pixel-exact, on `master` too (CI's Linux Chrome passes). Not looked into.
+- ~~`history.js` on the M4's Chrome (2026-10-21): 3 checks not pixel-exact.~~ Fixed 2026-10-24: a live pencil stroke over tiles with other objects (here, scaled images and text) left their anti-aliased edges up to 4 levels off a fresh compose, since Chrome for Mac rasterises them differently when the stroke's rects come in a later batch. Those tiles are composed again when the stroke joins (`rejoin`, `scene.js`). Cost on the M4 at 4000×3000 (bench `pencil over 5k`, and a 60-stroke run): ~9 ms more main-thread time on release (`inpMain` 1.2 → 10.2 ms, no 200 ms interactions), and the GPU process settles ~50 MB higher (a cache that levels off, not a leak; the bench's `after edits` row shows +120 MB).
 - Safari draws range sliders natively: it ignores `accent-color` there, so Size/Smoothing are grey, not blue.
 - A real Windows machine (labels were checked only with a `navigator.platform` override).
 - A VoiceOver pass over dialogs, toasts and the canvas label.
@@ -87,6 +98,7 @@ All of this is done and merged to `master`:
 **Dialogs and saving**
 - Native `confirm()` for discarding changes: Open must call `showOpenFilePicker` synchronously in the click.
 - Native `prompt()` for the name in Save As when there's no `showSaveFilePicker`.
+- A save still waiting (a permission prompt, the picker, the write) when New or Open replaces the document: before it encodes, it is cancelled ("Save cancelled: a different image is open now"); after, the file gets the old document (encoded from its snapshot; if the blob worker fails, its fallback would encode the live canvas, so it is cancelled instead), but the new document keeps its own handle, name and save point. A resize still running is dropped the same way. Opens are ordered with New (an Open from the moment it has its file, a drop from the moment it arrives): one still loading when a later Open, drop or New has landed is dropped quietly, so the one asked for last wins, while a later one that never lands (a file that won't decode, a discard declined) leaves it be; and if the document was edited while an Open loaded, the discard is asked about again before it lands (2026-10-21, code review findings 1 and 2, and what three review rounds of their fix found).
 
 **Keyboard and focus**
 - ⇧0 = 100%, ⇧1 / ⌘0 = fit (Chrome reserves ⌘1).
@@ -119,7 +131,8 @@ All of this is done and merged to `master`:
 **Shapes (objects)**
 - Always editable, no on/off switch. On `master`: pixel tools paint under them; flattened on save, not kept in the file.
 - Total objects (2026-10-17, the user's call, the ten defaults in `docs/total-objects.md`): every mark is an object, and new marks go on top of everything; one stroke = one object; the eraser is a colour-2 stroke and ⌥-drag with it deletes whole objects; a fill is a bitmap object frozen at fill time, and a fill click inside a closed shape sets its fill; the opened picture is the bottom object, locked; a lift makes an image object plus a colour-2 patch; PNG saves carry the objects in a private `paNt` chunk; zooming in shows real pixels. It reverses `docs/objects.md`'s "no full scene graph", "pixel tools paint under shapes" and "gone on reopen".
-- Move tool (V) picks, moves, resizes; Select stays pixels-only. With total objects, a drag on empty canvas box-selects (decision 7b; Space or the middle button pans), ⇧-click adds or removes, and ⌘E with a selection flattens just it (one image per run of neighbours, so nothing seen changes).
+- Move tool (V) picks, moves, resizes; Select stays pixels-only. With total objects, a drag on empty canvas box-selects (decision 7b; Space or the middle button pans), ⇧-click adds or removes, and ⌘E with a selection flattens just it (one image per run of neighbours, so nothing seen changes (apart from anti-aliasing shifts of a few levels on neighbouring paths: Chrome anti-aliases a tile's paths by batch, so any edit that removes a path from a tile, Delete too, can shift its neighbours' edges; review 2026-10-21, finding 4)).
+  - A selected mark that clears what is under it (a Transparent stroke, a Transparent lift or Delete patch, a fill that replaces pixels, such as one whose soft edge lies over see-through pixels) stays an object, splitting the images where it overlaps them, and a toast says so: an image only paints over. With only such marks selected, ⌘E does nothing (2026-10-21, code review finding 3; the agent's default, not yet the user's call).
 - 3 screen px drag threshold. Shift locks axis / keeps aspect / snaps line to 45°, also mid-drag. Small shapes drop midpoint handles.
 - Hover outlines the shape a click would pick. ⌥-drag copies, placed just above the original.
 - With the Move tool, Tab / ⇧Tab cycle shapes and release focus at the ends (no focus trap).

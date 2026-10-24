@@ -29,7 +29,7 @@ import './tooltips.js';
 import './help.js';
 import './pwa.js';
 
-import { pasteImage } from './clipboard.js';
+import { copySel, pasteImage } from './clipboard.js';
 import Core from './core.js';
 import { base, hist, img, newDoc, redo, undo } from './doc.js';
 import { $, MAC, keyLabel } from './dom.js';
@@ -71,4 +71,4 @@ if (window.launchQueue) window.launchQueue.setConsumer(openLaunched);
 window.addEventListener('load', setUpPwa, { once: true });
 
 // Handle for scripted smoke tests in the console.
-window.__paint = { S, canvasFits, hist, used, encodeBlob, decodeFile, scaleImage, resample, get img() { flushRedraw(); return img; }, get base() { return base; }, get redrawCount() { return redrawCount; }, flushRedraw, markAll, objsIn, freshRender, hitAt, selectObj, selectMany, selList, Core, newDoc, flash, save, encodeFor, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, loadFile, setZoom, fitZoom, MAX_PIXELS, get objs() { return objs; }, get userObjs() { return userObjs(); }, get objSel() { return objSel; }, flattenObjs, composite, openLaunched, get filling() { return filling; }, get saving() { return saving; } };
+window.__paint = { S, canvasFits, hist, used, encodeBlob, decodeFile, scaleImage, resample, get img() { flushRedraw(); return img; }, get base() { return base; }, get redrawCount() { return redrawCount; }, flushRedraw, markAll, objsIn, freshRender, hitAt, selectObj, selectMany, selList, Core, newDoc, flash, save, encodeFor, updateChrome, get drag() { return drag; }, get sel() { return sel; }, setTool, undo, redo, crop, resizeDoc, transformDoc, selectAll, pasteImage, copySel, setColor, loadFile, setZoom, fitZoom, MAX_PIXELS, get objs() { return objs; }, get userObjs() { return userObjs(); }, get objSel() { return objSel; }, flattenObjs, composite, openLaunched, get filling() { return filling; }, get saving() { return saving; } };

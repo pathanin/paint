@@ -70,12 +70,13 @@ function resample(src, w, h) {
 let scaling = null;
 async function scaleDoc(w, h) {
   if (scaling) { flash('Still resizing'); return; }
-  const src = base, top = hist.top();
+  const src = base, top = hist.top(), doc = S.docId;
   let shown = false; // say so only if it takes a noticeable time, then confirm when done
   const slow = setTimeout(() => { shown = true; flash('Resizing…'); }, 300);
   try {
     const out = await (scaling = scaleImage(src, w, h));
-    if (base !== src || hist.top() !== top || drag || (sel && sel.float) || textAt) {
+    // New and Open reuse the base canvas and empty the undo stack, so only S.docId tells them apart
+    if (base !== src || S.docId !== doc || hist.top() !== top || drag || (sel && sel.float) || textAt) {
       out.width = 0;
       flash('Resize failed: the image changed while it ran', true);
       return;

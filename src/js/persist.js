@@ -23,12 +23,13 @@ const idatHash = (u8) => {
   }
   return h >>> 0;
 };
-const toPng = (cv) => encodeBlob(cv, 'image/png').then((b) => b.arrayBuffer()).then((a) => new Uint8Array(a));
+const toPng = (cv, still) => encodeBlob(cv, 'image/png', undefined, still).then((b) => b.arrayBuffer()).then((a) => new Uint8Array(a));
 
 // The picture's PNG bytes (pngBytes, a promise: the scene's own PNGs encode meanwhile) with the scene
-// of objs and base spliced in.
-async function withScene(pngBytes, objs, nextId) {
-  const blobs = [await toPng(base)], at = new Map(), masks = new Map();
+// of objs and base spliced in. still (encodeBlob): whether the base canvas still holds this document
+// (the assets' canvases are the objects' own, so they can't change).
+async function withScene(pngBytes, objs, nextId, still) {
+  const blobs = [await toPng(base, still)], at = new Map(), masks = new Map();
   for (const o of objs) {
     if (!o.asset || at.has(o.asset)) continue;
     at.set(o.asset, blobs.length);
@@ -52,6 +53,7 @@ async function readScene(u8) {
     const n = new DataView(data.buffer, data.byteOffset).getUint32(0);
     const head = JSON.parse(new TextDecoder().decode(data.subarray(4, 4 + n)));
     if (head.v !== 1 || head.idat !== idatHash(u8)) return null;
+    if (!Array.isArray(head.blobs) || !Array.isArray(head.objs)) return null;
     let i = 4 + n;
     const cvs = [];
     for (const len of head.blobs) {
@@ -62,10 +64,12 @@ async function readScene(u8) {
       bmp.close();
       cvs.push(cv);
     }
+    const list = head.objs.map((p) => Core.unpackObj(p));
+    if (!list.every((o) => Core.validObj(o, cvs.length)) || new Set(list.map((o) => o.id)).size !== list.length) return null; // opens as its pixels
     const fills = new Map(head.objs.filter((o) => o.t === 'fill').map((o) => [o.asset, o.mask])); // its pixels -> its mask, if any
     const masks = new Set([...fills.values()].filter((k) => k != null));
     const assets = cvs.map((cv, k) => (!k || masks.has(k) ? null : fills.has(k) ? fillAsset(cv, cvs[fills.get(k)]) : makeAsset(cv)));
-    return { base: cvs[0], objs: head.objs.map((p) => { const { mask, ...o } = Core.unpackObj(p); return o.asset != null ? { ...o, asset: assets[o.asset] } : o; }), nextId: head.nextId };
+    return { base: cvs[0], objs: list.map(({ mask, ...o }) => (o.asset != null ? { ...o, asset: assets[o.asset] } : o)), nextId: Number.isInteger(head.nextId) ? head.nextId : 1 };
   } catch {
     return null;
   }

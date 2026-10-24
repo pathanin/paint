@@ -64,7 +64,8 @@ function sceneSwap(prev, next, pairs) {
   }
   for (const o of gone) markDirty(boxOf(o));
   if (!quiet) for (const o of came) markDirty(boxOf(o));
-  quiet = false;
+  else for (const t of rejoin) markDirty(t);
+  quiet = false; rejoin = [];
 }
 // Objects whose box meets r, bottom to top.
 function objsIn(r) {
@@ -90,7 +91,7 @@ function hitAt(p, tol) {
 // own (liveCv), composed once, and each new piece is drawn onto it and copied in (paintNew()). A
 // brush is one anti-aliased path per tile (never inked twice where it overlaps itself), so its
 // tiles are composed again, whole, as it grows.
-let live = null, liveAt = null, liveN = 0, quiet = false; // liveAt: tile key -> pieces; liveN: pieces filed
+let live = null, liveAt = null, liveN = 0, quiet = false, rejoin = []; // liveAt: tile key -> pieces; liveN: pieces filed; rejoin: tiles to compose again when it joins
 const liveCv = new Map(), spare = []; // tile key -> {c, g, n: pieces drawn on it}, least recently used first; spare: canvases to reuse
 let liveNew = new Map(); // tile key -> {t, box}: tiles with new stamp pieces, box: what they cover in it
 const LIVE_MAX = 64; // tile canvases a stroke keeps (64 MB); past that the oldest is composed again when it is next reached
@@ -122,7 +123,14 @@ function growLive() {
 }
 // The live stroke is about to join the scene on top, as the next object added: its pixels are on
 // screen already, so that add marks nothing. Its tile canvases are kept for the next stroke.
+// Except where the stroke's tiles hold other objects: drawn onto them in later batches than those
+// objects, the stroke leaves their anti-aliased edges (text, scaled images) a few levels off what one
+// compose draws on Chrome for Mac, so those tiles are composed again (rejoin) to keep the cache a pure
+// function of the scene. Tiles with just the base come out the same either way.
 function endLive() {
+  if (live && !live.segs) {
+    for (const t of Core.dirtyTiles([Core.objBox(live)], img.width, img.height, TILE)) if (liveAt.has(t.key) && objsIn(t).length) rejoin.push(t);
+  }
   quiet = !!live; live = null; liveAt = null;
   for (const v of liveCv.values()) spare.push(v);
   liveCv.clear();
@@ -208,7 +216,7 @@ function paint(all) {
 }
 function paintLater() {
   laterTimer = 0;
-  if (fence) return; // fencePassed() comes back
+  if (fence || !later.size) return; // fencePassed() comes back; or flushRedraw() already painted them (no fence for nothing)
   const end = performance.now() + SLICE_MS;
   let n = 0;
   while (later.size && n < BIG && performance.now() <= end) {

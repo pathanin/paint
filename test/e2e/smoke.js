@@ -1003,6 +1003,174 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     const whints = await wpage.evaluate(() => [...document.querySelectorAll('.opts .hint')].map((h) => h.textContent).join(' | '));
     ok(!/[⌘⇧⌫⌥]/.test(whints) && /Ctrl held: no snapping/.test(whints) && /Ctrl\+E flattens/.test(whints), 'options bar hints in Windows key names: ' + whints);
     await wpage.close();
+    // A save still waiting (a permission prompt, the picker, the write) when New or Open replaces the
+    // document: the new one is never encoded into the old file, nor given its handle or name. A page of
+    // its own, so the stubs below touch nothing else.
+    {
+      const sp = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+      const serrs = [];
+      sp.on('pageerror', (e) => serrs.push(e.message));
+      sp.on('dialog', (d) => d.accept());
+      await sp.goto(url); await sp.waitForTimeout(200);
+      const r = await sp.evaluate(async () => {
+        const p = window.__paint, sleep = (ms) => new Promise((res) => setTimeout(res, ms)), writes = [], out = {};
+        // A file handle whose permission prompt and write can be held back.
+        const handle = (name, { perm = 'granted', permWait = 0, writeWait = 0 } = {}) => ({
+          name, kind: 'file',
+          queryPermission: async () => perm,
+          requestPermission: async () => { await sleep(permWait); return 'granted'; },
+          createWritable: async () => ({ write: async () => { await sleep(writeWait); writes.push(name); }, close: async () => {} }),
+        });
+        const state = () => ({ handle: p.S.fileHandle && p.S.fileHandle.name, name: p.S.fileName, clean: p.hist.isClean(), writes: writes.splice(0), toast: document.querySelector('#toast').textContent });
+        const doc = () => { p.newDoc(120, 80); p.transformDoc('flipH'); p.flash('—'); }; // an edit, so the save point would move
+        // 1. the write is slow; New meanwhile
+        doc();
+        window.showSaveFilePicker = async () => handle('first.png', { writeWait: 300 });
+        let s = p.save(true); await sleep(100);
+        p.newDoc(60, 40);
+        await s;
+        out.write = state();
+        let picked = 0;
+        window.showSaveFilePicker = async () => { picked++; return handle('second.png'); };
+        await p.save(false); // ⌘S on the new document
+        out.resave = { picked, ...state() };
+        // 2. New right after the picker (before the encode)
+        doc();
+        window.showSaveFilePicker = async () => handle('third.png');
+        s = p.save(true); p.newDoc(60, 40); await s;
+        out.picker = state();
+        // 3. a stored handle that asks for permission; New while the prompt is up
+        doc();
+        p.S.fileHandle = handle('fourth.png', { perm: 'prompt', permWait: 200 }); p.S.fileName = 'fourth.png';
+        s = p.save(false); await sleep(50); p.newDoc(60, 40); await s;
+        out.permission = state();
+        // 4. no save picker (download); New while it encodes
+        doc();
+        window.showSaveFilePicker = undefined; window.prompt = () => 'fifth.png';
+        s = p.save(true); p.newDoc(60, 40); await s;
+        out.download = state();
+        return out;
+      });
+      const fresh = (x) => x.handle === null && x.name === 'untitled.png' && x.clean;
+      ok(fresh(r.write) && r.write.writes.join() === 'first.png', 'a save that finishes after New gives the new document neither its file nor its save point: ' + JSON.stringify(r.write));
+      ok(r.resave.picked === 1 && r.resave.writes.join() === 'second.png', '⌘S on that new document asks where to save it: ' + JSON.stringify(r.resave));
+      ok(fresh(r.picker) && !r.picker.writes.length && /^Save cancelled/.test(r.picker.toast), 'New right after the save picker: nothing is written, the save is cancelled: ' + JSON.stringify(r.picker));
+      ok(fresh(r.permission) && !r.permission.writes.length && /^Save cancelled/.test(r.permission.toast), 'New during the permission prompt: nothing is written into the old file: ' + JSON.stringify(r.permission));
+      ok(fresh(r.download), 'a download that finishes after New leaves the new document its own name: ' + JSON.stringify(r.download));
+      // Opens are ordered with New: one still loading when a later Open, drop or New has landed is
+      // dropped, so the one asked for last wins (an Open asks once it has its file, a drop as it arrives);
+      // a later one that never lands leaves it be; an edit made while it loads is asked about.
+      const o = await sp.evaluate(async () => {
+        const p = window.__paint, out = {}, sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+        const asked = []; let answer = true; // the discard prompts, answered here
+        window.confirm = (m) => { asked.push(m); return answer; };
+        const prompts = () => asked.splice(0).length;
+        const png = async (w, h, color) => {
+          const c = document.createElement('canvas'); c.width = w; c.height = h;
+          const g = c.getContext('2d'); g.fillStyle = color; g.fillRect(0, 0, w, h);
+          return new File([await new Promise((res) => c.toBlob(res, 'image/png'))], color.slice(1) + '.png', { type: 'image/png' });
+        };
+        const state = () => ({ size: [p.img.width, p.img.height].join(), name: p.S.fileName, steps: p.hist.undoStack.length });
+        const until = async (f) => { for (let i = 0; i < 300 && !f(); i++) await sleep(10); };
+        const big = await png(1500, 1000, '#ff0000'), small = await png(40, 30, '#0000ff');
+        // 1. New, and an edit, while an Open decodes
+        let run = p.loadFile(big, null);
+        p.newDoc(300, 200); p.transformDoc('flipH');
+        await run;
+        out.newDuring = state();
+        // 2. two Opens: the one asked for last, whichever decodes first
+        await Promise.all([p.loadFile(big, null), p.loadFile(small, null)]);
+        out.twoOpens = state();
+        // 3. ⌘O twice: the first file lands while the second picker is still open; then the second is picked
+        p.newDoc(300, 200);
+        const fh = (f) => ({ kind: 'file', name: f.name, getFile: async () => f });
+        let calls = 0, bigFirst = null;
+        window.showOpenFilePicker = async () => {
+          if (++calls === 1) return [fh(big)];
+          await until(() => p.S.fileName === big.name);
+          bigFirst = p.S.fileName === big.name; // the case this checks: the first file landed meanwhile
+          return [fh(small)];
+        };
+        const openBtn = document.querySelector('[data-cmd="open"]');
+        openBtn.click(); openBtn.click();
+        await until(() => p.S.fileName === small.name);
+        out.twoPickers = { ...state(), calls, bigFirst };
+        // 4. a drop, then New and an edit while it decodes (no prompt for the dropped one); then two drops
+        const drop = (f) => { const dt = new DataTransfer(); dt.items.add(f); window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); };
+        p.newDoc(300, 200); prompts();
+        drop(big);
+        p.newDoc(200, 100); p.transformDoc('flipH');
+        await sleep(500);
+        out.dropThenNew = { ...state(), prompts: prompts() };
+        p.newDoc(300, 200);
+        drop(big); drop(small);
+        await until(() => p.S.fileName === small.name); await sleep(300);
+        out.twoDrops = { ...state(), prompts: prompts() };
+        // 5. a later drop that never lands (it won't decode; its discard is declined) leaves the Open in flight be
+        const bad = new File([new Uint8Array([1, 2, 3, 4, 5])], 'bad.png', { type: 'image/png' });
+        p.newDoc(300, 200);
+        run = p.loadFile(big, null); drop(bad); await run; await sleep(100);
+        out.badDrop = state();
+        p.newDoc(300, 200); p.transformDoc('flipH'); prompts();
+        run = p.loadFile(big, null); answer = false; drop(small); await run; await sleep(300); answer = true;
+        out.declinedDrop = { ...state(), prompts: prompts() };
+        // 6. an edit while an Open loads: asked about again; declined, the edit stays; accepted, the Open lands
+        for (const a of [false, true]) {
+          p.newDoc(300, 200); prompts(); answer = a;
+          run = p.loadFile(big, null); p.transformDoc('flipH'); await run;
+          out['editDuring' + a] = { ...state(), prompts: prompts() };
+        }
+        answer = true;
+        return out;
+      });
+      ok(o.newDuring.size === '300,200' && o.newDuring.name === 'untitled.png' && o.newDuring.steps === 1,
+        'an Open still decoding when New replaces the document is dropped, keeping the new one and its edit: ' + JSON.stringify(o.newDuring));
+      ok(o.twoOpens.size === '40,30' && o.twoOpens.name === '0000ff.png', 'of two Opens, the one asked for last is the one open: ' + JSON.stringify(o.twoOpens));
+      ok(o.twoPickers.bigFirst && o.twoPickers.name === '0000ff.png' && o.twoPickers.size === '40,30' && o.twoPickers.calls === 2, 'a second ⌘O while the first file loads opens the file picked second: ' + JSON.stringify(o.twoPickers));
+      ok(o.dropThenNew.size === '200,100' && o.dropThenNew.name === 'untitled.png' && o.dropThenNew.steps === 1 && o.dropThenNew.prompts === 0, 'a drop still decoding when New is made is dropped, without a prompt: ' + JSON.stringify(o.dropThenNew));
+      ok(o.twoDrops.name === '0000ff.png' && o.twoDrops.size === '40,30' && o.twoDrops.prompts === 0, 'of two drops, the later one is the one open: ' + JSON.stringify(o.twoDrops));
+      ok(o.badDrop.name === 'ff0000.png', 'a later drop that won\'t decode leaves the Open in flight be: ' + JSON.stringify(o.badDrop));
+      ok(o.declinedDrop.name === 'ff0000.png' && o.declinedDrop.prompts === 1, 'a later drop whose discard is declined leaves the Open in flight be: ' + JSON.stringify(o.declinedDrop));
+      ok(o.editDuringfalse.size === '300,200' && o.editDuringfalse.steps === 1 && o.editDuringfalse.prompts === 1, 'an edit made while an Open loads is asked about; declined, the edit stays: ' + JSON.stringify(o.editDuringfalse));
+      ok(o.editDuringtrue.name === 'ff0000.png' && o.editDuringtrue.prompts === 1, '... and accepted, the Open lands: ' + JSON.stringify(o.editDuringtrue));
+      ok(serrs.length === 0, 'save during New: no page errors: ' + serrs.join(' | '));
+      await sp.close();
+    }
+    // Open after a slow "Discard unsaved changes?": the click's user activation has run out (confirm()
+    // doesn't pause it), so the picker would throw. A toast offers it from a fresh click instead.
+    {
+      const op = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+      await op.goto(url); await op.waitForTimeout(300);
+      await op.evaluate(() => {
+        window.__picks = 0; window.__asks = 0;
+        window.showOpenFilePicker = async () => {
+          window.__picks++;
+          const c = document.createElement('canvas'); c.width = 7; c.height = 5;
+          const f = new File([await new Promise((r) => c.toBlob(r, 'image/png'))], 'picked.png', { type: 'image/png' });
+          return [{ kind: 'file', name: 'picked.png', getFile: async () => f }];
+        };
+        window.confirm = () => { window.__asks++; return true; };
+        Object.defineProperty(navigator, 'userActivation', { value: { isActive: false, hasBeenActive: true }, configurable: true });
+        const p = window.__paint; p.S.pristine = false;
+        const c = document.createElement('canvas'); c.width = c.height = 10; p.pasteImage(c); p.setTool('pencil'); // an edit: Open asks first
+      });
+      await op.click('[data-cmd="open"]');
+      const t1 = await op.locator('#toast').textContent(), n1 = await op.evaluate(() => window.__picks);
+      ok(n1 === 0 && /Choose the file to open/.test(t1) && await op.locator('#toast .toast-act').isVisible(), 'Open after a slow discard prompt offers the picker from a fresh click: ' + t1);
+      const c1 = await op.evaluate(() => window.__asks);
+      await op.click('#toast .toast-act');
+      await op.waitForFunction(() => window.__paint.S.fileName === 'picked.png');
+      ok(await op.evaluate(() => window.__picks) === 1 && await op.evaluate(() => window.__asks) === c1, 'and that click opens the picker and the file, without asking again');
+      // an edit made while the toast waits wasn't part of the discard: it is asked about
+      await op.evaluate(() => { const p = window.__paint; p.S.pristine = false; const c = document.createElement('canvas'); c.width = c.height = 10; p.pasteImage(c); p.setTool('pencil'); });
+      await op.click('[data-cmd="open"]');
+      await op.evaluate(() => { const p = window.__paint, c = document.createElement('canvas'); c.width = c.height = 10; p.pasteImage(c); p.setTool('pencil'); }); // while the toast waits
+      const c2 = await op.evaluate(() => window.__asks);
+      await op.click('#toast .toast-act');
+      await op.waitForFunction(() => window.__paint.S.fileName === 'picked.png' && window.__paint.userObjs.length === 0);
+      ok(await op.evaluate(() => window.__asks) === c2 + 1, 'an edit made while the Open… toast waits is asked about again');
+      await op.close();
+    }
   } finally { await browser.close(); }
   console.log(`${passes} passed, ${fails} failed`);
   process.exit(fails ? 1 : 0);

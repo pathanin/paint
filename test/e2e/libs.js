@@ -133,6 +133,38 @@ function hugeTiff() {
       ok(s.after.join() === [s.before[1], s.before[0]].join(), `stale resize dropped; the rotate stays (${s.before} -> ${s.after})`);
       ok(/^Resize failed: the image changed/.test(s.toast), 'stale resize says so: ' + s.toast);
     }
+    // ---- a resize still running when New or Open replaces the document is dropped too. Both reuse the
+    // base canvas, and with the resize as the first edit the undo stack is empty before and after, so
+    // neither of those can tell; pica, meanwhile, reads the new document's pixels as its source.
+    {
+      at = 'resize during New / Open';
+      const s = await P(async () => {
+        const p = window.__paint, out = {}, toast = () => document.querySelector('#toast').textContent;
+        const state = () => ({ size: [p.img.width, p.img.height].join(), steps: p.hist.undoStack.length, toast: toast(), name: p.S.fileName });
+        p.newDoc(5000, 5000); // pica's path (25 + 6 MP), well under its budget
+        p.flash('—');
+        let run = p.resizeDoc(2500, 2500, 'scale');
+        p.newDoc(300, 200); // the New dialog's submit
+        await run;
+        out.afterNew = state();
+        // Open: the file decoded first, so it lands while pica is still at work
+        const c = document.createElement('canvas'); c.width = 400; c.height = 300;
+        const g = c.getContext('2d'); g.fillStyle = '#ff0000'; g.fillRect(0, 0, 400, 300);
+        const blob = await new Promise((r) => c.toBlob(r, 'image/png')), bmp = await createImageBitmap(blob);
+        p.newDoc(5000, 5000);
+        p.flash('—');
+        run = p.resizeDoc(2500, 2500, 'scale');
+        await p.loadFile(new File([blob], 'red.png', { type: 'image/png' }), null, bmp);
+        await run;
+        out.afterOpen = { ...state(), corner: [...p.img.getContext('2d').getImageData(399, 299, 1, 1).data].join() };
+        out.used = p.used.resize;
+        return out;
+      });
+      ok(s.afterNew.size === '300,200' && s.afterNew.steps === 0 && /^Resize failed: the image changed/.test(s.afterNew.toast), 'a resize running when New replaces the document is dropped: ' + JSON.stringify(s));
+      ok(s.afterOpen.size === '400,300' && s.afterOpen.steps === 0 && s.afterOpen.corner === '255,0,0,255' && s.afterOpen.name === 'red.png' && /^Resize failed: the image changed/.test(s.afterOpen.toast),
+        'a resize running when a file is opened is dropped: ' + JSON.stringify(s));
+      at = 'checks';
+    }
 
     // ---- open TIFF with UTIF
     await P(() => window.__paint.resizeDoc(321, 123, 'canvas', 'tl')); // not 4 × 2, so an open shows
@@ -409,6 +441,44 @@ function hugeTiff() {
       return { used: p.used.png, encode: p.used.encode, ok: !!blob && blob.type === 'image/png' && blob.size > 0 };
     });
     ok(png.used === 'builtin' && png.encode === 'builtin' && png.ok, 'PNG save without its workers uses the browser encoder: ' + JSON.stringify(png));
+    // ... but when New has replaced the document by the time the worker fails, that fallback would
+    // encode the new one (New reuses #image and the base canvas) into the old file: the save is
+    // cancelled instead. The worker's script is held back, so New lands between snapshot and fallback.
+    const slowWorker = async (r) => { await new Promise((res) => setTimeout(res, 400)); r.fulfill({ status: 404, body: 'gone' }); };
+    await bctx.route('**/blob-worker.js', slowWorker);
+    const stale = await bp.evaluate(async () => {
+      const p = window.__paint;
+      p.newDoc(2000, 1500); // past encodeBlob's small size, so the snapshot goes to the worker
+      let written = null;
+      p.S.fileName = 'old.png';
+      p.S.fileHandle = { name: 'old.png', queryPermission: async () => 'granted', requestPermission: async () => 'granted',
+        createWritable: async () => ({ write: async (x) => { written = x; }, close: async () => {} }) };
+      const s = p.save(false);
+      await new Promise((res) => setTimeout(res, 150)); // the snapshot is taken; the worker is still loading
+      p.newDoc(64, 64);
+      await s;
+      return { written: !!written, toast: document.querySelector('#toast').textContent, name: p.S.fileName, handle: p.S.fileHandle };
+    });
+    // Copying the whole image encodes the live #image the same way: an edit made while the failing
+    // worker loads must not reach the clipboard through the fallback.
+    const copy = await bp.evaluate(async () => {
+      const p = window.__paint;
+      p.newDoc(2000, 1500); p.S.pristine = false;
+      let clip = null;
+      Object.defineProperty(navigator.clipboard, 'write', { configurable: true, value: async (items) => { clip = await items[0].getType('image/png'); } }); // WebKit ignores a plain assignment
+      const s = p.copySel(false);
+      await new Promise((res) => setTimeout(res, 150));
+      const c = document.createElement('canvas'); c.width = c.height = 20; c.getContext('2d').fillRect(0, 0, 20, 20);
+      p.pasteImage(c); p.setTool('pencil'); // committed: an image object, a change of the scene
+      const edited = p.userObjs.length;
+      await s;
+      return { clip: !!clip, edited, toast: document.querySelector('#toast').textContent };
+    });
+    await bctx.unroute('**/blob-worker.js', slowWorker);
+    ok(!copy.clip && copy.edited === 1 && /^Copy failed: the image changed while it was copied/.test(copy.toast),
+      'an edit while a copy waits on a failing blob worker: the clipboard doesn\'t get the edited picture: ' + JSON.stringify(copy));
+    ok(!stale.written && /^Save cancelled/.test(stale.toast) && stale.name === 'untitled.png' && stale.handle === null,
+      'New while a save waits on a failing blob worker: nothing is written into the old file: ' + JSON.stringify(stale));
     ok(berrs.length === 0, 'blocked: no page errors: ' + berrs.join(' | '));
     await bctx.close();
   } finally {

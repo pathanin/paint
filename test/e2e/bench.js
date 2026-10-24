@@ -313,6 +313,9 @@ async function once() {
         for (let i = 0; i < 40; i++) await page.mouse.move(bx.x + 20 + i * 7, bx.y + 20 + i * 3);
         await P(() => { window.__paint.selectObj(null); window.__paint.setTool('pencil'); });
       });
+      // a pencil stroke over them: on release, its tiles that hold objects are composed again (scene.js rejoin)
+      await P(() => { window.__paint.setTool('pencil'); window.__paint.S.sizes.pencil = 3; });
+      await run(`${tag} pencil over 5k`, () => stroke(300));
       await P(() => { window.__paint.setTool('brush'); window.__paint.S.sizes.brush = 30; });
       await run(`${tag} stroke over 5k`, () => stroke(300));
       await run(`${tag} rebuild 5k (rotate)`, () => P(() => window.__paint.transformDoc('rotR')));

@@ -285,6 +285,47 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     ok(await P(() => !document.querySelector('#textInput').hidden && document.querySelector('#textInput').value === 'Hi'), 'a text can be edited again while colour 1 is Transparent');
     await page.keyboard.press('Escape');
 
+    // ---- 13. ⌘E on a selection keeps what clears in Transparent as objects: an image can't clear ----
+    // A Transparent stroke, a Delete patch in Transparent and a Transparent fill, selected with the shapes
+    // they cut into. Filled rects (even widths) and pencil stamps are whole pixels, so what is seen can be
+    // compared exactly.
+    await fresh();
+    await P(() => { const p = window.__paint; p.S.fillMode = 'fill'; p.S.sizes.rect = 2; p.S.sizes.pencil = 3; p.S.tolerance = 0; });
+    const pick13 = async (c1, c2) => P(([a, b]) => { const p = window.__paint; p.selectObj(null); p.S.primary = a; p.S.secondary = b; }, [c1, c2]);
+    await page.keyboard.press('KeyR');
+    await pick13('#ed1c24', '#ffffff'); await drag([[10, 10], [50, 40]]); // A: red
+    await page.keyboard.press('KeyP');
+    await pick13('#ed1c24', 'transparent'); await drag([[5, 25], [70, 25]], 'right'); // a Transparent stroke across A
+    await page.keyboard.press('KeyR');
+    await pick13('#3f48cc', 'transparent'); await drag([[40, 20], [70, 45]]); // B: blue, over the stroke
+    await page.keyboard.press('KeyS'); await drag([[60, 40], [75, 55]]); await page.keyboard.press('Delete'); // a Transparent patch over B
+    await P(() => { const p = window.__paint; p.setTool('fill'); p.S.primary = 'transparent'; });
+    await page.mouse.click(...await at(20, 15)); await P(() => window.__paint.filling); await frame(); // a Transparent fill of A's top half
+    const kinds13 = () => P(() => window.__paint.userObjs.map((o) => o.t + ':' + (o.color || '')).join());
+    const k13 = await kinds13();
+    ok(k13 === 'rect:#ed1c24,pencil:transparent,rect:#3f48cc,rect:transparent,fill:', 'the scene for ⌘E with clearing objects: ' + k13);
+    ok((await pixel(20, 15))[3] === 0 && (await pixel(30, 25))[3] === 0 && (await pixel(65, 42))[3] === 0 && (await pixel(30, 35)).join() === '237,28,36,255',
+      'the stroke, the patch and the fill each cleared what is under them');
+    const seen13 = await hash(), d13 = await P(() => window.__paint.hist.undoStack.length);
+    await page.keyboard.press('KeyV');
+    await P(() => { const p = window.__paint; p.selectMany(p.userObjs.map((o) => o.id)); });
+    await page.keyboard.press('Meta+KeyE'); await frame();
+    ok(await hash() === seen13, '⌘E on a selection with clearing objects leaves what is seen as it was');
+    const after13 = await kinds13();
+    ok(after13 === 'image:,pencil:transparent,image:,rect:transparent,fill:', 'the shapes become images; the stroke, patch and fill stay objects between them: ' + after13);
+    ok(await P(() => window.__paint.hist.undoStack.length) === d13 + 1 && await P(() => window.__paint.selList().length) === 5, 'one undo step, and the selection is the images and the objects kept');
+    ok(/^3 marks that clear or replace pixels stay objects/.test(await page.locator('#toast').textContent()), 'a toast says why some stayed objects: ' + await page.locator('#toast').textContent());
+    ok(await P(() => { const h = (c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let k = 2166136261; for (let i = 0; i < d.length; i++) k = Math.imul(k ^ d[i], 16777619); return k >>> 0; }; return h(window.__paint.img) === h(window.__paint.freshRender()); }), 'the cache still equals the scene drawn fresh');
+    await page.keyboard.press('Meta+KeyZ'); await frame();
+    ok(await kinds13() === k13 && await hash() === seen13, 'one undo brings the shapes back');
+    // only clearing objects selected: nothing to flatten, no step, and not the whole scene either
+    await P(() => { const p = window.__paint; p.selectMany(p.userObjs.filter((o) => o.color === 'transparent' || o.t === 'fill').map((o) => o.id)); });
+    const base13 = await P(() => { const c = window.__paint.base, d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let k = 2166136261; for (let i = 0; i < d.length; i++) k = Math.imul(k ^ d[i], 16777619); return k >>> 0; });
+    await page.keyboard.press('Meta+KeyE'); await frame();
+    ok(await kinds13() === k13 && await hash() === seen13 && await P(() => window.__paint.hist.undoStack.length) === d13
+      && await P(() => { const c = window.__paint.base, d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let k = 2166136261; for (let i = 0; i < d.length; i++) k = Math.imul(k ^ d[i], 16777619); return k >>> 0; }) === base13,
+    '⌘E on only clearing objects changes nothing and adds no step');
+
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));
   } finally {
     await browser.close();

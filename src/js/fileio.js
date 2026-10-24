@@ -1,27 +1,41 @@
 import Core from './core.js';
-import { hist, img, setDoc } from './doc.js';
+import { docLanded, hist, img, landDoc, requestDoc, setDoc } from './doc.js';
 import { $, makeCanvas, textBox } from './dom.js';
 import { encodeBlob, loadUTIF, startWorker, used, workerCall } from './libs.js';
-import { composite, hasObjs, loadObjs, objIdNext, resetObjs, userObjs } from './objects.js';
+import { composite, hasObjs, loadObjs, objIdNext, resetObjs, sceneVer, userObjs } from './objects.js';
 import { readScene, withScene } from './persist.js';
 import { commitSelection } from './selection.js';
 import { S, sel, sizeProblem } from './state.js';
 import { cancelText, commitText, textAt } from './text.js';
 import { errText, flash } from './toast.js';
-import { fitZoom, updateChrome } from './view.js';
+import { fitZoom, kickFrame, updateChrome } from './view.js';
 
 // ---------- file I/O ----------
 const IMAGE_TYPES = [{ description: 'Images', accept: { 'image/*': ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.tif', '.tiff'] } }];
 // A floating selection or open text box isn't in history yet, but it is still unsaved work.
 const isDirty = () => !hist.isClean() || !!(sel && sel.float) || !!(textAt && textBox.value.trim());
+// The document as it is (what an edit changes), for an Open that waits: if it changed since its discard
+// was confirmed, the discard is asked about again before the Open lands.
+const docMark = () => ({ top: hist.top(), scene: sceneVer, float: sel && sel.float, text: textAt ? textBox.value : null });
+const sameDoc = (m) => { const n = docMark(); return n.top === m.top && n.scene === m.scene && n.float === m.float && n.text === m.text; };
 const confirmDiscard = () => !isDirty() || confirm(`Discard unsaved changes to ${S.fileName}?`);
 
 async function openFile() {
   if (!confirmDiscard()) return;
-  if (!window.showOpenFilePicker) { $('#fileInput').click(); return; }
+  // The picker needs the click's user activation, which runs out ~5 s after it, and confirm() doesn't
+  // pause that clock: after a slow answer, offer the picker from a fresh click instead of failing.
+  const ua = navigator.userActivation;
+  // seen: the document the discard was confirmed for, so an edit made while the toast waits is asked about.
+  if (ua && !ua.isActive) { const seen = docMark(); flash('Discard confirmed. Choose the file to open', false, { label: 'Open…', run: () => pickFile(seen) }); return; }
+  await pickFile();
+}
+let inputSeen; // the file input's change event (paste.js) takes it: takeInputSeen()
+const takeInputSeen = () => { const m = inputSeen; inputSeen = undefined; return m; };
+async function pickFile(seen) {
+  if (!window.showOpenFilePicker) { inputSeen = seen; $('#fileInput').click(); return; }
   try {
     const [h] = await window.showOpenFilePicker({ types: IMAGE_TYPES });
-    await loadFile(await h.getFile(), h);
+    await loadFile(await h.getFile(), h, undefined, undefined, seen); // its turn starts here: a picker that's cancelled asks for nothing
   } catch (err) {
     if (err.name !== 'AbortError') flash("Can't open the file: " + errText(err, 'permission was denied'), true);
   }
@@ -61,15 +75,25 @@ function tooBigToOpen(file, bmp) {
   flash(`Can't open ${file.name}: ${why}`, true);
   return true;
 }
-async function loadFile(file, handle, decoded) {
+// The Open asked for last wins (doc.js requestDoc): one still loading when a later Open, drop or New
+// lands is dropped, quietly, since that one shows. turn: its place in that order (a drop takes it as it
+// arrives, before its decode); seen: the document when its discard was confirmed (docMark). Both
+// default to now, which is when an Open's own picker has just returned.
+async function loadFile(file, handle, decoded, turn = requestDoc(), seen = docMark()) {
+  const stale = () => docLanded > turn;
   let bmp = decoded;
   if (!bmp) {
     try { bmp = await decodeFile(file); }
-    catch (err) { flash(cantOpen(file, err), true); return; }
+    catch (err) { if (!stale()) flash(cantOpen(file, err), true); return; }
   }
+  if (stale()) { bmp.close(); return; }
   if (tooBigToOpen(file, bmp)) return;
   // A PNG Paint saved with objects carries them (persist.js): reopen those, over the saved base.
   const scene = /\.png$/i.test(file.name) || file.type === 'image/png' ? await readScene(new Uint8Array(await file.arrayBuffer())) : null;
+  if (stale()) { bmp.close(); return; }
+  // Edited while it loaded: those edits were never part of the discard confirmed for it.
+  if (!sameDoc(seen) && !confirmDiscard()) { bmp.close(); return; }
+  landDoc(turn);
   const keep = scene && scene.base.width === bmp.width && scene.base.height === bmp.height;
   cancelText();
   if (keep) setDoc(scene.base);
@@ -78,7 +102,7 @@ async function loadFile(file, handle, decoded) {
   hist.clear();
   if (keep) loadObjs(scene.objs, scene.nextId);
   else resetObjs();
-  Object.assign(S, { fileHandle: handle || null, fileName: file.name, pristine: false, trimWarned: false });
+  Object.assign(S, { fileHandle: handle || null, fileName: file.name, pristine: false, trimWarned: false, docId: S.docId + 1 });
   fitZoom(true);
   updateChrome();
 }
@@ -92,7 +116,8 @@ function mimeFor(name) {
   const ext = name.split('.').pop().toLowerCase();
   return ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'webp' ? 'image/webp' : 'image/png';
 }
-function encode(type, src = composite()) {
+// still (encodeBlob): whether the document is still the one being saved.
+function encode(type, src = composite(), still) {
   if (type === 'image/jpeg') { // no alpha in JPEG: flatten onto white instead of black
     const c = makeCanvas(src.width, src.height), g = c.getContext('2d');
     g.fillStyle = '#ffffff';
@@ -100,7 +125,7 @@ function encode(type, src = composite()) {
     g.drawImage(src, 0, 0);
     return encodeBlob(c, type, 0.92).finally(() => { c.width = 0; }); // free its pixels now, not at some later GC
   }
-  return encodeBlob(src, type, 0.92);
+  return encodeBlob(src, type, 0.92, still);
 }
 // UPNG compresses harder than the browser's PNG encoder. In a test (Chrome, M4), its files were
 // ~60% smaller on a screenshot, 40-46% on a drawing, 92% on a gradient, 16% on a photo and 13% on
@@ -113,17 +138,20 @@ function encode(type, src = composite()) {
 // to that, so anything over 90% of raw is rejected.
 const UPNG_MAX_PIXELS = 3840 * 2160, UPNG_BUDGET_MS = 750;
 const upngMs = (pixels, nativeRatio) => pixels / 1e6 * (nativeRatio < 0.25 ? 100 : 300);
-async function encodePng() {
+async function encodePng(still) {
   const tryUpng = img.width * img.height <= UPNG_MAX_PIXELS;
-  // Read the pixels in the same tick as encode() snapshots them, so both encoders see one image.
+  // Snapshot the pixels in the same tick as encode() does, so both encoders see one image. The worker
+  // reads the snapshot back: a getImageData on #image here would read it all on the main thread.
   const src = composite(); // with any objects drawn over the pixels
-  const w = src.width, h = src.height, raw = tryUpng && src.getContext('2d').getImageData(0, 0, w, h).data.buffer;
-  const native = await encode('image/png', src);
+  const w = src.width, h = src.height, rawBytes = w * h * 4, snap = tryUpng && createImageBitmap(src).catch(() => null); // no snapshot: the browser's PNG
+  if (snap) kickFrame();
+  const native = await encode('image/png', src, still);
   used.png = 'builtin';
-  if (!tryUpng || upngMs(w * h, native.size / raw.byteLength) > UPNG_BUDGET_MS) return native;
-  const rawBytes = raw.byteLength, worker = startWorker('png-worker'); // one per save: frees UPNG's memory after
+  const bmp = snap && await snap;
+  if (!bmp || upngMs(w * h, native.size / rawBytes) > UPNG_BUDGET_MS) { if (bmp) bmp.close(); return native; }
+  const worker = startWorker('png-worker'); // one per save: frees UPNG's memory after
   try {
-    const { png } = await workerCall(worker, { raw, w, h }, [raw]);
+    const { png } = await workerCall(worker, { bmp, w, h }, [bmp]);
     if (png.byteLength >= native.size || png.byteLength > rawBytes * 0.9) return native;
     used.png = 'upng';
     return new Blob([png], { type: 'image/png' });
@@ -134,12 +162,14 @@ async function encodePng() {
   }
 }
 // A PNG keeps the objects in a private chunk (persist.js); JPEG and WebP can't, so they get the picture.
-async function encodeFor(name) {
-  if (mimeFor(name) !== 'image/png') return encode(mimeFor(name));
-  const png = encodePng();
+// still (encodeBlob): whether the document is still the one being saved.
+async function encodeFor(name, still) {
+  if (mimeFor(name) !== 'image/png') return encode(mimeFor(name), undefined, still);
+  const png = encodePng(still);
   if (!hasObjs()) return png;
   const bytes = png.then((b) => b.arrayBuffer()).then((a) => new Uint8Array(a));
-  return new Blob([await withScene(bytes, userObjs(), objIdNext())], { type: 'image/png' });
+  bytes.catch(() => {}); // withScene awaits it last: a failure meanwhile isn't an unhandled rejection
+  return new Blob([await withScene(bytes, userObjs(), objIdNext(), still)], { type: 'image/png' });
 }
 // The running save's promise, or null: one picker/write at a time (another Save meanwhile does nothing).
 // Tests await __paint.saving before reading what a save did.
@@ -150,10 +180,14 @@ function save(as) {
   saving = saveNow(as).finally(() => { saving = null; });
   return saving;
 }
+const cancelled = () => flash('Save cancelled: a different image is open now', true);
 async function saveNow(as) {
   commitText();
   commitSelection();
   const savedAt = hist.top(); // edits made while the save is in flight stay unsaved
+  // New or Open while it waits (a permission prompt, the picker, the encode and write) replaces the
+  // document: that one is then neither encoded into this file nor given its handle, name or save point.
+  const doc = S.docId, replaced = () => S.docId !== doc, still = () => !replaced();
   let h = as ? null : S.fileHandle;
   let name = S.fileName;
   if (!canWrite(name)) {
@@ -164,6 +198,7 @@ async function saveNow(as) {
   try {
     if (h && (await h.queryPermission({ mode: 'readwrite' })) !== 'granted' &&
         (await h.requestPermission({ mode: 'readwrite' })) !== 'granted') h = null;
+    if (replaced()) return cancelled();
     if (!h) {
       if (!window.showSaveFilePicker) {
         if (as) { // no save picker here: ask for the name, so Save As differs from Save
@@ -172,12 +207,11 @@ async function saveNow(as) {
           name = canWrite(typed) ? typed : asPng(typed);
         }
         const t0 = performance.now();
-        const href = URL.createObjectURL(await encodeFor(name));
+        const href = URL.createObjectURL(await encodeFor(name, still));
         const download = () => { const a = document.createElement('a'); a.href = href; a.download = name; a.click(); };
         download();
         setTimeout(() => URL.revokeObjectURL(href), 60000); // Safari may first ask to allow downloads
-        S.fileName = name;
-        hist.markSaved(savedAt); updateChrome();
+        if (!replaced()) { S.fileName = name; hist.markSaved(savedAt); updateChrome(); }
         // Safari may block a download started this long after the click: offer one from a fresh click.
         if (performance.now() - t0 > SLOW_DOWNLOAD_MS) flash(`Downloaded ${name}. Nothing arrived?`, false, { label: 'Download again', run: download });
         else flash('Downloaded ' + name);
@@ -191,18 +225,22 @@ async function saveNow(as) {
           ...(WEBP ? [{ description: 'WebP', accept: { 'image/webp': ['.webp'] } }] : []),
         ],
       });
+      if (replaced()) return cancelled();
     }
-    const blob = await encodeFor(h.name);
+    const blob = await encodeFor(h.name, still);
     const w = await h.createWritable();
     await w.write(blob);
     await w.close();
-    hist.markSaved(savedAt);
-    Object.assign(S, { fileHandle: h, fileName: h.name });
-    updateChrome();
+    if (!replaced()) {
+      hist.markSaved(savedAt);
+      Object.assign(S, { fileHandle: h, fileName: h.name });
+      updateChrome();
+    }
     flash('Saved ' + h.name);
   } catch (err) {
-    if (err.name !== 'AbortError') flash('Save failed: ' + errText(err, 'permission was denied'), true);
+    if (err.name === 'SourceChanged') cancelled();
+    else if (err.name !== 'AbortError') flash('Save failed: ' + errText(err, 'permission was denied'), true);
   }
 }
 
-export { cantOpen, confirmDiscard, decodeFile, encodeFor, isDirty, loadFile, openFile, save, saving, tooBigToOpen };
+export { cantOpen, confirmDiscard, takeInputSeen, decodeFile, docMark, encodeFor, isDirty, loadFile, openFile, save, saving, tooBigToOpen };

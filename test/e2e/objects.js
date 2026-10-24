@@ -259,7 +259,7 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     ok(await depth() === strokeAt + 2 && (await objs()).find((x) => x.id === line.id).color === '#333333', 'a colour well drag (many input events) is one more step');
     await page.keyboard.press('KeyX');
     const sw = (await objs()).find((x) => x.id === line.id);
-    ok(await depth() === strokeAt + 3 && sw.color === '#ffffff' && sw.alt === '#333333', 'X swaps both colours of the object in one step');
+    ok(await depth() === strokeAt + 3 && sw.color === '#ffffff', 'X gives the line colour 2 in one step (a line has no fill, so no alt to swap)');
     await page.keyboard.press('Meta+KeyZ'); await page.keyboard.press('Meta+KeyZ'); await page.keyboard.press('Meta+KeyZ');
     ok((await objs()).find((x) => x.id === line.id).a.x === 150, 'three undos undo swap, recolour and the whole nudge');
     await page.keyboard.press('Meta+KeyZ');
@@ -730,6 +730,9 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     ok(g28.same && g28.kinds === 'image,rect,image' && g28.steps === 1 && g28.sel === 'image,image', '⌘E keeps an unselected object over a selected one on top: one image per run, one step: ' + JSON.stringify(g28));
     const f28 = await gap(110); // B touches neither
     ok(f28.same && f28.kinds === 'rect,image' && f28.steps === 1, 'with nothing between them in the way, the selection is one image: ' + JSON.stringify(f28));
+    const again = await depth(), ids28 = await P(() => window.__paint.userObjs.map((o) => o.id).join());
+    await page.keyboard.press('Meta+KeyE'); await frame();
+    ok(await depth() === again && await P(() => window.__paint.userObjs.map((o) => o.id).join()) === ids28, 'a second ⌘E on the image a ⌘E made changes nothing and adds no step');
 
     // ---- 29. the opened picture is the bottom object, locked (decision 6) ----
     await P(() => { const p = window.__paint; p.newDoc(120, 80); p.setZoom(2); const v = document.querySelector('#viewport'); v.scrollLeft = v.scrollTop = 0; });
@@ -985,6 +988,44 @@ const ok = (c, m) => { if (c) passes++; else { fails++; console.log('FAIL:', m);
     o = await byId(L35);
     ok(o.a.x === 300 && o.a.y === 20 && o.b.x === 400 && o.b.y === 140, 'a line end snaps on both axes: ' + JSON.stringify([o.a, o.b]));
     ok(g35.length === 2 && g35[0].x === 400 && g35[1].y === 140, 'a guide on each: ' + JSON.stringify(g35));
+
+    // ---- 36. review findings 7–9: no-op restyles, Cut after the copy, focus after box-select ----
+    await P(() => { const p = window.__paint; p.newDoc(300, 200); p.setZoom(2); p.S.pristine = false; p.S.primary = '#000000';
+      const v = document.querySelector('#viewport'); v.scrollLeft = v.scrollTop = 0; });
+    await P(() => { const c = document.createElement('canvas'); c.width = 30; c.height = 20; c.getContext('2d').fillRect(0, 0, 30, 20);
+      const p = window.__paint; p.pasteImage(c); p.setTool('move'); p.selectObj(p.userObjs[0].id); });
+    let d36 = await depth();
+    await P(() => { window.__paint.setColor('primary', '#ed1c24'); window.__paint.setColor('secondary', '#22b14c'); });
+    ok(await depth() === d36, 'colour picks with an image selected add no undo steps (an image draws with no colour)');
+    await page.keyboard.press('KeyP'); await drag([[150, 50], [200, 50]]);
+    await P(() => { const p = window.__paint; p.setTool('move'); p.selectObj(p.userObjs[1].id); });
+    d36 = await depth();
+    await P(() => window.__paint.setColor('secondary', '#3f48cc'));
+    ok(await depth() === d36, 'colour 2 with a pencil stroke selected adds no undo step');
+    await P(() => window.__paint.setColor('primary', '#3f48cc'));
+    ok(await depth() === d36 + 1 && (await objs())[1].color === '#3f48cc', 'colour 1 still restyles the stroke');
+    await page.keyboard.press('KeyL'); await drag([[150, 150], [250, 150]]);
+    d36 = await depth();
+    await P(() => window.__paint.setColor('secondary', '#ffc90e'));
+    ok(await depth() === d36, 'colour 2 with a line selected adds no undo step (a line has no fill)');
+    await P(() => { const p = window.__paint; p.undo(); p.setTool('move'); p.selectObj(p.userObjs[1].id); });
+    // Cut: a refused clipboard write leaves the selection; an accepted one deletes it.
+    await P(() => { navigator.clipboard.write = async () => { throw new DOMException('no', 'NotAllowedError'); }; });
+    await P(() => window.__paint.copySel(true));
+    ok((await objs()).length === 2 && /^Copy failed/.test(await page.locator('#toast').textContent()), 'a Cut whose clipboard write fails deletes nothing');
+    await P(() => { navigator.clipboard.write = async () => {}; });
+    await P(() => window.__paint.copySel(true));
+    ok((await objs()).length === 1 && /^Cut/.test(await page.locator('#toast').textContent()), 'a Cut that copied deletes the selection');
+    // Box-select after keyboard-activating the Move button: focus leaves the toolbar, so Delete reaches the objects.
+    await page.keyboard.press('KeyR'); await drag([[20, 120], [60, 160]]);
+    await P(() => document.querySelector('[data-tool="move"]').focus());
+    await page.keyboard.press('Enter');
+    ok(await P(() => document.activeElement.dataset.tool) === 'move', 'Enter on the Move button keeps focus there');
+    await drag([[290, 190], [10, 10]]); // from empty canvas, over the image and the rect
+    const f36 = await P(() => [window.__paint.selList().length, document.activeElement.tagName, document.activeElement.id, document.activeElement.dataset.tool].join());
+    ok(/^2,BODY/.test(f36), 'box-select selects both and releases focus: ' + f36);
+    await page.keyboard.press('Delete'); await frame();
+    ok((await objs()).length === 0, 'so Delete deletes them');
 
     ok(errs.length === 0, 'no page errors: ' + errs.join(' | '));
   } catch (e) {
