@@ -65,7 +65,7 @@ setColor('primary', S.primary);
 setColor('secondary', S.secondary);
 $('#stIntro').textContent = `Draw, or drop or paste an image · ${keyLabel('⌘O')} opens a file`;
 newDoc(800, 600);
-setTool('pencil');
+setTool('brush');
 onRestored(markAll); // a bitmap asset came back from a context loss: repaint the scene
 if (window.launchQueue) window.launchQueue.setConsumer(openLaunched);
 window.addEventListener('load', setUpPwa, { once: true });
