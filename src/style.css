@@ -481,7 +481,7 @@ dialog fieldset:disabled { opacity: .4; }
 .anchor input:not(:disabled):hover:not(:checked) { background: var(--hover); }
 #helpDlg { width: min(1040px, calc(100vw - 32px)); }
 #resizeDlg { width: min(420px, calc(100vw - 32px)); }
-#helpBody { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); column-gap: 32px; align-items: start; max-height: calc(100vh - 180px); overflow: auto; padding-right: 4px; }
+#helpBody { font-size: 13px; line-height: 1.35; /* a dense reference: at 14px it overflowed 1280x800 in CI's Linux fonts */ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); column-gap: 32px; align-items: start; max-height: calc(100vh - 180px); overflow: auto; padding-right: 4px; }
 #helpBody:focus:not(:focus-visible) { outline: none; }
 #helpBody.more { -webkit-mask-image: linear-gradient(#000 calc(100% - 40px), transparent); mask-image: linear-gradient(#000 calc(100% - 40px), transparent); }
 #helpBody section { margin-bottom: 12px; }

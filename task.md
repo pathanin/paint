@@ -117,7 +117,7 @@ All of this is done and merged to `master`:
 - Smooth rendering when zoom × DPR < 1, pixelated from there up.
 - No refit after paste/rotate/flip, no auto-scroll during handle drags, no touch pan, no backdrop-click close. Desktop-first.
 - Help (`?`) has three columns.
-- Flat / hairline style (2026-10-25, the user's `/ui-style`): neutral greys as black (white in dark) at an alpha, 1px hairlines, shadows only on floating things (toast, tooltip, dialogs, drop card, segmented thumb) and always with a ring. 14px control text. The style's tokens sit at the top of `style.css`; the app's old names map onto them. Agent's calls within it:
+- Flat / hairline style (2026-10-25, the user's `/ui-style`): neutral greys as black (white in dark) at an alpha, 1px hairlines, shadows only on floating things (toast, tooltip, dialogs, drop card, segmented thumb) and always with a ring. 14px control text; the shortcuts list (Help) stays 13px, since at 14px it no longer fit 1280×800 in CI's Linux fonts. The style's tokens sit at the top of `style.css`; the app's old names map onto them. Agent's calls within it:
   - Muted text is the style's secondary (.60): its "muted" (.47) misses 4.5:1 on the panels.
   - Blue stays only where it marks the picture or focus: focus rings, object selection and hover, handles, the text box, the resize ghost, the drop zone, sliders and checkboxes. The rail's active tool is a 10% tint; primary buttons and the checked anchor are near-black (near-white in dark).
   - Palette chips no longer grow on hover; the 24px target gets the 5% tint (the style has no scale).
