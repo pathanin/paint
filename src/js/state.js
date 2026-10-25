@@ -3,7 +3,7 @@ import { $ } from './dom.js';
 
 // ---------- settings & shared state ----------
 const S = {
-  tool: 'pencil', prevTool: 'pencil',
+  tool: 'brush', prevTool: 'brush',
   primary: '#000000', secondary: '#ffffff',
   sizes: { pencil: 1, brush: 6, eraser: 12, line: 2, rect: 2, ellipse: 2 },
   fillMode: 'outline', tolerance: 10, smoothing: 2,

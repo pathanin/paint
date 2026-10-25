@@ -1,53 +1,90 @@
+/* Flat / hairline style: neutral greys as black (white in dark) at an alpha, 1px hairlines, shadows only
+   on floating things and always with a ring. The style's tokens first, then the app's names mapped onto them. */
 :root {
   color-scheme: light;
-  --bg: #f3f4f6;
-  --panel: #fbfbfc;
-  --border: #dcdfe4;
-  --border-strong: #c3c8d0;
-  --text: #1d2127;
-  --muted: #69707b;
-  --hover: rgba(17, 24, 39, .07);
-  --press: rgba(17, 24, 39, .12);
-  --accent: #2563eb;
+  /* surfaces */
+  --bg-page: #ffffff;
+  --bg-sidebar: #fafafa;
+  --bg-raised: #ffffff;
+  --bg-workspace: #f0f0f0;
+  /* interaction tints */
+  --tint-hover: rgba(0,0,0,.05);
+  --tint-selected: rgba(0,0,0,.10);
+  --tint-track: rgba(11,11,11,.05);
+  /* text */
+  --text-primary: rgba(0,0,0,.90);
+  --text-secondary: rgba(0,0,0,.60); /* the app's muted text: .47 misses 4.5:1 on the panels */
+  --text-muted: rgba(0,0,0,.47);
+  /* hairlines */
+  --hairline: rgba(0,0,0,.08);
+  --hairline-strong: rgba(0,0,0,.10);
+  --ring-field: rgba(0,0,0,.12);
+  /* radius */
+  --radius-sm: 4px; --radius-md: 6px; --radius-lg: 8px; --radius-xl: 12px;
+  /* shadows */
+  --shadow-ring: 0 0 0 1px var(--hairline);
+  --shadow-thumb: inset 0 0 0 1px var(--hairline), 0 1px 2px rgba(0,0,0,.05);
+  --shadow-panel: 0 0 0 1px var(--hairline), 0 8px 24px rgba(0,0,0,.12), 0 2px 6px rgba(0,0,0,.08);
+  /* type */
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --text-sm: 14px; --leading-sm: 20px;
+  /* motion */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast: 60ms; --dur: 200ms;
+
+  /* the app's names */
+  --bg: var(--bg-page);
+  --panel: var(--bg-sidebar); /* also the gap colour of the well and palette rings */
+  --border: var(--hairline);
+  --border-strong: var(--hairline-strong);
+  --text: var(--text-primary);
+  --muted: var(--text-secondary);
+  --hover: var(--tint-hover);
+  --press: var(--tint-selected);
+  --accent: #2563eb; /* kept for focus rings and what marks the picture: selection, handles, text box */
   --accent-soft: rgba(37, 99, 235, .12);
-  --accent-text: #1d4ed8;
-  --field: #ffffff;
-  --workspace: #e2e5e9;
-  --canvas-edge: rgba(0, 0, 0, .14);
-  --shadow: 0 1px 2px rgba(0,0,0,.06), 0 4px 16px rgba(0,0,0,.08);
-  --pop: 0 8px 28px rgba(0,0,0,.16), 0 1px 3px rgba(0,0,0,.08);
+  --field: var(--bg-raised);
+  --workspace: var(--bg-workspace);
+  --canvas-edge: var(--hairline-strong);
   --check-a: #ffffff;
   --check-b: #d9d9d9;
-  --radius: 6px;
+  --radius: var(--radius-md);
   --well-ring: rgba(0, 0, 0, .38);
-  --accent-fill: #2563eb; /* filled buttons: white text stays above 4.5:1 in both themes */
+  --primary-bg: rgba(0,0,0,.88); /* filled buttons: near-black, white text */
+  --primary-fg: #ffffff;
   --danger: #d92d20;
   --snap: #f0148c; /* snap guides: magenta, apart from the blue selection, over any picture in either theme */
-  --seg-on: #ffffff;
+  --seg-on: var(--bg-raised);
+  --float-bg: #262626; /* toast, tooltip */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1); /* UI enter/exit */
 }
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --bg: #1b1c1f;
-    --panel: #232428;
-    --border: #34363c;
-    --border-strong: #464951;
-    --text: #e7e8eb;
-    --muted: #9ca2ab;
-    --hover: rgba(255, 255, 255, .07);
-    --press: rgba(255, 255, 255, .12);
+    --bg-page: #1e1e1e;
+    --bg-sidebar: #262626;
+    --bg-raised: #333333;
+    --bg-workspace: #171717;
+    --tint-hover: rgba(255,255,255,.06);
+    --tint-selected: rgba(255,255,255,.12);
+    --tint-track: rgba(255,255,255,.06);
+    --text-primary: rgba(255,255,255,.92);
+    --text-secondary: rgba(255,255,255,.65);
+    --text-muted: rgba(255,255,255,.50);
+    --hairline: rgba(255,255,255,.09);
+    --hairline-strong: rgba(255,255,255,.12);
+    --ring-field: rgba(255,255,255,.14);
+    --shadow-thumb: inset 0 0 0 1px var(--hairline), 0 1px 2px rgba(0,0,0,.3);
+    --shadow-panel: 0 0 0 1px var(--hairline), 0 10px 32px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.3);
     --accent: #3b82f6;
     --accent-soft: rgba(59, 130, 246, .2);
-    --accent-text: #93b8fb;
-    --field: #1b1c1f;
-    --workspace: #2b2d32;
+    --field: #1e1e1e;
     --canvas-edge: rgba(0, 0, 0, .5);
-    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px rgba(0,0,0,.35);
-    --pop: 0 10px 32px rgba(0,0,0,.5), 0 1px 3px rgba(0,0,0,.4);
     --well-ring: rgba(255, 255, 255, .35);
+    --primary-bg: rgba(255,255,255,.92);
+    --primary-fg: #000000;
     --danger: #f97066;
-    --seg-on: #43464e;
+    --float-bg: #3a3a3a;
   }
 }
 
@@ -56,7 +93,7 @@ html, body { height: 100%; margin: 0; }
 body {
   display: grid;
   grid-template-rows: auto auto 1fr auto;
-  font: 13px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: var(--text-sm)/var(--leading-sm) var(--font-ui);
   color: var(--text);
   background: var(--bg);
   user-select: none;
@@ -71,6 +108,7 @@ button {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   background: transparent; border: 1px solid transparent; border-radius: var(--radius);
   padding: 0 7px; min-width: 32px; height: 32px; cursor: default;
+  transition: background-color var(--dur-fast) var(--ease);
 }
 button:hover { background: var(--hover); }
 button:active { background: var(--press); }
@@ -78,11 +116,11 @@ button:disabled, button[aria-disabled=true] { opacity: .35; background: transpar
 button:focus-visible, input:focus-visible, select:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 1px;
 }
-button.primary { background: var(--accent-fill); color: #fff; font-weight: 500; }
-button.primary:hover { background: color-mix(in srgb, var(--accent-fill) 88%, #000); }
+button.primary { background: var(--primary-bg); color: var(--primary-fg); font-weight: 500; }
+button.primary:hover { background: color-mix(in srgb, var(--primary-bg) 88%, var(--bg)); }
 select, input[type=number] {
   font: inherit; color: inherit; background: var(--field);
-  border: 1px solid var(--border-strong); border-radius: 5px;
+  border: 1px solid var(--ring-field); border-radius: var(--radius-md);
   height: 26px; padding: 0 6px;
 }
 select {
@@ -138,18 +176,19 @@ button.labeled { padding: 0 9px 0 7px; }
 .opts input[type=number] { width: 56px; color: var(--text); }
 .opts select { color: var(--text); }
 .zorder { display: flex; gap: 2px; }
-.zorder button { padding: 3px 8px; border-radius: 6px; color: var(--text); background: transparent; border: 1px solid var(--line, rgba(127,127,127,.35)); font: inherit; cursor: pointer; }
-.zorder button:hover { background: rgba(127,127,127,.12); }
+.zorder button { height: auto; padding: 3px 8px; border-radius: var(--radius-md); color: var(--text); background: transparent; border: 1px solid var(--ring-field); font: inherit; }
+.zorder button:hover { background: var(--hover); }
 .zorder button:disabled { opacity: .45; cursor: default; }
 .hint { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto !important; min-width: 0; }
 
 /* segmented control */
-.seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: 7px; background: var(--hover); }
+.seg { display: inline-flex; padding: 1px; gap: 1px; border-radius: 7px; background: var(--tint-track); }
 .seg label { position: relative; display: block; color: var(--text) !important; }
 .seg input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: default; }
 .seg span { display: block; padding: 3px 10px; border-radius: 5px; line-height: 18px; }
 .seg label:hover span { background: var(--hover); }
-.seg input:checked + span { background: var(--seg-on); box-shadow: 0 1px 2px rgba(0,0,0,.15), 0 0 0 .5px rgba(0,0,0,.08); font-weight: 500; }
+.seg span { transition: background-color var(--dur-fast) var(--ease); }
+.seg input:checked + span { background: var(--seg-on); box-shadow: var(--shadow-thumb); font-weight: 500; }
 .seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 0; }
 
 /* colors */
@@ -176,11 +215,10 @@ button.labeled { padding: 0 9px 0 7px; }
   position: relative; min-width: 0; width: 24px; height: 24px; padding: 0;
   border: 0; border-radius: 6px; background: none;
 }
-#palette button:hover { background: none; }
+#palette button:hover { background: var(--hover); }
 #palette button::before {
   content: ""; position: absolute; inset: 3px; border-radius: 4px;
   background: var(--c); box-shadow: inset 0 0 0 1px rgba(0,0,0,.18);
-  transition: transform .08s;
 }
 #palette button.is2::before { box-shadow: inset 0 0 0 1px rgba(0,0,0,.18), 0 0 0 1.5px var(--panel), 0 0 0 3px var(--muted); }
 #palette button.is1::before { box-shadow: inset 0 0 0 1px rgba(0,0,0,.18), 0 0 0 1.5px var(--panel), 0 0 0 3px var(--text); }
@@ -188,20 +226,19 @@ button.labeled { padding: 0 9px 0 7px; }
 #palette button.clear::before, .well input.clear::-webkit-color-swatch {
   background: repeating-conic-gradient(var(--check-b) 0 25%, var(--check-a) 0 50%) 0 0 / 8px 8px !important;
 }
-#palette button:hover::before { transform: scale(1.18); box-shadow: inset 0 0 0 1px rgba(0,0,0,.3), 0 1px 3px rgba(0,0,0,.25); }
 
 /* ---------- main area ---------- */
 #main { display: grid; grid-template-columns: auto 1fr; min-height: 0; }
 #rail {
   display: flex; flex-direction: column; align-items: center; gap: 2px;
   width: 48px; padding: 8px 0;
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--border-strong);
   overflow-y: auto;
 }
 #rail button { width: 36px; height: 36px; padding: 0; flex: none; }
 #rail svg { width: 20px; height: 20px; }
 #rail hr { width: 22px; border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
-#rail button.active, #rail button.active:hover { background: var(--accent-soft); color: var(--accent-text); }
+#rail button.active, #rail button.active:hover { background: var(--tint-selected); color: var(--text); }
 
 #viewport:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 #viewport {
@@ -215,7 +252,7 @@ button.labeled { padding: 0 9px 0 7px; }
   position: relative;
   flex: none;
   margin: auto;
-  box-shadow: 0 0 0 1px var(--canvas-edge), var(--shadow);
+  box-shadow: 0 0 0 1px var(--canvas-edge);
   background: repeating-conic-gradient(var(--check-b) 0 25%, var(--check-a) 0 50%) 0 0 / 16px 16px;
 }
 #stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
@@ -333,8 +370,8 @@ button.labeled { padding: 0 9px 0 7px; }
   transform: translate(-50%, 8px);
   max-width: min(520px, calc(100vw - 32px));
   padding: 8px 14px; border-radius: 8px; text-wrap: balance;
-  background: #24262b; color: #f3f4f6;
-  box-shadow: var(--pop);
+  background: var(--float-bg); color: #f5f5f5;
+  box-shadow: var(--shadow-panel);
   opacity: 0; pointer-events: none;
   transition: opacity .15s, transform .15s;
 }
@@ -356,7 +393,6 @@ button.labeled { padding: 0 9px 0 7px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 /* Unsaved marker on Save when the file name is hidden (narrow windows). */
 [data-cmd=save] { position: relative; }
-@media (prefers-color-scheme: dark) { #toast, #tip { background: #34363c; box-shadow: var(--pop), inset 0 0 0 1px rgba(255,255,255,.08); } }
 #dropZone {
   position: fixed; inset: 0; z-index: 30;
   display: grid; place-items: center;
@@ -367,8 +403,8 @@ button.labeled { padding: 0 9px 0 7px; }
 #dropZone[hidden] { display: none; }
 #dropZone div {
   padding: 12px 20px; border-radius: 10px;
-  background: var(--panel); color: var(--text); font-size: 15px; font-weight: 500;
-  box-shadow: var(--pop);
+  background: var(--bg-raised); color: var(--text); font-size: 15px; font-weight: 500;
+  box-shadow: var(--shadow-panel);
 }
 /* Entry only: on drop the image replaces it, so an exit would lag. */
 #dropZone { transition: opacity 150ms var(--ease-out); }
@@ -381,43 +417,43 @@ button.labeled { padding: 0 9px 0 7px; }
   position: fixed; z-index: 40; left: 0; top: 0;
   max-width: 260px;
   padding: 5px 8px; border-radius: 6px;
-  background: #24262b; color: #f3f4f6;
+  background: var(--float-bg); color: #f5f5f5;
   font-size: 12px; line-height: 1.35;
-  box-shadow: var(--pop);
+  box-shadow: var(--shadow-panel);
   pointer-events: none;
 }
 #tip[hidden] { display: none; }
 /* Cold hover only (JS adds .fade); warm and keyboard tooltips stay instant. Opacity only: transform positions it. */
 #tip.fade { transition: opacity 125ms var(--ease-out); }
 @starting-style { #tip.fade { opacity: 0; } }
-#tip .hint { display: block; color: #b4b9c2; white-space: normal; }
+#tip .hint { display: block; color: rgba(255,255,255,.7); white-space: normal; }
 kbd {
   font: 500 11px/1 system-ui, -apple-system, sans-serif;
   display: inline-block; min-width: 18px; text-align: center;
   padding: 3px 5px; border-radius: 4px;
-  background: var(--hover); border: 1px solid var(--border); border-bottom-width: 2px;
+  background: var(--tint-hover); border: 0; box-shadow: inset 0 0 0 1px var(--border);
   color: var(--text);
 }
-#tip kbd { background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.18); color: #f3f4f6; margin-left: 8px; }
+#tip kbd { background: rgba(255,255,255,.12); box-shadow: inset 0 0 0 1px rgba(255,255,255,.16); color: #f5f5f5; margin-left: 8px; }
 
 /* ---------- dialogs ---------- */
 dialog {
-  color: var(--text); background: var(--panel);
-  border: 1px solid var(--border); border-radius: 12px;
+  color: var(--text); background: var(--bg-raised);
+  border: 0; border-radius: var(--radius-xl);
   padding: 20px 22px; min-width: 320px;
-  box-shadow: var(--pop);
+  box-shadow: var(--shadow-panel);
 }
-dialog::backdrop { background: rgba(15, 17, 21, .35); }
+dialog::backdrop { background: rgba(0, 0, 0, .3); }
 dialog h2 { margin: 0 0 16px; font-size: 15px; font-weight: 600; }
 dialog .fields { display: flex; gap: 12px; align-items: flex-end; margin: 14px 0; }
 dialog .fields label { display: flex; flex-direction: column; gap: 5px; color: var(--muted); font-size: 12px; }
 dialog .field {
   display: flex; align-items: center; gap: 4px; height: 30px; padding: 0 8px 0 0;
-  background: var(--field); border: 1px solid var(--border-strong); border-radius: 6px;
+  background: var(--field); border: 1px solid var(--ring-field); border-radius: var(--radius-md);
 }
 dialog .field:focus-within { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
-dialog .field input { border: 0; outline: 0; background: none; color: var(--text); width: 84px; height: 28px; font-size: 13px; }
-dialog .fields select { height: 30px; font-size: 13px; color: var(--text); }
+dialog .field input { border: 0; outline: 0; background: none; color: var(--text); width: 84px; height: 28px; font-size: inherit; }
+dialog .fields select { height: 30px; color: var(--text); }
 dialog .check { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
 dialog .check input { accent-color: var(--accent); margin: 0; }
 dialog .note { color: var(--muted); font-size: 12px; margin: 8px 0 0; min-height: 16px; }
@@ -427,7 +463,7 @@ dialog .field:has([aria-invalid=true]) { border-color: var(--danger); }
 dialog .seg.wide { display: flex; }
 dialog .seg.wide label { flex: 1; text-align: center; }
 dialog menu { display: flex; justify-content: flex-end; gap: 8px; margin: 20px 0 0; padding: 0; }
-dialog menu button { min-width: 80px; border-color: var(--border-strong); }
+dialog menu button { min-width: 80px; border-color: var(--ring-field); }
 dialog menu button.primary { border-color: transparent; }
 /* Legend floated beside a flex row: Safari won't make a legend a flex item of its fieldset */
 dialog fieldset { border: 0; padding: 0; margin: 14px 0 0; }
@@ -439,13 +475,13 @@ dialog fieldset:disabled { opacity: .4; }
 .anchor input {
   appearance: none; -webkit-appearance: none; margin: 0;
   width: 20px; height: 20px; border-radius: 4px;
-  border: 1px solid var(--border-strong); background: var(--field);
+  border: 1px solid var(--ring-field); background: var(--field);
 }
-.anchor input:checked { background: var(--accent); border-color: var(--accent); }
+.anchor input:checked { background: var(--primary-bg); border-color: transparent; }
 .anchor input:not(:disabled):hover:not(:checked) { background: var(--hover); }
 #helpDlg { width: min(1040px, calc(100vw - 32px)); }
 #resizeDlg { width: min(420px, calc(100vw - 32px)); }
-#helpBody { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); column-gap: 32px; align-items: start; max-height: calc(100vh - 180px); overflow: auto; padding-right: 4px; }
+#helpBody { font-size: 13px; line-height: 1.35; /* a dense reference: at 14px it overflowed 1280x800 in CI's Linux fonts */ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); column-gap: 32px; align-items: start; max-height: calc(100vh - 180px); overflow: auto; padding-right: 4px; }
 #helpBody:focus:not(:focus-visible) { outline: none; }
 #helpBody.more { -webkit-mask-image: linear-gradient(#000 calc(100% - 40px), transparent); mask-image: linear-gradient(#000 calc(100% - 40px), transparent); }
 #helpBody section { margin-bottom: 12px; }
