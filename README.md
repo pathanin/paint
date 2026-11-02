@@ -2,7 +2,7 @@
 
 A tiny MS-Paint-style editor for quick jobs: paint over areas, crop, resize, annotate. Runs in the browser and works offline.
 
-**Use it online:** https://pathanin.github.io/paint/
+**Use it online:** https://paint.pothonon.party/
 
 In Chrome you can install it as an app (install icon in the address bar). It then opens in its own window, works offline, and shows up under "Open with" for images.
 
